@@ -1,7 +1,7 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Step 1 establishes a reproducible eager reference. Export and the C++ runtime
-are subsequent steps in [PLAN.md](PLAN.md).
+Steps 1 and 2 are complete: reproducible eager references and validated AOTI
+prefill/decode packages. The C++ runtime is step 3 in [PLAN.md](PLAN.md).
 
 The runtime interface will be token IDs. Python handles offline tokenization and
 text decoding; the future C++ executable handles all model inference and generation.
@@ -96,9 +96,9 @@ default limit is 64 new tokens. Both checkpoint EOS IDs (`151645`, `151643`) are
 honored. Prompt length and total context limits are checked before inference.
 Greedy decoding is for deterministic checks, not a recommended quality setting.
 
-The eager baseline deliberately uses HF DynamicCache. Step 2 will introduce and
-validate the explicit static cache wrapper and AOTI; this baseline does not prove
-that contract yet. This step contains no export, compilation, or C++ implementation.
+The eager baseline deliberately uses HF DynamicCache. The separate step 2 checks
+below validate the explicit static-cache wrapper and AOTI against that baseline
+and HF's own StaticCache.
 
 ## Reference artifacts
 
@@ -122,8 +122,7 @@ and `summary.json` (written only when all cases pass). This run captures correct
 fixtures, not benchmark timings: copying logits to CPU and repeating generation
 are intentionally outside the later performance measurement design.
 
-`artifacts/`, `work/`, `.venv/`, and future `build/` are Git-ignored. The source
-consists of `prepare.py` and `validate.py` at this stage.
+`artifacts/`, `work/`, `.venv/`, and future `build/` are Git-ignored.
 
 ## Step 1 results — 2026-10-22
 
@@ -143,4 +142,128 @@ finite. The checkpoint loads as 596,049,920 unique parameters. The encode helper
 reproduced the saved capital prompt IDs, and the decode helper reproduced the
 Chinese output. These are correctness checks, not inference benchmarks.
 
-Step 2 (static cache adapter and AOTI export) has not started.
+Step 1 was committed as `e03359f` (`Establish Qwen3 eager reference baseline`).
+
+## Export and validate AOTI
+
+`model.py` is a small adapter around the original HF model. `TensorCache` writes
+new K/V entries into caller-owned tensors using `index_copy_`. `QwenStep` builds
+the causal mask from absolute positions and returns only last-token logits.
+There is no copied Qwen implementation or custom kernel.
+
+```bash
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
+export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor"
+export TORCHINDUCTOR_COMPILE_THREADS=2
+
+.venv/bin/python export.py decode
+.venv/bin/python export.py prefill
+.venv/bin/python validate_aoti.py
+```
+
+These commands use `artifacts/aoti/` by default. Export refuses to overwrite an
+existing package; use `--output work/new-aoti` on both export calls and
+`--packages work/new-aoti` on validation for a fresh build. All three commands
+accept `--model-dir`. The existing validated packages are ready for step 3.
+
+| File under `artifacts/aoti/` | Purpose |
+| --- | --- |
+| `prefill.pt2`, `decode.pt2` | Native AOTI packages, each including weights and kernels |
+| `prefill.json`, `decode.json` | Tensor contract, model revision, build versions and options |
+| `*.graph.txt` | Exported graph text, including input mutation outputs |
+| `validation.json` | Successful validation metrics |
+| `reference/*.f32` | Teacher-forced AOTI logits for subsequent C++ comparison |
+| `code_audit.json`, `reload.json` | Recorded code inspection and fresh-process reload evidence |
+
+The last two JSON files record the manual checks performed for this run; the
+export and validation commands generate the other artifacts. AOTI reference
+files have the same row order and float32 layout as the eager reference files.
+
+### Package contract
+
+Python signature: `(input_ids, cache_position, (K0, V0, ..., K27, V27))`.
+The native loader receives 58 flat tensors in that order:
+
+- CUDA int64 `input_ids[1,T]` and `cache_position[T]`.
+- 56 contiguous CUDA BF16 cache tensors, each `[1,8,1024,128]` with strides
+  `[1048576,131072,128,1]`. Cache storage totals 112 MiB.
+- Output: one CUDA BF16 tensor `[1,151936]`.
+
+Prefill accepts `T=2..512`; decode accepts `T=1`. A one-token prompt uses decode
+at position zero. Positions must be contiguous absolute positions in `0..1023`,
+with all earlier positions already populated. Token IDs must be in `0..151935`.
+The caller owns these checks and must reset every cache tensor between requests.
+Both loaders receive the same buffers. Inputs need 16-byte-aligned storage;
+ordinary LibTorch allocations satisfy this. Do not pass offset storage views.
+The native input validation belongs in step 3.
+
+Compile and load with the matching Torch/CUDA build recorded in the JSON files.
+The packages target the inspected L20 (SM89); portability to other GPUs/builds
+has not been tested. Two loaders currently hold independent copies of weights.
+
+### Step 2 results — 2026-10-22
+
+The eager adapter matched unmodified HF StaticCache **bitwise** for all 43 logit
+rows and all 56 K/V tensors. Compiled prefill followed by repeated compiled
+decode reproduced all three original greedy sequences, including EOS.
+
+| Fixture | Max absolute logit difference, AOTI vs BF16 static | Max row relative L2 | Top-1 matches |
+| --- | ---: | ---: | ---: |
+| arithmetic | 0.6484375 | 3.052% | 11/11 |
+| capital | 0.4375 | 2.648% | 8/8 |
+| chinese | 0.5 | 2.200% | 24/24 |
+
+The initial pointwise `atol=0.25, rtol=0.02` check failed. We investigated with
+the same checkpoint weights promoted to FP32: eager BF16 differs from that
+control by up to 3.646% row relative L2, while AOTI differs by up to 3.391%.
+All 43 top-1 tokens match FP32 too. This is consistent with accumulated BF16
+rounding across fused operations, rather than a cache-adapter discrepancy.
+PyTorch also documents [numerical changes from compilation and fusion](https://pytorch.org/blog/training-production-ai-models/).
+
+Validation now requires finite values and limits both `||actual-reference||2 /
+||reference||2` and `max(abs(actual-reference)) / max(abs(reference))` to 5%,
+per logit row and per whole K/V tensor. It reports absolute error separately,
+requires exact fixture tokens and greedy sequences, and reruns the FP32 control.
+These are PoC acceptance limits, not a general model-quality guarantee.
+`emulate_precision_casts=True` retains BF16 cast boundaries but does not make
+fused arithmetic bitwise equal to eager execution.
+
+Additional checks passed:
+
+- Prompt lengths 1, 2, 7, 128, 511 and 512, followed by decode. Worst logit row
+  relative L2 is 3.927%; every tested top-1 prediction matches.
+- Chunked prefill through position 1021, then decode at 1022 and 1023.
+- Stable addresses and bitwise-unchanged slots outside each update in all 56
+  cache tensors. Worst fixture K/V tensor relative L2 is 3.309%.
+- Poisoning future cache slots leaves logits bitwise unchanged; unused slots
+  retain the poison. Reset/reuse after a full context reproduces the capital case.
+- Fresh-process reload after moving the packages to `artifacts/aoti/` reproduces
+  the capital AOTI logits bitwise. Transformers was not imported and an empty
+  compiler-cache location was not created. This check still used Python's AOTI
+  loader; a standalone C++ executable is the next step.
+
+Generated-code inspection found direct writes into all caller K/V buffers and
+no full-cache copy-back. The generated alignment guards can clone unaligned
+inputs, hence the alignment requirement. SDPA lowers to ATen's CUDA efficient
+attention backend. It still materializes padded K/V expansion from 8 KV heads
+to 16 query heads across all 1,024 slots. Persistent cache updates work, but this
+attention path is not optimized for low-latency LLM serving.
+
+| Package | Bytes | Export + compile time |
+| --- | ---: | ---: |
+| decode.pt2 | 1,193,995,187 | 41.9 s |
+| prefill.pt2 | 1,194,162,006 | 56.8 s |
+
+Compilation reused caches from earlier probes, so these are not cold-build
+benchmarks. Runtime performance and the standalone C++ path remain unmeasured.
+
+## Planned optimization phase
+
+Step 6 in [PLAN.md](PLAN.md) follows the C++ implementation, validation and
+baseline measurements in steps 3-5. It covers supported Torch/Inductor options,
+native CUDA Graph capture/replay, targeted graph transformations, and compatible
+high-performance attention/KV-cache kernels. Profiling will quantify the padded
+GQA expansion and other bottlenecks before choosing changes. Each experiment
+must preserve the correctness checks and report latency, memory and compilation
+or capture costs against the reproducible baseline. Keep optimizations isolated
+and optional so the minimal runtime remains readable.
