@@ -1,0 +1,5 @@
+[
+  {"name": "capital", "text": "What is the capital of France? Answer in one short sentence."},
+  {"name": "arithmetic", "text": "What is 17 + 25? Reply with only the number."},
+  {"name": "chinese", "text": "请用一句简短的中文解释什么是机器学习。"}
+]
