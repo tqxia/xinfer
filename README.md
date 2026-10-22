@@ -1,12 +1,13 @@
 # xinfer
 
-# Qwen3-0.6B AOTInductor / C++ PoC
+Qwen3-0.6B AOTInductor / C++ PoC.
 
-Steps 1 and 2 are complete: reproducible eager references and validated AOTI
-prefill/decode packages. The C++ runtime is step 3 in [PLAN.md](PLAN.md).
+Steps 1-3 are complete: eager references, validated AOTI packages, and a minimal
+C++ executable. Broader validation, benchmarking and optimization are steps 4-6
+in [PLAN.md](PLAN.md).
 
-The runtime interface will be token IDs. Python handles offline tokenization and
-text decoding; the future C++ executable handles all model inference and generation.
+The runtime interface is token IDs. Python handles offline tokenization and
+text decoding; the C++ executable handles all model inference and generation.
 
 ## Environment
 
@@ -20,7 +21,7 @@ The project `.venv` contains its own Hugging Face dependencies. Only Torch,
 Triton, and their NVIDIA packages are linked from `/data/workspace/abo/.venv`.
 ABO's unrelated packages are not on the project's import path. These links are
 read-only dependencies by convention: do not upgrade or uninstall the shared
-packages through this venv. The future C++ build must use this same Torch build.
+packages through this venv. The C++ build must use this same Torch build.
 
 - Python 3.12.13; PyTorch runtime `2.7.0+cu126`; Triton 3.3.0.
 - Transformers 4.51.3; tokenizers 0.21.4; safetensors 0.5.3.
@@ -197,7 +198,9 @@ with all earlier positions already populated. Token IDs must be in `0..151935`.
 The caller owns these checks and must reset every cache tensor between requests.
 Both loaders receive the same buffers. Inputs need 16-byte-aligned storage;
 ordinary LibTorch allocations satisfy this. Do not pass offset storage views.
-The native input validation belongs in step 3.
+The C++ executable enforces token IDs, prompt length and context budgets before
+loading weights. It creates aligned tensors itself and checks the package pair's
+metadata, Torch version and C++ ABI.
 
 Compile and load with the matching Torch/CUDA build recorded in the JSON files.
 The packages target the inspected L20 (SM89); portability to other GPUs/builds
@@ -241,8 +244,8 @@ Additional checks passed:
   retain the poison. Reset/reuse after a full context reproduces the capital case.
 - Fresh-process reload after moving the packages to `artifacts/aoti/` reproduces
   the capital AOTI logits bitwise. Transformers was not imported and an empty
-  compiler-cache location was not created. This check still used Python's AOTI
-  loader; a standalone C++ executable is the next step.
+  compiler-cache location was not created. That step 2 check used Python's AOTI
+  loader; the standalone C++ results are below.
 
 Generated-code inspection found direct writes into all caller K/V buffers and
 no full-cache copy-back. The generated alignment guards can clone unaligned
@@ -257,7 +260,84 @@ attention path is not optimized for low-latency LLM serving.
 | prefill.pt2 | 1,194,162,006 | 56.8 s |
 
 Compilation reused caches from earlier probes, so these are not cold-build
-benchmarks. Runtime performance and the standalone C++ path remain unmeasured.
+benchmarks. Controlled runtime performance measurements remain for step 5.
+
+## Build and run the C++ executable
+
+`main.cpp` contains metadata/input validation, two AOTI loaders, one shared cache,
+and a greedy generation loop. It uses the native
+[`AOTIModelPackageLoader`](https://docs.pytorch.org/docs/2.7/torch.compiler_aot_inductor.html)
+API. `CMakeLists.txt` links LibTorch and fetches the header-only nlohmann/json
+3.11.3 release with its published SHA-256. The first configuration needs network
+access for that header dependency; subsequent builds reuse `build/_deps/`.
+
+```bash
+cd /data/workspace/develop/qwen3-aoti-poc
+
+/data/workspace/abo/.venv/bin/cmake -S . -B build -G Ninja \
+  -DCMAKE_PREFIX_PATH=/data/workspace/abo/.venv/lib/python3.12/site-packages/torch/share/cmake \
+  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+  -DTORCH_CUDA_ARCH_LIST=8.9 -DCMAKE_BUILD_TYPE=Release
+/data/workspace/abo/.venv/bin/cmake --build build -j2
+
+# Run the native executable directly; no Python interpreter or activated venv.
+./build/qwen_aoti artifacts/aoti \
+  artifacts/reference/capital/prompt.ids work/generated.ids \
+  --max-new-tokens 64
+
+# Optional validation trace: one raw float32 row per generated token, including EOS.
+./build/qwen_aoti artifacts/aoti \
+  artifacts/reference/capital/prompt.ids work/generated.ids \
+  --max-new-tokens 64 --trace work/native-logits.f32
+
+# Offline text decoding, separate from native inference.
+.venv/bin/python prepare.py decode --input work/generated.ids
+
+# Reproducible native smoke checks; Python launches the binary and checks results.
+.venv/bin/python tests/smoke_cpp.py
+```
+
+Usage: `qwen_aoti PACKAGE_DIR PROMPT_IDS OUTPUT_IDS [--max-new-tokens N]
+[--trace LOGITS_F32]`. The default budget is 64 new tokens. The requested prompt
+plus generation budget must fit 1,024 tokens, even if EOS might arrive earlier.
+Output IDs contain only generated tokens, including EOS when reached. Trace row
+`i` predicts output token `i`; its shape is `[generated_tokens,151936]`, raw
+little-endian float32 on this host. Input, ID-output and trace paths must differ.
+Output directories are created as needed; existing output files are overwritten.
+
+The executable uses CUDA device 0; select the visible GPU with
+`CUDA_VISIBLE_DEVICES` before launch. Every request resets the caller-owned cache.
+The CLI handles one request per process. Tensor allocation and a scalar GPU-to-CPU
+synchronization per token are deliberate baseline choices for later profiling.
+Reported load/generation times are cold-run diagnostics, with trace overhead
+included when enabled; they are not the step 5 performance benchmark.
+
+This host has CUDA Toolkit 12.2 for CMake/compiler discovery; Torch is the same
+`2.7.0+cu126` build used to produce the packages. The build compiles C++ only and
+loads the existing compiled GPU kernels. CMake needed the explicit `nvcc` path.
+The binary's runpath locates the existing LibTorch/CUDA shared libraries; copying
+only the executable to another host is not a complete deployment bundle.
+
+### Step 3 results — 2026-10-22
+
+- Standalone C++ generated all three reference sequences with the same EOS
+  stopping behavior. All 43 logit rows are bitwise equal to Python AOTI results.
+- Native prompt lengths 1, 2 and 512, each followed by up to three generated
+  tokens, match Python AOTI tokens and logits bitwise.
+- Twelve invalid-input/CLI cases are rejected, including empty, malformed,
+  negative and out-of-vocabulary IDs, oversized prompts, invalid generation
+  budgets, unknown/incomplete options and colliding trace/output paths. These
+  checks run with CUDA hidden to verify rejection precedes model loading.
+- A one-token generation budget stops after exactly one prediction.
+- `ldd` resolves the native dependencies without `libpython` or `libtorch_python`;
+  loader tracing during real inference confirms neither is dynamically loaded.
+  Child runs clear venv/Python/library-path overrides and use an invalid
+  `PYTHONHOME`, with no Python interpreter invocation in the executable.
+
+Smoke artifacts, raw traces, dependency/loader logs and `summary.json` are saved
+under `artifacts/native-smoke/`. Step 4 will extend the three-path checks across
+the full boundary matrix and repeated requests in one native process. Step 5
+will establish controlled performance measurements.
 
 ## Planned optimization phase
 
