@@ -1,3 +1,5 @@
+# xinfer
+
 # Qwen3-0.6B AOTInductor / C++ PoC
 
 Steps 1 and 2 are complete: reproducible eager references and validated AOTI
