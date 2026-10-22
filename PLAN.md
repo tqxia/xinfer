@@ -1,6 +1,6 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: steps 1 and 2 complete (eager references, static cache adapter, AOTI packages and validation). Steps 3-6 remain planned.
+Status: steps 1-3 complete (eager references, validated AOTI packages, minimal C++ runtime and native smoke checks). Steps 4-6 remain planned.
 Date: 2026-10-22.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
@@ -107,6 +107,7 @@ validate.py        Eager reference generation and regression cases
 validate_aoti.py   Static-cache, compiled-package and FP32-control checks
 main.cpp           Load packages, allocate cache, prefill/decode, stop and time
 CMakeLists.txt     Build against the matching LibTorch
+tests/smoke_cpp.py Native generation, trace parity and CLI rejection smoke checks
 
 Ignored generated directories: .venv/, build/, artifacts/, work/.
 Use simple token-ID files and a small metadata file; avoid a general framework,
@@ -228,8 +229,11 @@ tensor contracts, numerical checks and results. The eager wrapper matches HF
 StaticCache exactly. AOTI matches all fixture tokens with documented BF16 error
 limits and an independent FP32 control. Generated code writes directly into the
 caller cache, but still expands the full padded K/V inputs for attention.
-The standalone C++ loader, input rejection, native trace comparison and runtime
-benchmark remain steps 3-5.
+Step 3 added the standalone C++ loader, input rejection and native trace capture.
+The three fixture sequences and all 43 logit rows match Python AOTI bitwise;
+native T=1, T=2 and T=512 smoke cases also pass. Linkage and loader tracing confirm
+the binary does not load libpython or libtorch_python. The full three-path
+boundary/repeated-request matrix and runtime benchmarks remain steps 4-5.
 Step 6 then profiles and addresses the observed performance limitations.
 
 The initial technical risks were HF cache adaptation and mutation lowering in
