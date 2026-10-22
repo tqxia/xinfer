@@ -1,6 +1,6 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: step 1 complete (environment, checkpoint verification, eager references). Steps 2-5 remain planned.
+Status: steps 1 and 2 complete (eager references, static cache adapter, AOTI packages and validation). Steps 3-6 remain planned.
 Date: 2026-10-22.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
@@ -26,6 +26,11 @@ Initial scope:
 - Separate prefill and decode AOTI packages, one native generation loop.
 - No CUDA Graphs, quantization, concurrent requests, paged attention, HTTP server,
   custom CUDA/Triton kernels, or native tokenizer in this first milestone.
+
+Steps 1-5 establish the minimal, validated C++ baseline. Step 6 extends the
+scope to performance optimization, including CUDA Graphs, graph transformations
+and high-performance kernels. Preserve the baseline so each optimization can
+be evaluated independently, while keeping the default code path readable.
 
 ## Confirmed environment
 
@@ -98,7 +103,8 @@ requirements.txt   Pinned additional Python dependencies
 model.py           Thin Qwen wrapper and explicit cache adapter
 export.py          Load weights, export/compile both graphs, write metadata
 prepare.py         Offline prompt tokenization and output-ID decoding
-validate.py        Reference comparisons and focused regression cases
+validate.py        Eager reference generation and regression cases
+validate_aoti.py   Static-cache, compiled-package and FP32-control checks
 main.cpp           Load packages, allocate cache, prefill/decode, stop and time
 CMakeLists.txt     Build against the matching LibTorch
 
@@ -144,6 +150,56 @@ Keep cache layout and position semantics documented beside the code that uses th
    measurement boundaries. Identify host synchronization included in timings.
    Do not assert a performance target or a vLLM comparison at this stage.
 
+6. Explore and validate performance optimizations.
+   Start from the measured C++ baseline in step 5. Preserve its source revision,
+   packages, correctness fixtures and benchmark results. Profile prefill and
+   decode separately across prompt lengths and populated cache lengths, including
+   short contexts and a nearly full cache. Quantify kernel time, CPU launch and
+   synchronization overhead, allocations, memory traffic and peak GPU memory.
+   Investigate the observed full-capacity GQA expansion first, without assuming
+   it dominates end-to-end latency before measurement.
+
+   Explore the following techniques, using profiling to prioritize experiments:
+
+   - Existing Torch/Inductor options: inventory what the pinned build actually
+     supports for AOTI, then test relevant GEMM autotuning, kernel selection,
+     fusion, layout and memory-planning options. Record exact settings, compile
+     cost and numerical effects. Do not assume JIT-only options work with AOTI.
+   - CUDA Graphs: begin with fixed-shape decode in the native C++ runtime. Keep
+     input, position, output and KV storage stable; update token/position values
+     between replays. Verify warmup/capture, cache reset, stream ordering, memory
+     lifetime and EOS handling. Measure remaining host synchronization and graph
+     memory overhead. Consider prefill capture/buckets only if profiling supports
+     their additional code and memory cost. CUDA Graphs target launch overhead;
+     attention changes below target redundant GPU work and memory traffic.
+   - Custom graph optimizations: inspect the exported/lowered graph and test
+     small, isolated transformations before AOT compilation. Priorities include
+     avoiding materialized KV-head repetition, reducing work on unused context,
+     and fusing relevant norm/RoPE/cache-update operations when measured useful.
+     Evaluate any context-length bucketing or specialization against extra
+     packages, memory, dispatch complexity and CUDA Graph compatibility.
+   - High-performance kernels: evaluate existing GQA-aware attention and
+     KV-cache kernels compatible with L20 and the selected toolchain. Prefer
+     reusing suitable kernels; add targeted custom kernels only for remaining
+     measured hotspots. Any custom operator needs export support and native
+     registration/linkage so the C++ process remains independent of Python.
+
+   Compare each change independently with the baseline, then test useful
+   combinations. Reuse identical tokens, shapes, dtype, context lengths and
+   stopping rules. Report prefill latency, decode ms/token and tokens/s,
+   end-to-end latency, memory, compile/capture cost and repeated-run variability.
+   Separate device-only gains from gains visible through the C++ generation loop.
+   Rerun numerical, greedy, mutation, masking, boundary and repeated-request checks
+   for every candidate; investigate discrepancies without silently relaxing the
+   existing correctness criteria. Validate graph replay across changing positions
+   and fresh requests, plus every new bucket or dispatch boundary.
+
+   Deliver a baseline/individual/combined comparison table, reproducible commands,
+   and a small optional optimized path with documented tradeoffs. Keep changes
+   that provide repeatable improvements with acceptable complexity and memory;
+   record unsuccessful experiments too. Set performance targets from the step 5
+   measurements rather than promising an unmeasured speedup.
+
 ## Acceptance criteria
 
 - A fresh C++ process loads the packages and generates without Python execution.
@@ -166,15 +222,26 @@ Keep cache layout and position semantics documented beside the code that uses th
 
 ## Risks and deliberate tradeoffs
 
-The first technical risk is HF cache adaptation and mutation lowering in torch
-2.7.0; the next is dynamic prefill export. If either needs a larger workaround,
-document a minimal reproducer and the proposed change before expanding scope.
-A version change must keep export-time Torch and native LibTorch matched.
+Step 2 resolved export and persistent-cache mutation with the original version
+pins. Both native packages are in `artifacts/aoti/`; README records commands,
+tensor contracts, numerical checks and results. The eager wrapper matches HF
+StaticCache exactly. AOTI matches all fixture tokens with documented BF16 error
+limits and an independent FP32 control. Generated code writes directly into the
+caller cache, but still expands the full padded K/V inputs for attention.
+The standalone C++ loader, input rejection, native trace comparison and runtime
+benchmark remain steps 3-5.
+Step 6 then profiles and addresses the observed performance limitations.
 
-Fixed-capacity attention may do work over unused cache slots. Two loaders may
-duplicate weights. Greedy decoding and scalar synchronization prioritize a
-readable correctness PoC. These are measured limitations, with optimization
-considered only after this milestone is complete.
+The initial technical risks were HF cache adaptation and mutation lowering in
+torch 2.7.0, followed by dynamic prefill export. Both passed in step 2. Any future
+version change must keep export-time Torch and native LibTorch matched.
+
+Fixed-capacity attention does work over padded cache storage and expands KV
+heads. Two loaders may duplicate weights. Greedy decoding and scalar
+synchronization prioritize a readable correctness PoC. Step 5 measures the
+impact of these tradeoffs; step 6 explores compiler, runtime, graph and kernel
+optimizations against that baseline. Keep export-time Torch and native LibTorch
+matched if an optimization experiment requires an isolated version change.
 
 ## References
 
