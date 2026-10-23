@@ -2,9 +2,12 @@
 
 Qwen3-0.6B AOTInductor / C++ PoC.
 
-Steps 1-3 are complete: eager references, validated AOTI packages, and a minimal
-C++ executable. Broader validation, benchmarking and optimization are steps 4-6
-in [PLAN.md](PLAN.md).
+Steps 1-4 are complete: eager references, AOTI packages, a minimal C++ executable,
+and three-path validation. The optional `--eager-numerics` compilation mode
+passes with bitwise eager/AOTI/C++ agreement on the tested logits and full KV
+cache. The original fused packages remain available; their numerical differences
+and the compiler controls are documented below. Benchmarking and optimization
+are steps 5-6 in [PLAN.md](PLAN.md).
 
 The runtime interface is token IDs. Python handles offline tokenization and
 text decoding; the C++ executable handles all model inference and generation.
@@ -167,7 +170,10 @@ export TORCHINDUCTOR_COMPILE_THREADS=2
 These commands use `artifacts/aoti/` by default. Export refuses to overwrite an
 existing package; use `--output work/new-aoti` on both export calls and
 `--packages work/new-aoti` on validation for a fresh build. All three commands
-accept `--model-dir`. The existing validated packages are ready for step 3.
+accept `--model-dir`. These original fused packages pass the step 2 checks;
+the broader full-cache comparison finds a numerical limitation. The step 4
+commands below build the accepted `--eager-numerics` correctness baseline in
+`artifacts/aoti-eager/` without replacing `artifacts/aoti/`.
 
 | File under `artifacts/aoti/` | Purpose |
 | --- | --- |
@@ -264,8 +270,11 @@ benchmarks. Controlled runtime performance measurements remain for step 5.
 
 ## Build and run the C++ executable
 
-`main.cpp` contains metadata/input validation, two AOTI loaders, one shared cache,
-and a greedy generation loop. It uses the native
+`main.cpp` handles the CLI and diagnostic timing. `runtime.h` contains
+metadata/input validation, two AOTI loaders, one shared cache, and a greedy
+generation loop. Its checked `step()` advances contiguous cache positions;
+`generate()` resets the same storage before each request. Both the CLI and the
+optional validation driver use this implementation. It uses the native
 [`AOTIModelPackageLoader`](https://docs.pytorch.org/docs/2.7/torch.compiler_aot_inductor.html)
 API. `CMakeLists.txt` links LibTorch and fetches the header-only nlohmann/json
 3.11.3 release with its published SHA-256. The first configuration needs network
@@ -334,10 +343,280 @@ only the executable to another host is not a complete deployment bundle.
   Child runs clear venv/Python/library-path overrides and use an invalid
   `PYTHONHOME`, with no Python interpreter invocation in the executable.
 
+Step 3 was committed as `20b7c98` (`Add minimal native Qwen3 AOTI generation runtime`),
+with author and committer email `txiadev@163.com`.
 Smoke artifacts, raw traces, dependency/loader logs and `summary.json` are saved
-under `artifacts/native-smoke/`. Step 4 will extend the three-path checks across
-the full boundary matrix and repeated requests in one native process. Step 5
-will establish controlled performance measurements.
+under `artifacts/native-smoke/`. These checks also pass after step 4 extracted
+the shared runtime into `runtime.h`.
+
+## Validate all three execution paths
+
+Build the optional test executable using the existing CMake configuration:
+
+```bash
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
+export TORCHINDUCTOR_COMPILE_THREADS=2
+export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor-eager-reductions"
+
+.venv/bin/python export.py prefill --eager-numerics --output artifacts/aoti-eager
+.venv/bin/python export.py decode --eager-numerics --output artifacts/aoti-eager
+.venv/bin/python validate_aoti.py --packages artifacts/aoti-eager
+
+/data/workspace/abo/.venv/bin/cmake -S . -B build -DQWEN_BUILD_VALIDATION=ON
+/data/workspace/abo/.venv/bin/cmake --build build -j2
+
+.venv/bin/python validate_cpp.py --packages artifacts/aoti-eager \
+  --output artifacts/three-path-eager
+.venv/bin/python tests/smoke_cpp.py --packages artifacts/aoti-eager \
+  --output artifacts/native-smoke-eager
+```
+
+Export refuses to replace packages; choose a fresh package directory for a
+rebuild. The `validate_cpp.py` output directory must be absent; choose a fresh
+`--output` for another run.
+`--native`, `--packages`, `--reference`, and `--model-dir` select alternate inputs.
+This is a correctness test, with cache snapshots and CPU transfers; do not use
+its timings as benchmarks. The eager-numerics packages pass. The original fused
+packages in `artifacts/aoti/` still return exit status 1 for the full-cache
+numerical failures below. Every completed report records `passed`, all cases,
+any violating tensors and an independent FP32 control, including passing runs.
+
+`tests/validate_native.cpp` runs one pair of loaders and one set of 56 KV buffers
+through 24 cases. `validate_cpp.py` runs the original HF StaticCache model and
+Python-loaded AOTI on the same inputs, then compares their results with C++:
+
+- Teacher-forced reference continuations and explicit alternative tokens,
+  including both EOS IDs as ordinary inputs to `step()`.
+- Prompt lengths 1, 2, 7, 128, 511 and 512, each followed by three decode steps.
+  Repeating each case with future cache slots filled with 3 verifies masking.
+- A 1,024-token prefix in chunks of 512, 510, 1 and 1. All cache buffers retain
+  their addresses; each update preserves every slot outside its write region.
+  The next step is rejected without changing the cache or its position.
+- Greedy generation with EOS and limits of 1 and 3, different requests in
+  succession, and the same request repeated after filling the entire cache.
+
+The directory contains `cases.json`, `native.json`, `native.log`, raw C++/HF/AOTI
+logit traces, `context_end.kv.bf16`, and `summary.json`. The cache dump concatenates
+K0, V0, ..., K27, V27 as contiguous BF16 tensors in the documented layout.
+Native/Python AOTI cache comparison checks the raw 16-bit contents exactly.
+
+### Original fused-package results — 2026-10-22
+
+| Check | Result |
+| --- | --- |
+| C++ vs Python AOTI logits | All 163 rows bitwise equal |
+| C++ vs Python AOTI full KV cache | All 56 tensors bitwise equal |
+| Top-1 predictions vs HF BF16 | 163/163 match |
+| Greedy sequences, EOS and generation limits | Pass |
+| Cache addresses, reset/reuse, write regions and overflow rejection | Pass |
+| Future-slot poisoning and repeated-request logits | Bitwise equal |
+| AOTI vs HF BF16 logits | Pass: max relative L2 3.9264%, peak-relative error 2.9240% |
+| AOTI vs HF BF16 full-context KV tensors | **Fail: 21/56 exceed one or both 5% limits** |
+
+The full-cache comparison is stronger than step 2, which checked numerical KV
+contents on the short fixtures and checked logits/write regions at full context.
+The new check finds maximum whole-tensor relative L2 **6.5913%**, maximum
+peak-relative error **17.8385%**, and maximum absolute error **8.5625**. Logit
+error limits are unchanged (maximum absolute difference remains 0.6484375).
+
+Promoting the same checkpoint weights to FP32 gives this independent full-cache
+control. The original BF16 model's rotary-frequency buffer is kept in FP32:
+
+| Comparison | Worst KV relative L2 | Worst KV peak-relative error |
+| --- | ---: | ---: |
+| AOTI BF16 vs HF FP32 | 3.3822% | 8.7940% |
+| HF BF16 vs HF FP32 | 6.0668% | 21.2242% |
+
+Both BF16 paths show outliers against FP32; AOTI has smaller worst-case errors
+in this control. This supports numerical sensitivity as an explanation, but it
+does not make the existing cache criterion pass or establish model quality.
+An isolated prefill build with `max_fusion_size=1` also failed (worst full-cache
+relative L2 6.5222%, peak-relative error 30.7927%); it was not promoted. Its
+probe and results remain under `work/`.
+
+These failure metrics apply to the original packages, which remain unchanged.
+Exact native/AOTI agreement establishes that the discrepancy is also present
+through Python AOTI. The eager-numerics mode below passes the same 5% limits
+without changing the model or the acceptance criteria.
+
+### First-divergence investigation — 2026-10-22
+
+The first differing BF16 activation is **layer 0's rotary position embedding
+(RoPE)**, in `q * cos + rotate_half(q) * sin`. Layer numbers here are zero-based.
+The trace uses the first 512-token chunk of the actual `context_end` case,
+which already contains the large layer-14 V outlier.
+
+To preserve the original fusion decisions, a diagnostic package saves existing
+buffers after kernel launches instead of adding model outputs. Its logits and
+all 56 cache tensors were checked bitwise against the original package.
+HF hooks capture the corresponding eager BF16 and FP32 stages. Input RMSNorm
+and Q/K/V projections match eager BF16 exactly. Same-input probes also establish
+equal BF16 Q normalization, sine/cosine and separate multiplication results;
+the divergence appears when the multiplication and addition execute together.
+
+| Layer-0 stage | AOTI vs BF16 relative L2 | AOTI vs full-model FP32 relative L2 | BF16 vs full-model FP32 relative L2 |
+| --- | ---: | ---: | ---: |
+| Input RMSNorm | 0% | 0.22278% | 0.22278% |
+| Q projection | 0% | 0.20606% | 0.20606% |
+| Q after RoPE | 0.13216% | 0.39093% | 0.39816% |
+| K after RoPE | 0.01752% | 0.29277% | 0.29293% |
+| Attention output projection | 0.25745% | 0.41853% | 0.42183% |
+| MLP down projection | 0.58394% | 0.72890% | 0.73222% |
+
+141,635 of 1,048,576 Q values and 69,599 of 524,288 K values differ after RoPE;
+the maximum absolute difference is 0.125 in both. The FP32 reference promotes
+the same checkpoint weights, preserves the original FP32 rotary-frequency
+buffer, and disables TF32. It is a numerical control for these inputs, not a
+model-quality evaluation.
+
+**The arithmetic mechanism is confirmed.** Let `R` round to BF16, with
+`p = q*cos` and `r = rotate_half(q)*sin` computed from identical BF16 operands:
+
+```text
+Eager: R(R(p) + R(r))
+AOTI:  R(R(p) +   r )
+```
+
+The second formula reproduces every Q and K value from the original compiled
+layer-0 kernel exactly. PTX/SASS inspection finds `fma.rn.bf16x2` /
+`HFMA2.BF16_V2`: the backend contracts a multiply and add, eliminating one
+intermediate rounding step. `emulate_precision_casts=True` is enabled, but
+cast boundaries in the generated Triton source do not prevent this contraction.
+This is distinct from Inductor graph fusion; limiting `max_fusion_size` did not
+resolve the acceptance failure.
+
+For example, Q at `[batch=0, head=0, position=423, channel=32]` has operands
+`q=18.5`, `cos=0.91015625`, `rotated_q=0.76171875`, `sin=0.41015625`:
+
+```text
+p = 16.837890625       R(p) = 16.875
+r =  0.3124237060547   R(r) =  0.3125
+Eager sum before final rounding: 17.1875          -> BF16 17.25
+AOTI fused sum:                  17.1874237060547 -> BF16 17.125
+FP32 p+r with those same inputs: 17.1503143310547
+```
+
+The eager sum is exactly a BF16 midpoint and rounds to 17.25; the fused sum
+lies just below that midpoint. AOTI is closer to FP32 for this same-input
+example. The full-model FP32 activation at this coordinate is instead
+17.30856514 because its upstream activations differ: the local arithmetic
+control and full-model control answer different questions.
+
+`tests/rope_precision.py` reproduces this with four values repeated 256 times
+to exercise packed BF16 arithmetic. It needs only Torch and CUDA, without a
+checkpoint or Transformers. A one-element kernel has a different lowering
+and does not reproduce the discrepancy on this build.
+
+```bash
+.venv/bin/python tests/rope_precision.py --output work/rope-vector-default
+.venv/bin/python tests/rope_precision.py --disable-fp-fusion \
+  --output work/rope-vector-no-fusion
+```
+
+Use fresh output directories. Both runs preserve the separate multiplication
+results; the default compiled sum is 17.125 and the disabled-contraction sum
+is 17.25, equal to eager. The control uses `TRITON_DEFAULT_FP_FUSION=0`, a
+[Triton 3.3 compiler setting](https://github.com/triton-lang/triton/blob/v3.3.0/third_party/nvidia/backend/compiler.py).
+It must be set at compilation; changing it when loading a package has no effect
+on already generated kernels.
+
+We also recompiled **both full-model packages** with that setting and reran the
+complete 24-case/163-row native validation matrix:
+
+| Full-context KV comparison | Default compilation | FP contraction disabled |
+| --- | ---: | ---: |
+| AOTI vs HF BF16: worst relative L2 | 6.5913% | 2.0656% |
+| AOTI vs HF BF16: worst peak-relative error | 17.8385% | 15.3285% |
+| Tensors failing the existing limits | 21/56 | 15/56, peak limit only |
+| Layer-14 V: relative L2 | 6.5913% | 1.7124% |
+| Layer-14 V: peak-relative error | 17.8385% | 1.3184% |
+| AOTI vs HF FP32: worst relative L2 | 3.3822% | 6.1121% |
+| AOTI vs HF FP32: worst peak-relative error | 8.7940% | 21.3546% |
+
+Native/Python AOTI parity, all 163 top-1 predictions, greedy sequences and cache
+behavior checks still pass. Layer-0 K/V now match eager bitwise throughout the
+full context. In the 512-token diagnostic trace, all observed layer-0 stages
+match eager exactly. The next difference is **layer-1 Q RMSNorm's FP32
+sum-of-squares reduction**. Its Q-projection inputs are equal. Adding diagnostic
+stores to the actual generated Triton kernel preserves its output bitwise and
+shows that different FP32 reduction order pushes 3 normalized values across
+BF16 rounding midpoints. The post-RoPE output differs in 3 of 1,048,576 values,
+with maximum absolute difference 0.001953125. Sine and cosine still match eager.
+Substituting the compiled sum into eager RMSNorm reproduces the compiled
+normalization exactly; applying eager RoPE to that result reproduces the full
+compiled kernel exactly. This isolates the residual difference to the reduction.
+Isolated normalization/RoPE probes happen to match eager; only the original
+fused kernel reproduces these differences, so the exact lowering matters.
+
+For example, at position 440/head 5, the squared-input sum is 2.332119941711426
+in the generated kernel versus 2.3321194648742676 in eager. At channel 67,
+the normalized FP32 value before conversion is 0.3056640625 versus
+0.3056640923023224. The tiny difference crosses a BF16 midpoint; after the
+learned scale, the results are 0.30859375 versus 0.310546875. The same-input
+FP32 RMSNorm result is 0.3104400932788849, closer to eager at this coordinate.
+Across the entire normalized Q tensor, both BF16 paths have approximately
+0.23328% relative L2 error versus the same-input FP32 control.
+
+Disabling contraction improves eager parity while worsening the worst FP32
+errors in this stress case. It is a diagnostic control, not an accepted
+accuracy fix. The original packages, runtime and 5% limits remain unchanged;
+this contraction-only control still fails acceptance. Neither configuration's
+finite fixture results establish general generation quality, and performance
+of the control was not measured.
+
+Evidence on the remote host, relative to the project directory:
+
+- `work/precision-trace/`: stage comparisons, same-input probes, arithmetic
+  reconstruction, saved tensors and generated instruction inspection.
+- `work/precision-trace-no-fma/` and `work/precision-trace-layer1-no-fma/`:
+  contraction-disabled layer traces and probes.
+- `work/no-fp-fusion-aoti/`: separate experimental packages and setting audit.
+- `artifacts/three-path-no-fp-fusion/summary.json`: complete control validation,
+  including all remaining failures and FP32 comparisons.
+
+### Step 4 acceptance with eager numerics — 2026-10-23
+
+`export.py --eager-numerics` combines two controls: it disables Triton FP
+contraction and retains `aten.mean.dim` as a native LibTorch operation. This
+preserves eager's RMSNorm reduction order on the tested workload. All other
+operators follow the existing AOTI compilation path, with
+`emulate_precision_casts=True`. The Qwen model and C++ inference loop are unchanged.
+
+Torch 2.7 has no dedicated AOTI C shim for this mean overload, so the generated
+package dispatches it through the native AOTI proxy executor. The standalone
+C++ checks pass without loading Python. There is no Python fallback or custom
+operator registration. Package metadata records the numerical mode and actual
+FP-fusion setting; the runtime rejects a pair with different numerical settings.
+Omitting the flag retains the original compilation behavior.
+
+| Check on `artifacts/aoti-eager/` | Result |
+| --- | --- |
+| HF BF16 StaticCache vs Python AOTI vs C++ logits | All 163 rows bitwise equal |
+| HF BF16 StaticCache vs Python AOTI vs C++ full-context KV | All 56 tensors bitwise equal |
+| Existing 5% numerical limits | Pass; measured BF16 differences are zero |
+| Greedy sequences, EOS and generation limits | Pass |
+| Cache write regions, masking, reset/reuse, final slot and overflow | Pass |
+| Step 2 wrapper, handoff, shape and FP32 regression | Pass |
+| Native CLI smoke and Python-free linkage/loading | Pass |
+| Invalid inputs and mixed numerical settings | 13 rejection cases pass |
+
+The bitwise checks compare the stored representations, including signed zero.
+These results establish equality on the recorded test matrix, not a guarantee
+of bitwise equivalence for every input or future compiler/GPU version.
+
+Against full-model FP32, both this profile and eager BF16 have worst full-cache
+relative L2 6.0668% and peak-relative error 21.2242%. The original fused AOTI
+profile remains closer to FP32 in that stress case (3.3822% and 8.7940%). This
+mode establishes faithful eager execution for the PoC; it is not an accuracy
+improvement over FP32 or a performance optimization. The extra native reductions
+may cost latency; step 5 will measure this profile and the original fused profile
+separately, and step 6 can evaluate arithmetic/performance tradeoffs explicitly.
+
+Final reports are `artifacts/three-path-eager/summary.json`,
+`artifacts/aoti-eager/validation.json`, and `artifacts/native-smoke-eager/summary.json`.
+The initial diagnostic build and passing report remain under
+`work/eager-reductions-aoti/` and `artifacts/three-path-eager-reductions/`.
+Steps 5 and 6 have not started.
 
 ## Planned optimization phase
 
