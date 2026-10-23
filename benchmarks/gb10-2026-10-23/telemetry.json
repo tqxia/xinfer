@@ -1,0 +1,62 @@
+{
+  "eager": {
+    "sm_mhz": {
+      "n": 138,
+      "min": 611.0,
+      "median": 611.0,
+      "max": 1618.0
+    },
+    "gpu_utilization_percent": {
+      "n": 138,
+      "min": 85.0,
+      "median": 90.0,
+      "max": 93.0
+    },
+    "gpu_power_watts": {
+      "n": 138,
+      "min": 5.08,
+      "median": 6.11,
+      "max": 7.44
+    }
+  },
+  "aoti_eager": {
+    "sm_mhz": {
+      "n": 94,
+      "min": 611.0,
+      "median": 611.0,
+      "max": 910.0
+    },
+    "gpu_utilization_percent": {
+      "n": 94,
+      "min": 63.0,
+      "median": 93.0,
+      "max": 94.0
+    },
+    "gpu_power_watts": {
+      "n": 94,
+      "min": 5.49,
+      "median": 6.7,
+      "max": 7.35
+    }
+  },
+  "aoti_fused": {
+    "sm_mhz": {
+      "n": 86,
+      "min": 611.0,
+      "median": 611.0,
+      "max": 611.0
+    },
+    "gpu_utilization_percent": {
+      "n": 86,
+      "min": 89.0,
+      "median": 94.0,
+      "max": 95.0
+    },
+    "gpu_power_watts": {
+      "n": 86,
+      "min": 6.33,
+      "median": 6.9350000000000005,
+      "max": 7.28
+    }
+  }
+}

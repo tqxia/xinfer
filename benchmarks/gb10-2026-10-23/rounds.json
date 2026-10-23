@@ -1,0 +1,236 @@
+[
+  {
+    "round": 1,
+    "profile": "eager",
+    "load_ms": 9334.104933000162,
+    "cuda_init_ms": 296.7009340000004,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 2068.048697999984,
+        "median_prefill_ms": 30.977589000031003,
+        "median_decode_ms_per_token": 28.915994765625896
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1923.903844999586,
+        "median_prefill_ms": 37.05590299978212,
+        "median_decode_ms_per_token": 29.345413187499503
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1968.8634369999818,
+        "median_prefill_ms": 72.86799800021981,
+        "median_decode_ms_per_token": 29.361874624996176
+      }
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_eager",
+    "load_ms": 11621.968418,
+    "cuda_init_ms": 303.419773,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1524.415919,
+        "median_prefill_ms": 20.645396,
+        "median_decode_ms_per_token": 19.726791546875
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1296.516897,
+        "median_prefill_ms": 26.324074,
+        "median_decode_ms_per_token": 19.761796609375
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1325.417514,
+        "median_prefill_ms": 55.096579,
+        "median_decode_ms_per_token": 19.699124828125
+      }
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_fused",
+    "load_ms": 12904.214181,
+    "cuda_init_ms": 295.669051,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1415.844296,
+        "median_prefill_ms": 18.658424,
+        "median_decode_ms_per_token": 18.1195248125
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1193.040825,
+        "median_prefill_ms": 23.778261,
+        "median_decode_ms_per_token": 18.12702546875
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1220.276602,
+        "median_prefill_ms": 49.94294,
+        "median_decode_ms_per_token": 18.11009509375
+      }
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_eager",
+    "load_ms": 11660.806541,
+    "cuda_init_ms": 300.217659,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1528.177452,
+        "median_prefill_ms": 20.634561,
+        "median_decode_ms_per_token": 19.718312125
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1295.732078,
+        "median_prefill_ms": 26.186206,
+        "median_decode_ms_per_token": 19.709335171875
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1332.066881,
+        "median_prefill_ms": 54.992904,
+        "median_decode_ms_per_token": 19.768001671875
+      }
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_fused",
+    "load_ms": 11427.378282,
+    "cuda_init_ms": 300.521103,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1413.670217,
+        "median_prefill_ms": 18.691393,
+        "median_decode_ms_per_token": 18.114339046875
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1191.468964,
+        "median_prefill_ms": 23.731782,
+        "median_decode_ms_per_token": 18.108185703125
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1218.387856,
+        "median_prefill_ms": 49.96743,
+        "median_decode_ms_per_token": 18.12732315625
+      }
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "eager",
+    "load_ms": 7896.2916259997655,
+    "cuda_init_ms": 296.11625899997307,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 2647.5182439999116,
+        "median_prefill_ms": 31.62967500020386,
+        "median_decode_ms_per_token": 29.525253906243165
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1941.165601999728,
+        "median_prefill_ms": 37.50118200014185,
+        "median_decode_ms_per_token": 29.594149718747076
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1982.2906829999738,
+        "median_prefill_ms": 73.36630000008881,
+        "median_decode_ms_per_token": 29.95977453124965
+      }
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_fused",
+    "load_ms": 9682.678942,
+    "cuda_init_ms": 431.308541,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1482.664754,
+        "median_prefill_ms": 18.762446,
+        "median_decode_ms_per_token": 18.30662025
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1224.016928,
+        "median_prefill_ms": 23.9148,
+        "median_decode_ms_per_token": 18.178800421875
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1225.501306,
+        "median_prefill_ms": 50.049808,
+        "median_decode_ms_per_token": 18.15002953125
+      }
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "eager",
+    "load_ms": 9892.282089000219,
+    "cuda_init_ms": 318.51320100031444,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 2531.514439000148,
+        "median_prefill_ms": 30.926950999855762,
+        "median_decode_ms_per_token": 29.21173164062907
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1916.1205779996635,
+        "median_prefill_ms": 36.894426999879215,
+        "median_decode_ms_per_token": 29.273484093749857
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1959.3475910000961,
+        "median_prefill_ms": 72.77865800006111,
+        "median_decode_ms_per_token": 29.270824421871566
+      }
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_eager",
+    "load_ms": 11835.251122,
+    "cuda_init_ms": 311.061699,
+    "cases": [
+      {
+        "name": "length_25",
+        "first_request_ms": 1291.042543,
+        "median_prefill_ms": 20.547315,
+        "median_decode_ms_per_token": 19.651316375
+      },
+      {
+        "name": "length_128",
+        "first_request_ms": 1293.024731,
+        "median_prefill_ms": 26.155045,
+        "median_decode_ms_per_token": 19.654251078125
+      },
+      {
+        "name": "length_512",
+        "first_request_ms": 1320.620852,
+        "median_prefill_ms": 54.944601,
+        "median_decode_ms_per_token": 19.730096046875
+      }
+    ]
+  }
+]
