@@ -6,8 +6,9 @@ Steps 1-4 are complete: eager references, AOTI packages, a minimal C++ executabl
 and three-path validation. The optional `--eager-numerics` compilation mode
 passes with bitwise eager/AOTI/C++ agreement on the tested logits and full KV
 cache. The original fused packages remain available; their numerical differences
-and the compiler controls are documented below. Benchmarking and optimization
-are steps 5-6 in [PLAN.md](PLAN.md).
+and the compiler controls are documented below. Step 5's benchmark is implemented
+and functionally validated. Final performance measurements are moving to a
+separate environment. Optimization remains step 6 in [PLAN.md](PLAN.md).
 
 The runtime interface is token IDs. Python handles offline tokenization and
 text decoding; the C++ executable handles all model inference and generation.
@@ -19,10 +20,12 @@ compiler/                 Export/compilation, offline helpers and Python validat
   export.py, model.py   AOTI compilation and the thin Hugging Face model adapter
   prepare.py            Offline tokenization and decoding
   validate*.py, tests/  Eager/AOTI/native comparisons and numerical probes
+  benchmark.py          Eager benchmark and native-worker orchestration
   requirements.*        Python dependency pins
   prompts.json          Reference prompt fixtures
 runtime/                    Native runtime and its build configuration
   runtime.h, main.cpp   Shared runtime and token-ID CLI
+  benchmark.cpp         Native benchmark driver
   tests/                Native validation driver
   CMakeLists.txt        LibTorch dependencies and native targets
 CMakeLists.txt          Root build entry point
@@ -30,7 +33,7 @@ CMakeLists.txt          Root build entry point
 
 Run the commands below from the repository root. `.venv/`, `build/`, `artifacts/`
 and `work/` remain there; executable paths stay `build/qwen_aoti`,
-`build/qwen_validate`. The Python scripts use sibling
+`build/qwen_validate` and `build/qwen_benchmark`. The Python scripts use sibling
 imports and need no package installation or `PYTHONPATH` override.
 
 ## Environment
@@ -637,7 +640,135 @@ Final reports are `artifacts/three-path-eager/summary.json`,
 `artifacts/aoti-eager/validation.json`, and `artifacts/native-smoke-eager/summary.json`.
 The initial diagnostic build and passing report remain under
 `work/eager-reductions-aoti/` and `artifacts/three-path-eager-reductions/`.
-Steps 5 and 6 have not started.
+Step 4 was committed as `02587ac` with author and committer email `txiadev@163.com`.
+
+## Benchmark the baseline
+
+`runtime/benchmark.cpp` uses the same checked `Runtime` as the native CLI. Its small
+driver adds fixed-token requests and measurement only. `compiler/benchmark.py` runs the
+matching eager wrapper and orchestrates fresh processes for three profiles:
+
+| Profile | Execution | Packages |
+| --- | --- | --- |
+| `eager` | Python, original HF layers through `QwenStep` | Local checkpoint |
+| `aoti_eager` | C++, eager-numerics compilation | `artifacts/aoti-eager/` |
+| `aoti_fused` | C++, original fused compilation | `artifacts/aoti/` |
+
+The fused profile retains the step 4 numerical failures; a timing comparison
+does not establish equivalent numerical accuracy or generation quality.
+
+```bash
+cd /data/workspace/develop/qwen3-aoti-poc
+
+# Use the existing Release build configured in the C++ section above.
+/data/workspace/abo/.venv/bin/cmake -S . -B build -DQWEN_BUILD_BENCHMARK=ON
+/data/workspace/abo/.venv/bin/cmake --build build --target qwen_benchmark -j2
+
+# Requires an idle GPU; choose an absent output directory for every run.
+.venv/bin/python compiler/benchmark.py run --output artifacts/benchmark
+
+# Functional smoke check only; shared-GPU results are marked provisional.
+.venv/bin/python compiler/benchmark.py run --output artifacts/benchmark-smoke-new \
+  --rounds 1 --warmup 1 --repeats 2 --lengths 1 512 \
+  --decode-steps 2 --allow-busy
+
+# Run only the native worker against a saved workload, without Python.
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 ./build/qwen_benchmark \
+  artifacts/aoti-eager artifacts/benchmark/workload.json work/native-benchmark.json
+```
+
+The default workload uses prompt lengths **25, 128 and 512**, followed by
+**64 decode steps**. The capital fixture's prompt and continuation IDs repeat
+as needed to construct each sequence. All profiles consume identical IDs:
+this is teacher-forced throughput measurement, with EOS treated as ordinary
+input. It produces 65 predictions per request, including the prefill prediction.
+The production CLI still stops generation at EOS.
+
+For each shape, a worker records one first-use request, runs two additional
+warmup requests, then measures five requests. Three fresh-process rounds rotate
+profile order, giving 15 measured requests per profile and shape. Each request
+zeros the entire shared cache. All workers use one OpenMP/MKL CPU thread. Native
+workers clear Python and library-path overrides and use an invalid `PYTHONHOME`.
+
+Timings use synchronized host wall clocks:
+
+- `cuda_init_ms` measures CUDA initialization separately.
+- `load_ms` measures model/package loading and cache allocation after CUDA
+  initialization. Native loading includes both packages. Imports and executable
+  dynamic linking are outside this interval. Filesystem caches are uncontrolled;
+  package hashing may warm them, so this is not cold-disk load latency.
+- `reset_ms` measures cache reset separately from prefill.
+- `prefill_ms` is inference-only time to the first predicted token. It includes
+  input construction/transfer, model execution, GPU argmax, scalar CPU transfer
+  and synchronization. It excludes loading, cache reset, tokenization and I/O.
+- `decode_ms_per_token` is the synchronized 64-step block divided by 64. It
+  includes input construction, native runtime checks, GPU argmax and the same
+  scalar GPU-to-CPU synchronization used by the production loop. It is not a
+  device-only kernel metric. Tokens/second is 1,000 divided by the median ms/token.
+- `request_ms` includes reset, prefill and decode, including boundary syncs.
+
+First-use requests are retained separately and excluded from warm statistics.
+The first use of a later shape is not a cold process. Medians, p10/p90, means
+and ranges summarize request samples; decode percentiles describe **block
+averages**, not individual-token latency. Predictions must be stable across
+repetitions and process rounds. The eager-numerics profile must match eager
+prediction IDs; fused-profile agreement is reported. Full-logit/cache numerical
+validation remains the separate step 4 suite.
+
+Memory reports include PyTorch allocator allocated/reserved peaks and CUDA
+device-memory samples after context initialization, loading and each request.
+AOTI's raw CUDA weight allocations bypass the allocator counters, so allocator
+peaks alone materially undercount native memory. `sampled_peak_device_used_bytes`
+is the highest request-boundary device usage; `sampled_peak_device_delta_bytes`
+subtracts that worker's post-initialization usage. These device-wide samples can
+include other allocations and miss transient peaks. The native baseline loads
+two independent weight pools; both packages share the same 112 MiB KV cache.
+
+The runner requires five consecutive samples with both GPU and memory-controller
+utilization at or below 10% before and after every worker. It aborts after 30
+unsuccessful checks. One-second GPU utilization, memory, clocks and power logs
+help assess interference, but boundary checks alone do not prove exclusivity.
+`--allow-busy` bypasses this requirement for harness checks and labels the report
+`provisional_shared_gpu`; those results must not be used as the final baseline.
+
+The output directory saves the exact workload, source snapshots/hashes, native
+binary hash, model manifest, package metadata/sizes/hashes, GPU/driver details,
+individual worker reports/logs, idle checks, telemetry and `summary.json`.
+Package metadata includes the recorded export/compile elapsed time. Those
+existing builds used different compiler-cache states, so their times are not
+a controlled comparison of compilation speed. Interrupted runs preserve partial
+evidence and do not produce a completed summary; choose a new directory to retry.
+
+### Step 5 status — 2026-10-23
+
+Recorded export/compile wall times and package sizes:
+
+| Profile | Prefill compile (s) | Decode compile (s) | Prefill package (bytes) | Decode package (bytes) |
+| --- | ---: | ---: | ---: | ---: |
+| Eager numerics | 54.74 | 41.88 | 1,194,398,762 | 1,194,224,280 |
+| Original fused | 56.81 | 41.91 | 1,194,162,006 | 1,193,995,187 |
+
+These are metadata from the existing builds, with the compiler-cache caveat
+above. The final benchmark-target rebuild took 9.63 seconds using the existing
+Release configuration and dependencies; this is not a clean project build time.
+
+The benchmark builds successfully. A shared-GPU smoke run at prompt lengths 1
+and 512 passed for all three profiles: repeated predictions were stable and
+all three predictions per case agreed with eager. The native consumed-position
+check also passed. A further run at lengths 25, 128 and 512 with 64 decode steps
+passed for all profiles, with 65/65 predictions agreeing with eager at each
+length and one CPU thread confirmed in each worker. These checks include
+first-use, warmup and two measured requests per case. They validate the harness;
+their timings are provisional because the GPU was shared.
+
+The idle guard correctly rejected a timing run while the otherwise occupied
+GPU reported 99-100% utilization. Evidence is saved under
+`artifacts/benchmark-smoke/`, `artifacts/benchmark-validation/`,
+`work/benchmark-position-smoke.json` and `work/benchmark-idle-check.log`.
+
+The development host is fully loaded, so final performance measurements will
+run in a separate environment. Step 5's benchmark implementation is ready;
+its final measurements remain pending. Step 6 has not started.
 
 ## Planned optimization phase
 
