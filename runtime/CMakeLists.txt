@@ -25,3 +25,8 @@ foreach(target IN LISTS QWEN_TARGETS)
   target_compile_options(${target} PRIVATE ${TORCH_FLAGS} -Wall -Wextra)
   target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json)
 endforeach()
+
+option(QWEN_BUILD_DELTANET "Build the isolated Qwen3.5 DeltaNet probe" OFF)
+if(QWEN_BUILD_DELTANET)
+  add_subdirectory(qwen35)
+endif()

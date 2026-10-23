@@ -2,6 +2,11 @@
 
 Qwen3-0.6B AOTInductor / C++ PoC.
 
+The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
+first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
+Its compiler/runtime code, dependencies and artifacts are separate from the
+Qwen3-0.6B baseline described below.
+
 Steps 1-4 are complete: eager references, AOTI packages, a minimal C++ executable,
 and three-path validation. The optional `--eager-numerics` compilation mode
 passes with bitwise eager/AOTI/C++ agreement on the tested logits and full KV
