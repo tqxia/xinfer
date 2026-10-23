@@ -5,6 +5,11 @@ Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
 
+The separate [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed
+stage 1: a real DeltaNet block exports and compiles for T=64/T=1, with bitwise
+C++/Python AOTI parity and passing eager/FP32 diagnostics. Its remaining stages
+are recorded there; the plan below describes the original Qwen3-0.6B PoC.
+
 ## Goal and scope
 
 Demonstrate a complete autoregressive generation loop for Qwen/Qwen3-0.6B:
