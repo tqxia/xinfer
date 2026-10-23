@@ -95,23 +95,31 @@ weight-sharing machinery. Both loaders must still share the caller's KV tensors.
 The planned BF16 cache is 112 MiB, calculated from
 2 * 28 * 8 * 1024 * 128 * 2 bytes. Other buffers and weights are additional.
 
-## Proposed small file layout
+## File layout
 
-README.md          Exact setup/export/build/run/validate commands and results
-PLAN.md            This design and acceptance criteria
-requirements.txt   Pinned additional Python dependencies
-model.py           Thin Qwen wrapper and explicit cache adapter
-export.py          Load weights, export/compile both graphs, write metadata
-prepare.py         Offline prompt tokenization and output-ID decoding
-validate.py        Eager reference generation and regression cases
-validate_aoti.py   Static-cache, compiled-package and FP32-control checks
-runtime.h          Shared native loader, cache, checked step and greedy generation
-main.cpp           Native CLI, input/output paths and diagnostic timing
-CMakeLists.txt     Build against the matching LibTorch
-tests/smoke_cpp.py Native generation, trace parity and CLI rejection smoke checks
-tests/validate_native.cpp Repeated-request and cache checks using the same Runtime
-validate_cpp.py    Three-path forced-token/greedy comparisons and FP32 investigation
-tests/rope_precision.py Minimal checkpoint-free reproducer of BF16 RoPE contraction
+```text
+README.md                     Setup/export/build/run/validate commands and results
+PLAN.md                       Design and acceptance criteria
+CMakeLists.txt                Root entry point; build executables in build/
+compiler/requirements.*         Pinned Python dependencies
+compiler/prompts.json           Reference prompt fixtures
+compiler/model.py               Thin Qwen wrapper and explicit cache adapter
+compiler/export.py              Load weights, export/compile graphs, write metadata
+compiler/prepare.py             Offline tokenization and output-ID decoding
+compiler/validate.py            Eager reference generation and regression cases
+compiler/validate_aoti.py        Cache, compiled-package and FP32-control checks
+compiler/validate_cpp.py         Three-path comparisons and FP32 investigation
+compiler/tests/smoke_cpp.py      Native parity, CLI and Python-free loading checks
+compiler/tests/rope_precision.py Minimal BF16 RoPE contraction reproducer
+runtime/CMakeLists.txt            Native targets and matching LibTorch dependencies
+runtime/runtime.h                 Shared native loader, cache, step and generation
+runtime/main.cpp                  Native CLI, input/output and diagnostic timing
+runtime/tests/validate_native.cpp Repeated-request and cache checks using that Runtime
+```
+
+Run scripts and CMake from the repository root. Python code uses sibling imports;
+no installable Python package or import-path shim is needed. Build products,
+artifacts and the project virtual environment keep their existing root paths.
 
 Ignored generated directories: .venv/, build/, artifacts/, work/.
 Use simple token-ID files and a small metadata file; avoid a general framework,

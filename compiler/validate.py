@@ -73,7 +73,7 @@ def environment(model, model_manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
-    parser.add_argument("--prompts", type=Path, default=Path("prompts.json"))
+    parser.add_argument("--prompts", type=Path, default=Path(__file__).with_name("prompts.json"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/reference"))
     parser.add_argument("--max-new-tokens", type=int, default=64)
     args = parser.parse_args()
