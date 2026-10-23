@@ -1,0 +1,2222 @@
+{
+  "torch_version": "2.13.0+cu130",
+  "device": "NVIDIA GB10",
+  "phases": [
+    {
+      "name": "idle_before",
+      "start": 1792767603.0927942,
+      "end": 1792767606.0933242,
+      "telemetry": {
+        "samples": 10,
+        "sm_mhz": {
+          "min": 208.0,
+          "median": 208.0,
+          "max": 214.0
+        },
+        "gpu_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "memory_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "temperature_c": {
+          "min": 41.0,
+          "median": 41.0,
+          "max": 41.0
+        },
+        "gpu_power_w": {
+          "min": 3.14,
+          "median": 3.16,
+          "max": 3.23
+        },
+        "clock_event_reasons": [
+          "0x0000000000000000"
+        ],
+        "pstates": [
+          "P8"
+        ]
+      }
+    },
+    {
+      "name": "bfloat16",
+      "start": 1792767606.6464655,
+      "end": 1792767621.67883,
+      "dimension": 8192,
+      "iterations": 1328,
+      "cuda_elapsed_ms": 14964.644645690918,
+      "cuda_ms_per_gemm": 11.268557715128702,
+      "dense_tflops": 97.57341228326327,
+      "output_finite": true,
+      "telemetry": {
+        "samples": 70,
+        "sm_mhz": {
+          "min": 2255.0,
+          "median": 2288.0,
+          "max": 2346.0
+        },
+        "gpu_util_pct": {
+          "min": 96.0,
+          "median": 96.0,
+          "max": 96.0
+        },
+        "memory_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "temperature_c": {
+          "min": 57.0,
+          "median": 62.0,
+          "max": 65.0
+        },
+        "gpu_power_w": {
+          "min": 91.23,
+          "median": 94.515,
+          "max": 98.07
+        },
+        "clock_event_reasons": [
+          "0x0000000000000000"
+        ],
+        "pstates": [
+          "P0"
+        ]
+      }
+    },
+    {
+      "name": "float16",
+      "start": 1792767621.9888208,
+      "end": 1792767637.026518,
+      "dimension": 8192,
+      "iterations": 1304,
+      "cuda_elapsed_ms": 14971.564262390137,
+      "cuda_ms_per_gemm": 11.48126093741575,
+      "dense_tflops": 95.76575550102277,
+      "output_finite": true,
+      "telemetry": {
+        "samples": 70,
+        "sm_mhz": {
+          "min": 2190.0,
+          "median": 2197.0,
+          "max": 2210.0
+        },
+        "gpu_util_pct": {
+          "min": 73.0,
+          "median": 96.0,
+          "max": 96.0
+        },
+        "memory_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "temperature_c": {
+          "min": 61.0,
+          "median": 68.0,
+          "max": 70.0
+        },
+        "gpu_power_w": {
+          "min": 75.54,
+          "median": 94.305,
+          "max": 96.78
+        },
+        "clock_event_reasons": [
+          "0x0000000000000000"
+        ],
+        "pstates": [
+          "P0"
+        ]
+      }
+    },
+    {
+      "name": "idle_after",
+      "start": 1792767637.0305483,
+      "end": 1792767640.0310566,
+      "telemetry": {
+        "samples": 10,
+        "sm_mhz": {
+          "min": 2411.0,
+          "median": 2411.0,
+          "max": 2411.0
+        },
+        "gpu_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "memory_util_pct": {
+          "min": 0.0,
+          "median": 0.0,
+          "max": 0.0
+        },
+        "temperature_c": {
+          "min": 54.0,
+          "median": 55.0,
+          "max": 55.0
+        },
+        "gpu_power_w": {
+          "min": 11.69,
+          "median": 11.815,
+          "max": 12.1
+        },
+        "clock_event_reasons": [
+          "0x0000000000000000"
+        ],
+        "pstates": [
+          "P0"
+        ]
+      }
+    }
+  ],
+  "samples": [
+    {
+      "epoch": 1792767603.1154742,
+      "timestamp": "2026/10/23 23:00:03.106",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.12,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767603.3165078,
+      "timestamp": "2026/10/23 23:00:03.316",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.12,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767603.5173094,
+      "timestamp": "2026/10/23 23:00:03.517",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.12,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767603.718194,
+      "timestamp": "2026/10/23 23:00:03.717",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767603.9185362,
+      "timestamp": "2026/10/23 23:00:03.918",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767604.1186423,
+      "timestamp": "2026/10/23 23:00:04.118",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767604.3196585,
+      "timestamp": "2026/10/23 23:00:04.319",
+      "pstate": "P8",
+      "sm_mhz": 214.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.18,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767604.520389,
+      "timestamp": "2026/10/23 23:00:04.520",
+      "pstate": "P8",
+      "sm_mhz": 214.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.18,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767604.7207444,
+      "timestamp": "2026/10/23 23:00:04.720",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.14,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767604.9216235,
+      "timestamp": "2026/10/23 23:00:04.921",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.14,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767605.1224253,
+      "timestamp": "2026/10/23 23:00:05.122",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.14,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767605.3230972,
+      "timestamp": "2026/10/23 23:00:05.322",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767605.524022,
+      "timestamp": "2026/10/23 23:00:05.523",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767605.7248318,
+      "timestamp": "2026/10/23 23:00:05.724",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767605.9257262,
+      "timestamp": "2026/10/23 23:00:05.925",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767606.2187605,
+      "timestamp": "2026/10/23 23:00:06.126",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767606.327118,
+      "timestamp": "2026/10/23 23:00:06.326",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767606.5279782,
+      "timestamp": "2026/10/23 23:00:06.527",
+      "pstate": "P8",
+      "sm_mhz": 208.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 41.0,
+      "gpu_power_w": 3.16,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767606.7287335,
+      "timestamp": "2026/10/23 23:00:06.728",
+      "pstate": "P0",
+      "sm_mhz": 2392.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 42.0,
+      "gpu_power_w": 8.62,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767606.9294076,
+      "timestamp": "2026/10/23 23:00:06.929",
+      "pstate": "P0",
+      "sm_mhz": 2392.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 42.0,
+      "gpu_power_w": 8.62,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767607.1296668,
+      "timestamp": "2026/10/23 23:00:07.129",
+      "pstate": "P0",
+      "sm_mhz": 2392.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 42.0,
+      "gpu_power_w": 8.62,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767607.3305418,
+      "timestamp": "2026/10/23 23:00:07.330",
+      "pstate": "P0",
+      "sm_mhz": 2346.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 56.0,
+      "gpu_power_w": 29.33,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767607.5313244,
+      "timestamp": "2026/10/23 23:00:07.531",
+      "pstate": "P0",
+      "sm_mhz": 2346.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 56.0,
+      "gpu_power_w": 29.33,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767607.7320752,
+      "timestamp": "2026/10/23 23:00:07.731",
+      "pstate": "P0",
+      "sm_mhz": 2320.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 57.0,
+      "gpu_power_w": 98.07,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767607.9329607,
+      "timestamp": "2026/10/23 23:00:07.932",
+      "pstate": "P0",
+      "sm_mhz": 2320.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 57.0,
+      "gpu_power_w": 98.07,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767608.1337087,
+      "timestamp": "2026/10/23 23:00:08.133",
+      "pstate": "P0",
+      "sm_mhz": 2320.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 57.0,
+      "gpu_power_w": 98.07,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767608.3342404,
+      "timestamp": "2026/10/23 23:00:08.334",
+      "pstate": "P0",
+      "sm_mhz": 2320.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 58.0,
+      "gpu_power_w": 95.31,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767608.534948,
+      "timestamp": "2026/10/23 23:00:08.534",
+      "pstate": "P0",
+      "sm_mhz": 2320.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 58.0,
+      "gpu_power_w": 95.31,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767608.7349927,
+      "timestamp": "2026/10/23 23:00:08.734",
+      "pstate": "P0",
+      "sm_mhz": 2314.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 59.0,
+      "gpu_power_w": 95.17,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767608.935883,
+      "timestamp": "2026/10/23 23:00:08.935",
+      "pstate": "P0",
+      "sm_mhz": 2314.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 59.0,
+      "gpu_power_w": 95.17,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767609.136486,
+      "timestamp": "2026/10/23 23:00:09.136",
+      "pstate": "P0",
+      "sm_mhz": 2314.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 59.0,
+      "gpu_power_w": 95.17,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767609.3368163,
+      "timestamp": "2026/10/23 23:00:09.336",
+      "pstate": "P0",
+      "sm_mhz": 2314.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 59.0,
+      "gpu_power_w": 94.96,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767609.537377,
+      "timestamp": "2026/10/23 23:00:09.537",
+      "pstate": "P0",
+      "sm_mhz": 2314.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 59.0,
+      "gpu_power_w": 94.96,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767609.738105,
+      "timestamp": "2026/10/23 23:00:09.737",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.84,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767609.9387774,
+      "timestamp": "2026/10/23 23:00:09.938",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.84,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767610.1395667,
+      "timestamp": "2026/10/23 23:00:10.139",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.84,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767610.340249,
+      "timestamp": "2026/10/23 23:00:10.340",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.85,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767610.5411518,
+      "timestamp": "2026/10/23 23:00:10.540",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.85,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767610.741912,
+      "timestamp": "2026/10/23 23:00:10.741",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.83,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767610.9427235,
+      "timestamp": "2026/10/23 23:00:10.942",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.83,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767611.1435192,
+      "timestamp": "2026/10/23 23:00:11.143",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 60.0,
+      "gpu_power_w": 94.83,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767611.3441532,
+      "timestamp": "2026/10/23 23:00:11.344",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.86,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767611.5449433,
+      "timestamp": "2026/10/23 23:00:11.544",
+      "pstate": "P0",
+      "sm_mhz": 2307.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.86,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767611.7457397,
+      "timestamp": "2026/10/23 23:00:11.745",
+      "pstate": "P0",
+      "sm_mhz": 2301.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767611.9464717,
+      "timestamp": "2026/10/23 23:00:11.946",
+      "pstate": "P0",
+      "sm_mhz": 2301.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767612.146862,
+      "timestamp": "2026/10/23 23:00:12.146",
+      "pstate": "P0",
+      "sm_mhz": 2301.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767612.3477314,
+      "timestamp": "2026/10/23 23:00:12.347",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.86,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767612.548522,
+      "timestamp": "2026/10/23 23:00:12.548",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 94.86,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767612.749354,
+      "timestamp": "2026/10/23 23:00:12.749",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.91,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767612.950166,
+      "timestamp": "2026/10/23 23:00:12.949",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.91,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767613.150895,
+      "timestamp": "2026/10/23 23:00:13.150",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.91,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767613.3517075,
+      "timestamp": "2026/10/23 23:00:13.351",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.98,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767613.552512,
+      "timestamp": "2026/10/23 23:00:13.552",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.98,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767613.7530951,
+      "timestamp": "2026/10/23 23:00:13.752",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767613.9531314,
+      "timestamp": "2026/10/23 23:00:13.953",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767614.1533277,
+      "timestamp": "2026/10/23 23:00:14.153",
+      "pstate": "P0",
+      "sm_mhz": 2294.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767614.3537943,
+      "timestamp": "2026/10/23 23:00:14.353",
+      "pstate": "P0",
+      "sm_mhz": 2346.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 91.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767614.5541584,
+      "timestamp": "2026/10/23 23:00:14.554",
+      "pstate": "P0",
+      "sm_mhz": 2346.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 91.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767614.75476,
+      "timestamp": "2026/10/23 23:00:14.754",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 91.25,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767614.955308,
+      "timestamp": "2026/10/23 23:00:14.955",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 91.25,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767615.1558537,
+      "timestamp": "2026/10/23 23:00:15.155",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 62.0,
+      "gpu_power_w": 91.25,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767615.3565302,
+      "timestamp": "2026/10/23 23:00:15.356",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.52,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767615.5571604,
+      "timestamp": "2026/10/23 23:00:15.556",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.52,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767615.7578018,
+      "timestamp": "2026/10/23 23:00:15.757",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.51,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767615.958375,
+      "timestamp": "2026/10/23 23:00:15.958",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.51,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767616.1587212,
+      "timestamp": "2026/10/23 23:00:16.158",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.51,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767616.3592553,
+      "timestamp": "2026/10/23 23:00:16.359",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.5,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767616.5596159,
+      "timestamp": "2026/10/23 23:00:16.559",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.5,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767616.7599556,
+      "timestamp": "2026/10/23 23:00:16.759",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.49,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767616.9605117,
+      "timestamp": "2026/10/23 23:00:16.960",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.49,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767617.1608403,
+      "timestamp": "2026/10/23 23:00:17.160",
+      "pstate": "P0",
+      "sm_mhz": 2288.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 63.0,
+      "gpu_power_w": 94.49,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767617.3614979,
+      "timestamp": "2026/10/23 23:00:17.361",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.44,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767617.561866,
+      "timestamp": "2026/10/23 23:00:17.561",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.44,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767617.7626762,
+      "timestamp": "2026/10/23 23:00:17.762",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767617.9631908,
+      "timestamp": "2026/10/23 23:00:17.962",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767618.1638024,
+      "timestamp": "2026/10/23 23:00:18.163",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767618.364487,
+      "timestamp": "2026/10/23 23:00:18.364",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.39,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767618.5646603,
+      "timestamp": "2026/10/23 23:00:18.564",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.39,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767618.7653565,
+      "timestamp": "2026/10/23 23:00:18.765",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.31,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767618.9659567,
+      "timestamp": "2026/10/23 23:00:18.965",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.31,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767619.1663592,
+      "timestamp": "2026/10/23 23:00:19.166",
+      "pstate": "P0",
+      "sm_mhz": 2281.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.31,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767619.366532,
+      "timestamp": "2026/10/23 23:00:19.366",
+      "pstate": "P0",
+      "sm_mhz": 2255.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.26,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767619.5672395,
+      "timestamp": "2026/10/23 23:00:19.566",
+      "pstate": "P0",
+      "sm_mhz": 2255.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 64.0,
+      "gpu_power_w": 94.26,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767619.767846,
+      "timestamp": "2026/10/23 23:00:19.767",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.26,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767619.9684029,
+      "timestamp": "2026/10/23 23:00:19.968",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.26,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767620.1686227,
+      "timestamp": "2026/10/23 23:00:20.168",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.26,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767620.3691523,
+      "timestamp": "2026/10/23 23:00:20.369",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.21,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767620.5696661,
+      "timestamp": "2026/10/23 23:00:20.569",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.21,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767620.7702117,
+      "timestamp": "2026/10/23 23:00:20.770",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.11,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767620.9707623,
+      "timestamp": "2026/10/23 23:00:20.970",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.11,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767621.1713297,
+      "timestamp": "2026/10/23 23:00:21.171",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.11,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767621.3717566,
+      "timestamp": "2026/10/23 23:00:21.371",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 93.99,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767621.5722237,
+      "timestamp": "2026/10/23 23:00:21.572",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 93.99,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767621.772997,
+      "timestamp": "2026/10/23 23:00:21.772",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767621.973623,
+      "timestamp": "2026/10/23 23:00:21.973",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767622.1742246,
+      "timestamp": "2026/10/23 23:00:22.173",
+      "pstate": "P0",
+      "sm_mhz": 2275.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 65.0,
+      "gpu_power_w": 94.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767622.3747864,
+      "timestamp": "2026/10/23 23:00:22.374",
+      "pstate": "P0",
+      "sm_mhz": 2418.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 75.51,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767622.5752497,
+      "timestamp": "2026/10/23 23:00:22.575",
+      "pstate": "P0",
+      "sm_mhz": 2418.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 75.51,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767622.7758796,
+      "timestamp": "2026/10/23 23:00:22.775",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 75.54,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767622.9764166,
+      "timestamp": "2026/10/23 23:00:22.976",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 75.54,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767623.1770947,
+      "timestamp": "2026/10/23 23:00:23.176",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 75.54,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767623.3776762,
+      "timestamp": "2026/10/23 23:00:23.377",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767623.5783453,
+      "timestamp": "2026/10/23 23:00:23.578",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.23,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767623.7784927,
+      "timestamp": "2026/10/23 23:00:23.778",
+      "pstate": "P0",
+      "sm_mhz": 2210.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.18,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767623.9791808,
+      "timestamp": "2026/10/23 23:00:23.978",
+      "pstate": "P0",
+      "sm_mhz": 2210.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.18,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767624.1797104,
+      "timestamp": "2026/10/23 23:00:24.179",
+      "pstate": "P0",
+      "sm_mhz": 2210.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.18,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767624.3799813,
+      "timestamp": "2026/10/23 23:00:24.379",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.15,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767624.5805407,
+      "timestamp": "2026/10/23 23:00:24.580",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 94.15,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767624.7808826,
+      "timestamp": "2026/10/23 23:00:24.780",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 93.6,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767624.9814324,
+      "timestamp": "2026/10/23 23:00:24.981",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 93.6,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767625.181753,
+      "timestamp": "2026/10/23 23:00:25.181",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 66.0,
+      "gpu_power_w": 93.6,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767625.3822422,
+      "timestamp": "2026/10/23 23:00:25.382",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.53,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767625.5826101,
+      "timestamp": "2026/10/23 23:00:25.582",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.53,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767625.7832046,
+      "timestamp": "2026/10/23 23:00:25.782",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.94,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767625.983901,
+      "timestamp": "2026/10/23 23:00:25.983",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.94,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767626.1845136,
+      "timestamp": "2026/10/23 23:00:26.184",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.94,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767626.3845327,
+      "timestamp": "2026/10/23 23:00:26.384",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.97,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767626.5850792,
+      "timestamp": "2026/10/23 23:00:26.584",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.97,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767626.7857246,
+      "timestamp": "2026/10/23 23:00:26.785",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767626.986121,
+      "timestamp": "2026/10/23 23:00:26.985",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767627.186729,
+      "timestamp": "2026/10/23 23:00:27.186",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767627.386852,
+      "timestamp": "2026/10/23 23:00:27.386",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.79,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767627.5874836,
+      "timestamp": "2026/10/23 23:00:27.587",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.79,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767627.7881584,
+      "timestamp": "2026/10/23 23:00:27.787",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.82,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767627.9887733,
+      "timestamp": "2026/10/23 23:00:27.988",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 67.0,
+      "gpu_power_w": 93.82,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767628.1892474,
+      "timestamp": "2026/10/23 23:00:28.189",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 93.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767628.3897388,
+      "timestamp": "2026/10/23 23:00:28.389",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 93.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767628.5902343,
+      "timestamp": "2026/10/23 23:00:28.590",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 93.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767628.7909145,
+      "timestamp": "2026/10/23 23:00:28.790",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 93.74,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767628.9910955,
+      "timestamp": "2026/10/23 23:00:28.990",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 93.74,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767629.1916006,
+      "timestamp": "2026/10/23 23:00:29.191",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 73.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 89.89,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767629.3920395,
+      "timestamp": "2026/10/23 23:00:29.391",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 73.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 89.89,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767629.5925076,
+      "timestamp": "2026/10/23 23:00:29.592",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 73.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 89.89,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767629.792956,
+      "timestamp": "2026/10/23 23:00:29.792",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 73.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 91.87,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767629.9930577,
+      "timestamp": "2026/10/23 23:00:29.992",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 73.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 91.87,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767630.1935256,
+      "timestamp": "2026/10/23 23:00:30.193",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 96.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767630.3939638,
+      "timestamp": "2026/10/23 23:00:30.393",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 96.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767630.5944169,
+      "timestamp": "2026/10/23 23:00:30.594",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 68.0,
+      "gpu_power_w": 96.78,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767630.7948995,
+      "timestamp": "2026/10/23 23:00:30.794",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.95,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767630.9951236,
+      "timestamp": "2026/10/23 23:00:30.994",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.95,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767631.1955638,
+      "timestamp": "2026/10/23 23:00:31.195",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767631.3959968,
+      "timestamp": "2026/10/23 23:00:31.395",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767631.5964735,
+      "timestamp": "2026/10/23 23:00:31.596",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.88,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767631.7971036,
+      "timestamp": "2026/10/23 23:00:31.796",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.82,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767631.997356,
+      "timestamp": "2026/10/23 23:00:31.997",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.82,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767632.197801,
+      "timestamp": "2026/10/23 23:00:32.197",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767632.3982382,
+      "timestamp": "2026/10/23 23:00:32.398",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767632.5986989,
+      "timestamp": "2026/10/23 23:00:32.598",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767632.7991595,
+      "timestamp": "2026/10/23 23:00:32.799",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.75,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767632.9996111,
+      "timestamp": "2026/10/23 23:00:32.999",
+      "pstate": "P0",
+      "sm_mhz": 2203.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.75,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767633.2000573,
+      "timestamp": "2026/10/23 23:00:33.199",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.75,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767633.400495,
+      "timestamp": "2026/10/23 23:00:33.400",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.75,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767633.6009455,
+      "timestamp": "2026/10/23 23:00:33.600",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.75,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767633.8014102,
+      "timestamp": "2026/10/23 23:00:33.801",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.66,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767634.001833,
+      "timestamp": "2026/10/23 23:00:34.001",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 69.0,
+      "gpu_power_w": 94.66,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767634.2022734,
+      "timestamp": "2026/10/23 23:00:34.202",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.57,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767634.4024653,
+      "timestamp": "2026/10/23 23:00:34.402",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.57,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767634.6029139,
+      "timestamp": "2026/10/23 23:00:34.602",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.57,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767634.8030572,
+      "timestamp": "2026/10/23 23:00:34.802",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.52,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767635.0034773,
+      "timestamp": "2026/10/23 23:00:35.003",
+      "pstate": "P0",
+      "sm_mhz": 2197.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.52,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767635.2039301,
+      "timestamp": "2026/10/23 23:00:35.203",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767635.4043624,
+      "timestamp": "2026/10/23 23:00:35.404",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767635.6045747,
+      "timestamp": "2026/10/23 23:00:35.604",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.41,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767635.805213,
+      "timestamp": "2026/10/23 23:00:35.804",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.38,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767636.0054746,
+      "timestamp": "2026/10/23 23:00:36.005",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.38,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767636.2059216,
+      "timestamp": "2026/10/23 23:00:36.205",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.43,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767636.4063592,
+      "timestamp": "2026/10/23 23:00:36.406",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.43,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767636.606809,
+      "timestamp": "2026/10/23 23:00:36.606",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.43,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767636.8072584,
+      "timestamp": "2026/10/23 23:00:36.807",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.43,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767637.007517,
+      "timestamp": "2026/10/23 23:00:37.007",
+      "pstate": "P0",
+      "sm_mhz": 2190.0,
+      "gpu_util_pct": 96.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 70.0,
+      "gpu_power_w": 94.43,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767637.2084365,
+      "timestamp": "2026/10/23 23:00:37.208",
+      "pstate": "P0",
+      "sm_mhz": 2184.0,
+      "gpu_util_pct": 38.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 83.01,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767637.409173,
+      "timestamp": "2026/10/23 23:00:37.408",
+      "pstate": "P0",
+      "sm_mhz": 2184.0,
+      "gpu_util_pct": 38.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 83.01,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767637.6099472,
+      "timestamp": "2026/10/23 23:00:37.609",
+      "pstate": "P0",
+      "sm_mhz": 2184.0,
+      "gpu_util_pct": 38.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 61.0,
+      "gpu_power_w": 83.01,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767637.8106709,
+      "timestamp": "2026/10/23 23:00:37.810",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 38.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 56.0,
+      "gpu_power_w": 42.69,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767638.0115612,
+      "timestamp": "2026/10/23 23:00:38.011",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 38.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 56.0,
+      "gpu_power_w": 42.69,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767638.212358,
+      "timestamp": "2026/10/23 23:00:38.212",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 12.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767638.4132078,
+      "timestamp": "2026/10/23 23:00:38.412",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 12.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767638.6140423,
+      "timestamp": "2026/10/23 23:00:38.613",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 12.1,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767638.8148715,
+      "timestamp": "2026/10/23 23:00:38.814",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 11.87,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767639.0156786,
+      "timestamp": "2026/10/23 23:00:39.015",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 11.87,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767639.2163694,
+      "timestamp": "2026/10/23 23:00:39.216",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 11.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767639.4173431,
+      "timestamp": "2026/10/23 23:00:39.416",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 11.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767639.6181197,
+      "timestamp": "2026/10/23 23:00:39.617",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 55.0,
+      "gpu_power_w": 11.76,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767639.8181973,
+      "timestamp": "2026/10/23 23:00:39.818",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 54.0,
+      "gpu_power_w": 11.69,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767640.018996,
+      "timestamp": "2026/10/23 23:00:40.018",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 54.0,
+      "gpu_power_w": 11.69,
+      "clock_event_reasons": "0x0000000000000000"
+    },
+    {
+      "epoch": 1792767640.2200925,
+      "timestamp": "2026/10/23 23:00:40.219",
+      "pstate": "P0",
+      "sm_mhz": 2411.0,
+      "gpu_util_pct": 0.0,
+      "memory_util_pct": 0.0,
+      "temperature_c": 54.0,
+      "gpu_power_w": 11.72,
+      "clock_event_reasons": "0x0000000000000000"
+    }
+  ]
+}

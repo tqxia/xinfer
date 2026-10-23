@@ -1,5 +1,10 @@
 # GB10 full eager / AOTI benchmark
 
+> Historical low-clock results: a later compute diagnostic reproduced the
+> 611 MHz restriction independently of xinfer. GPU boosting subsequently recovered;
+> the [full rerun](../gb10-2026-10-23-rerun/REPORT.md) supersedes these throughput
+> numbers for the current baseline. Original measurements below are preserved.
+
 Measured on 2026-10-23 (Asia/Shanghai) in `/home/tqxia/workspace/xinfer`.
 Source commit: `dcb07fa3f49e4e40b1bc07c46ccf587da383e110` on `dev-gb10`.
 
