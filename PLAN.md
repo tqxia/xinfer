@@ -1,6 +1,6 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: steps 1-4 complete. Step 5's benchmark is implemented and functionally validated; final performance measurements will run in a separate environment because the development host is fully loaded. The optional eager-numerics compilation mode passes the complete three-path validation with bitwise agreement. Original fused packages are retained with their documented numerical differences. Step 6 remains planned.
+Status: steps 1–5 complete for the Qwen3-0.6B GB10 baseline. The [full GB10 benchmark](benchmarks/gb10-2026-10-23/REPORT.md) records eager and both AOTI profiles with three process rounds and passing idle checks. Eager numerics retains bitwise parity; the GB10 fused profile fails the unchanged full-cache criterion on 9/56 tensors and is retained as an experimental performance comparison. Step 6 remains planned. The original L20 design and investigation are preserved below.
 Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
@@ -194,8 +194,10 @@ Keep cache layout and position semantics documented beside the code that uses th
    weight allocations bypass PyTorch's allocator. Device samples are not exact
    transient or per-process peaks. Preserve source/package hashes and telemetry.
    Shared-GPU runs validate the harness only; final measurements require idle
-   checks before and after every worker. Step 5 remains incomplete until those
-   measurements and their analysis are recorded.
+   checks before and after every worker. Completed on GB10: 135 measured
+   requests across all three profiles, with results and analysis saved in
+   `benchmarks/gb10-2026-10-23/REPORT.md`. This is an automatic-clock baseline,
+   not a measurement of locked-clock peak throughput.
 
 6. Explore and validate performance optimizations.
    Start from the measured C++ baseline in step 5. Preserve its source revision,
@@ -301,8 +303,8 @@ It closes step 4 acceptance: all 163 logit rows and all 56 full-context cache
 tensors match eager BF16 bitwise, with no tolerance changes. The native runtime
 remains Python-free. Metadata prevents mixing numerical modes in a package pair.
 This profile inherits eager BF16's FP32 errors and is not an accuracy improvement.
-Step 5's benchmark is implemented; baseline measurements on a separate
-environment are pending.
+Step 5's full baseline measurements are complete on GB10; see
+`benchmarks/gb10-2026-10-23/REPORT.md` for performance, numerical and clock context.
 Step 6 performance optimization has not started. Keep both this correctness
 baseline and the original fused packages for comparison.
 

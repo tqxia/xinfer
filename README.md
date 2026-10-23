@@ -4,7 +4,8 @@ Qwen3-0.6B AOTInductor / C++ PoC.
 
 For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
 [GB10.md](GB10.md) for setup, architecture, validation and run commands.
-The environment and measurements below describe the original L20 run.
+The [full GB10 benchmark](benchmarks/gb10-2026-10-23/REPORT.md) records the completed eager/AOTI comparison.
+The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
 first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
@@ -15,9 +16,9 @@ Steps 1-4 are complete: eager references, AOTI packages, a minimal C++ executabl
 and three-path validation. The optional `--eager-numerics` compilation mode
 passes with bitwise eager/AOTI/C++ agreement on the tested logits and full KV
 cache. The original fused packages remain available; their numerical differences
-and the compiler controls are documented below. Step 5's benchmark is implemented
-and functionally validated. Final performance measurements are moving to a
-separate environment. Optimization remains step 6 in [PLAN.md](PLAN.md).
+and the compiler controls are documented below. Step 5's full benchmark has
+completed on GB10 with idle checks, three process rounds and both AOTI profiles.
+Optimization remains step 6 in [PLAN.md](PLAN.md).
 
 The runtime interface is token IDs. Python handles offline tokenization and
 text decoding; the C++ executable handles all model inference and generation.
@@ -751,7 +752,7 @@ existing builds used different compiler-cache states, so their times are not
 a controlled comparison of compilation speed. Interrupted runs preserve partial
 evidence and do not produce a completed summary; choose a new directory to retry.
 
-### Step 5 status — 2026-10-23
+### Step 5 implementation and original L20 checks — 2026-10-23
 
 Recorded export/compile wall times and package sizes:
 
@@ -778,9 +779,14 @@ GPU reported 99-100% utilization. Evidence is saved under
 `artifacts/benchmark-smoke/`, `artifacts/benchmark-validation/`,
 `work/benchmark-position-smoke.json` and `work/benchmark-idle-check.log`.
 
-The development host is fully loaded, so final performance measurements will
-run in a separate environment. Step 5's benchmark implementation is ready;
-its final measurements remain pending. Step 6 has not started.
+Full measurements subsequently completed on GB10 using PyTorch 2.13/CUDA 13.0.
+The [report](benchmarks/gb10-2026-10-23/REPORT.md) records 135 measured requests,
+15 samples per profile/length and passing idle checks around all nine workers.
+AOTI eager numerics delivers 1.48–1.49x decode and 1.33–1.50x prefill speedups;
+fused AOTI delivers 1.61–1.62x decode speedup but fails the unchanged full-cache
+criterion on 9/56 tensors. All profiles agree on the benchmark predictions.
+These measurements used automatic clocks, with active-sample median SM clock
+611 MHz. Step 6 has not started.
 
 ## Planned optimization phase
 

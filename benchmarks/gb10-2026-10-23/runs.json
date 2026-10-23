@@ -1,0 +1,101 @@
+[
+  {
+    "round": 1,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-1-eager.json",
+    "process_ms": 58099.49498399965,
+    "host_loadavg": [
+      1.1298828125,
+      0.92236328125,
+      0.638671875
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-1-aoti_eager.json",
+    "process_ms": 45071.783909999795,
+    "host_loadavg": [
+      1.05615234375,
+      0.93896484375,
+      0.66015625
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-1-aoti_fused.json",
+    "process_ms": 43078.47240499996,
+    "host_loadavg": [
+      0.984375,
+      0.9365234375,
+      0.673828125
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-2-aoti_eager.json",
+    "process_ms": 45131.724612000195,
+    "host_loadavg": [
+      0.9228515625,
+      0.92041015625,
+      0.68359375
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-2-aoti_fused.json",
+    "process_ms": 42089.18988899996,
+    "host_loadavg": [
+      1.04541015625,
+      0.9501953125,
+      0.70751953125
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-2-eager.json",
+    "process_ms": 58098.722146,
+    "host_loadavg": [
+      1.56396484375,
+      1.103515625,
+      0.77734375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-3-aoti_fused.json",
+    "process_ms": 41093.05661000007,
+    "host_loadavg": [
+      1.82177734375,
+      1.244140625,
+      0.84375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-3-eager.json",
+    "process_ms": 59074.55879200006,
+    "host_loadavg": [
+      1.28857421875,
+      1.20361328125,
+      0.86279296875
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full/round-3-aoti_eager.json",
+    "process_ms": 45076.975287000096,
+    "host_loadavg": [
+      1.18994140625,
+      1.18701171875,
+      0.87744140625
+    ]
+  }
+]
