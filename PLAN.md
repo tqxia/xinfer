@@ -1,6 +1,6 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: steps 1-4 complete. The optional eager-numerics compilation mode passes the complete three-path validation with bitwise agreement. Original fused packages are retained with their documented numerical differences. Steps 5-6 remain planned.
+Status: steps 1-4 complete. Step 5's benchmark is implemented and functionally validated; final performance measurements will run in a separate environment because the development host is fully loaded. The optional eager-numerics compilation mode passes the complete three-path validation with bitwise agreement. Original fused packages are retained with their documented numerical differences. Step 6 remains planned.
 Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
@@ -109,11 +109,13 @@ compiler/prepare.py             Offline tokenization and output-ID decoding
 compiler/validate.py            Eager reference generation and regression cases
 compiler/validate_aoti.py        Cache, compiled-package and FP32-control checks
 compiler/validate_cpp.py         Three-path comparisons and FP32 investigation
+compiler/benchmark.py           Eager worker, process orchestration and summary
 compiler/tests/smoke_cpp.py      Native parity, CLI and Python-free loading checks
 compiler/tests/rope_precision.py Minimal BF16 RoPE contraction reproducer
 runtime/CMakeLists.txt            Native targets and matching LibTorch dependencies
 runtime/runtime.h                 Shared native loader, cache, step and generation
 runtime/main.cpp                  Native CLI, input/output and diagnostic timing
+runtime/benchmark.cpp             Fixed-token benchmark using the shared Runtime
 runtime/tests/validate_native.cpp Repeated-request and cache checks using that Runtime
 ```
 
@@ -179,6 +181,16 @@ Keep cache layout and position semantics documented beside the code that uses th
    Separate warmup from measurement, reset its cache, and synchronize CUDA at
    measurement boundaries. Identify host synchronization included in timings.
    Do not assert a performance target or a vLLM comparison at this stage.
+   Implemented: separate native benchmark target and a matching eager worker;
+   fixed tokens at prompt lengths 25/128/512 followed by 64 decode steps;
+   three fresh-process rounds with rotating profile order, warmup and per-request
+   cache reset. Record first-use requests separately from measured requests.
+   Report allocator peaks and sampled CUDA device-memory usage, because AOTI's
+   weight allocations bypass PyTorch's allocator. Device samples are not exact
+   transient or per-process peaks. Preserve source/package hashes and telemetry.
+   Shared-GPU runs validate the harness only; final measurements require idle
+   checks before and after every worker. Step 5 remains incomplete until those
+   measurements and their analysis are recorded.
 
 6. Explore and validate performance optimizations.
    Start from the measured C++ baseline in step 5. Preserve its source revision,
@@ -284,8 +296,10 @@ It closes step 4 acceptance: all 163 logit rows and all 56 full-context cache
 tensors match eager BF16 bitwise, with no tolerance changes. The native runtime
 remains Python-free. Metadata prevents mixing numerical modes in a package pair.
 This profile inherits eager BF16's FP32 errors and is not an accuracy improvement.
-Step 5 measurements and step 6 performance optimization have not started; keep
-both this correctness baseline and the original fused packages for comparison.
+Step 5's benchmark is implemented; baseline measurements on a separate
+environment are pending.
+Step 6 performance optimization has not started. Keep both this correctness
+baseline and the original fused packages for comparison.
 
 The initial technical risks were HF cache adaptation and mutation lowering in
 torch 2.7.0, followed by dynamic prefill export. Both passed in step 2. Any future
