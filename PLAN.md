@@ -1,7 +1,7 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: steps 1-3 complete (eager references, validated AOTI packages, minimal C++ runtime and native smoke checks). Steps 4-6 remain planned.
-Date: 2026-10-22.
+Status: steps 1-4 complete. The optional eager-numerics compilation mode passes the complete three-path validation with bitwise agreement. Original fused packages are retained with their documented numerical differences. Steps 5-6 remain planned.
+Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
 
@@ -105,9 +105,13 @@ export.py          Load weights, export/compile both graphs, write metadata
 prepare.py         Offline prompt tokenization and output-ID decoding
 validate.py        Eager reference generation and regression cases
 validate_aoti.py   Static-cache, compiled-package and FP32-control checks
-main.cpp           Load packages, allocate cache, prefill/decode, stop and time
+runtime.h          Shared native loader, cache, checked step and greedy generation
+main.cpp           Native CLI, input/output paths and diagnostic timing
 CMakeLists.txt     Build against the matching LibTorch
 tests/smoke_cpp.py Native generation, trace parity and CLI rejection smoke checks
+tests/validate_native.cpp Repeated-request and cache checks using the same Runtime
+validate_cpp.py    Three-path forced-token/greedy comparisons and FP32 investigation
+tests/rope_precision.py Minimal checkpoint-free reproducer of BF16 RoPE contraction
 
 Ignored generated directories: .venv/, build/, artifacts/, work/.
 Use simple token-ID files and a small metadata file; avoid a general framework,
@@ -141,12 +145,29 @@ Keep cache layout and position semantics documented beside the code that uses th
    Use teacher-forced identical token continuations for logit comparisons so
    that a sampling divergence does not invalidate all later comparisons.
    Also check end-to-end greedy token sequences and repeated requests.
+   Implemented: 24 cases, 163 logit rows, full-cache dump/bitwise comparison,
+   poisoned future slots, final legal slot, overflow rejection and cache reuse.
+   Native parity and logits pass. Full-context AOTI vs HF BF16 cache values fail
+   the existing 5% limits on 21 of 56 tensors. Preserve the failing status and
+   FP32 evidence; do not mark acceptance complete or relax the limits silently.
+   Root-cause investigation locates the first divergence at layer-0 RoPE:
+   backend BF16 multiply-add contraction removes an intermediate rounding step.
+   Disabling contraction improves eager parity but leaves 15 peak-limit failures
+   and worsens worst-case FP32 agreement in this case. Keep it experimental.
+   Completed with --eager-numerics: disable contraction and retain native ATen
+   mean reductions. All 163 logit rows and all 56 full-context KV tensors match
+   HF BF16 and C++ bitwise. The original packages and 5% limits are preserved.
+   Keep FP32 controls in passing reports; eager parity is not improved FP32
+   accuracy. Native smoke/loading and mixed-profile rejection checks also pass.
 
 5. Measure and document the completed PoC.
    Record export/build commands, pinned versions, correctness results, compilation
    time, package sizes, model-load time, inference-only first-token latency,
    steady-state decode milliseconds/token and tokens/second, and peak GPU memory.
    Compare against the same eager workload, dtype, cache and attention setup.
+   Measure the accepted eager-numerics profile and the original fused profile
+   separately; native reductions may add latency, while the fused profile has
+   the numerical differences documented in step 4.
    Separate warmup from measurement, reset its cache, and synchronize CUDA at
    measurement boundaries. Identify host synchronization included in timings.
    Do not assert a performance target or a vLLM comparison at this stage.
@@ -232,9 +253,31 @@ caller cache, but still expands the full padded K/V inputs for attention.
 Step 3 added the standalone C++ loader, input rejection and native trace capture.
 The three fixture sequences and all 43 logit rows match Python AOTI bitwise;
 native T=1, T=2 and T=512 smoke cases also pass. Linkage and loader tracing confirm
-the binary does not load libpython or libtorch_python. The full three-path
-boundary/repeated-request matrix and runtime benchmarks remain steps 4-5.
-Step 6 then profiles and addresses the observed performance limitations.
+the binary does not load libpython or libtorch_python.
+
+Step 4's complete matrix gives bitwise native/Python AOTI parity on 163 logit
+rows and all 56 full-context KV tensors. All tested top-1 tokens, greedy
+sequences, masks, write regions, resets, repeated requests and overflow checks
+pass. The full-context cache numerical check fails on 21 tensors: maximum
+relative L2 is 6.5913% and peak-relative error is 17.8385%, against unchanged 5%
+limits. The first divergence is now isolated to layer-0 RoPE multiply-add
+contraction, with an exact arithmetic reconstruction and a minimal reproducer.
+Recompiling both packages with TRITON_DEFAULT_FP_FUSION=0 makes the observed
+layer-0 stages equal to eager and reduces worst full-cache relative L2 to
+2.0656%, but 15 cache tensors still fail the peak limit. Worst FP32 agreement
+also worsens, so this control is not promoted. The next difference appears in
+layer-1 Q RMSNorm: a different FP32 reduction order pushes 3 values across BF16
+rounding midpoints in the traced prefix. A probe of the generated kernel
+reproduces this exactly.
+README records the evidence and distinguishes eager parity from FP32 accuracy.
+The optional --eager-numerics mode also retains aten.mean.dim as a native
+LibTorch operation, dispatched through AOTI's C++ proxy executor in Torch 2.7.
+It closes step 4 acceptance: all 163 logit rows and all 56 full-context cache
+tensors match eager BF16 bitwise, with no tolerance changes. The native runtime
+remains Python-free. Metadata prevents mixing numerical modes in a package pair.
+This profile inherits eager BF16's FP32 errors and is not an accuracy improvement.
+Step 5 measurements and step 6 performance optimization have not started; keep
+both this correctness baseline and the original fused packages for comparison.
 
 The initial technical risks were HF cache adaptation and mutation lowering in
 torch 2.7.0, followed by dynamic prefill export. Both passed in step 2. Any future

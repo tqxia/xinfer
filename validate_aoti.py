@@ -33,19 +33,24 @@ def trace(fn, prompt, continuation, cache):
     return torch.stack(rows)
 
 
-def compare(actual, expected, exact=False):
+def error_metrics(actual, expected):
     assert actual.shape == expected.shape
     assert torch.isfinite(actual).all() and torch.isfinite(expected).all()
     delta = actual - expected
-    metrics = {
+    return {
         "max_abs": delta.abs().max().item(),
         "max_relative_l2": (delta.norm(dim=-1) / expected.norm(dim=-1).clamp_min(1e-12)).max().item(),
         "max_peak_relative": (delta.abs().amax(dim=-1) / expected.abs().amax(dim=-1).clamp_min(1e-12)).max().item(),
         "top1_agreement": (actual.argmax(-1) == expected.argmax(-1)).sum().item(),
         "rows": actual.shape[0],
     }
+
+
+def compare(actual, expected, exact=False):
+    metrics = error_metrics(actual, expected)
     if exact:
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+        assert torch.equal(actual.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8))
     else:
         assert metrics["max_relative_l2"] <= MAX_RELATIVE_ERROR, metrics
         assert metrics["max_peak_relative"] <= MAX_RELATIVE_ERROR, metrics

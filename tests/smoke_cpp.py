@@ -1,4 +1,5 @@
 """Run from the project root after export/validation and the C++ build."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -7,8 +8,11 @@ import subprocess
 import numpy as np
 
 binary = Path('build/qwen_aoti').resolve()
-packages = Path('artifacts/aoti')
-out = Path('artifacts/native-smoke')
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--packages', type=Path, default=Path('artifacts/aoti'))
+parser.add_argument('--output', type=Path, default=Path('artifacts/native-smoke'))
+args = parser.parse_args()
+packages, out = args.packages, args.output
 out.mkdir(exist_ok=True)
 env = dict(os.environ)
 for key in ('VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME', 'LD_LIBRARY_PATH'):
@@ -62,6 +66,19 @@ for name, content, extra, message in cases:
                             env=env | {'CUDA_VISIBLE_DEVICES':''}, capture_output=True, text=True, timeout=20)
     assert result.returncode != 0 and message in result.stderr, (name, result.stderr)
     report['rejections'].append(name)
+
+# Reject mixed compilation profiles from metadata before touching CUDA or weights.
+mixed = out/'mixed-packages'
+mixed.mkdir(exist_ok=True)
+for kind in ('prefill', 'decode'):
+    metadata = json.loads((packages/(kind+'.json')).read_text())
+    metadata['eager_numerics'] = kind == 'prefill'
+    (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/prompt.ids',
+                         str(out/'mixed.ids')], env=env | {'CUDA_VISIBLE_DEVICES':''},
+                        capture_output=True, text=True, timeout=20)
+assert result.returncode != 0 and 'Package numerical settings differ' in result.stderr, result.stderr
+report['rejections'].append('mixed_numerical_settings')
 
 # A real generation-limit stop must produce exactly one prediction, even before EOS.
 result = subprocess.run([str(binary), str(packages), 'artifacts/reference/capital/prompt.ids',
