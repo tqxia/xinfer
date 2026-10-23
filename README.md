@@ -12,6 +12,27 @@ are steps 5-6 in [PLAN.md](PLAN.md).
 The runtime interface is token IDs. Python handles offline tokenization and
 text decoding; the C++ executable handles all model inference and generation.
 
+## Repository layout
+
+```text
+compiler/                 Export/compilation, offline helpers and Python validation
+  export.py, model.py   AOTI compilation and the thin Hugging Face model adapter
+  prepare.py            Offline tokenization and decoding
+  validate*.py, tests/  Eager/AOTI/native comparisons and numerical probes
+  requirements.*        Python dependency pins
+  prompts.json          Reference prompt fixtures
+runtime/                    Native runtime and its build configuration
+  runtime.h, main.cpp   Shared runtime and token-ID CLI
+  tests/                Native validation driver
+  CMakeLists.txt        LibTorch dependencies and native targets
+CMakeLists.txt          Root build entry point
+```
+
+Run the commands below from the repository root. `.venv/`, `build/`, `artifacts/`
+and `work/` remain there; executable paths stay `build/qwen_aoti`,
+`build/qwen_validate`. The Python scripts use sibling
+imports and need no package installation or `PYTHONPATH` override.
+
 ## Environment
 
 Run these commands on `kikoxia-any4.devcloud.woa.com`, port `36000`, as `root`.
@@ -29,7 +50,7 @@ packages through this venv. The C++ build must use this same Torch build.
 - Python 3.12.13; PyTorch runtime `2.7.0+cu126`; Triton 3.3.0.
 - Transformers 4.51.3; tokenizers 0.21.4; safetensors 0.5.3.
 - CUDA build 12.6; C++11 ABI enabled; NVIDIA L20, compute capability 8.9.
-- `requirements.txt` pins the main packages; `requirements.lock` records the
+- `compiler/requirements.txt` pins the main packages; `compiler/requirements.lock` records the
   complete resolved package set. Torch's distribution metadata says `2.7.0`;
   its runtime version includes `+cu126`.
 
@@ -50,7 +71,7 @@ for source in paths:
         raise FileNotFoundError(source)
     (dest / source.name).symlink_to(source, target_is_directory=True)
 PY
-.venv/bin/python -m pip install -r requirements.lock
+.venv/bin/python -m pip install -r compiler/requirements.lock
 .venv/bin/python -m pip check
 ```
 
@@ -65,30 +86,30 @@ The helpers read these files without modifying them or downloading another copy.
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
 
 # Check the size and SHA-256 of all eight files in the existing manifest.
-.venv/bin/python prepare.py verify
+.venv/bin/python compiler/prepare.py verify
 
 # Apply the official non-thinking chat template and write whitespace-separated IDs.
-.venv/bin/python prepare.py encode \
+.venv/bin/python compiler/prepare.py encode \
   --prompt 'What is the capital of France? Answer in one short sentence.' \
   --output work/prompt.ids
 
 # Verify the checkpoint and generate the reference fixtures.
-.venv/bin/python validate.py --output artifacts/reference
+.venv/bin/python compiler/validate.py --output artifacts/reference
 
 # Turn a saved generated sequence back into text.
-.venv/bin/python prepare.py decode \
+.venv/bin/python compiler/prepare.py decode \
   --input artifacts/reference/capital/generated.ids
 ```
 
-Use `--model-dir PATH` before the `prepare.py` subcommand to select another
-checkpoint directory. `validate.py` accepts the same option. Reference generation
+Use `--model-dir PATH` before the `compiler/prepare.py` subcommand to select another
+checkpoint directory. `compiler/validate.py` accepts the same option. Reference generation
 refuses to overwrite an existing output directory; use a fresh `--output` for a
 new run. Failed runs may leave a partial directory without `summary.json`.
 
 ## What the reference checks
 
-`prompts.json` contains English factual, arithmetic, and Chinese prompts.
-`validate.py` loads the unmodified HF model in BF16 with SDPA and performs:
+`compiler/prompts.json` contains English factual, arithmetic, and Chinese prompts.
+`compiler/validate.py` loads the unmodified HF model in BF16 with SDPA and performs:
 
 1. A manual eager prefill/decode loop using HF's own DynamicCache.
 2. A fresh-cache repetition, requiring identical tokens and bitwise-equal logits.
@@ -152,7 +173,7 @@ Step 1 was committed as `e03359f` (`Establish Qwen3 eager reference baseline`).
 
 ## Export and validate AOTI
 
-`model.py` is a small adapter around the original HF model. `TensorCache` writes
+`compiler/model.py` is a small adapter around the original HF model. `TensorCache` writes
 new K/V entries into caller-owned tensors using `index_copy_`. `QwenStep` builds
 the causal mask from absolute positions and returns only last-token logits.
 There is no copied Qwen implementation or custom kernel.
@@ -162,9 +183,9 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor"
 export TORCHINDUCTOR_COMPILE_THREADS=2
 
-.venv/bin/python export.py decode
-.venv/bin/python export.py prefill
-.venv/bin/python validate_aoti.py
+.venv/bin/python compiler/export.py decode
+.venv/bin/python compiler/export.py prefill
+.venv/bin/python compiler/validate_aoti.py
 ```
 
 These commands use `artifacts/aoti/` by default. Export refuses to overwrite an
@@ -270,13 +291,13 @@ benchmarks. Controlled runtime performance measurements remain for step 5.
 
 ## Build and run the C++ executable
 
-`main.cpp` handles the CLI and diagnostic timing. `runtime.h` contains
+`runtime/main.cpp` handles the CLI and diagnostic timing. `runtime/runtime.h` contains
 metadata/input validation, two AOTI loaders, one shared cache, and a greedy
 generation loop. Its checked `step()` advances contiguous cache positions;
 `generate()` resets the same storage before each request. Both the CLI and the
 optional validation driver use this implementation. It uses the native
 [`AOTIModelPackageLoader`](https://docs.pytorch.org/docs/2.7/torch.compiler_aot_inductor.html)
-API. `CMakeLists.txt` links LibTorch and fetches the header-only nlohmann/json
+API. `runtime/CMakeLists.txt` links LibTorch and fetches the header-only nlohmann/json
 3.11.3 release with its published SHA-256. The first configuration needs network
 access for that header dependency; subsequent builds reuse `build/_deps/`.
 
@@ -300,10 +321,10 @@ cd /data/workspace/develop/qwen3-aoti-poc
   --max-new-tokens 64 --trace work/native-logits.f32
 
 # Offline text decoding, separate from native inference.
-.venv/bin/python prepare.py decode --input work/generated.ids
+.venv/bin/python compiler/prepare.py decode --input work/generated.ids
 
 # Reproducible native smoke checks; Python launches the binary and checks results.
-.venv/bin/python tests/smoke_cpp.py
+.venv/bin/python compiler/tests/smoke_cpp.py
 ```
 
 Usage: `qwen_aoti PACKAGE_DIR PROMPT_IDS OUTPUT_IDS [--max-new-tokens N]
@@ -347,7 +368,7 @@ Step 3 was committed as `20b7c98` (`Add minimal native Qwen3 AOTI generation run
 with author and committer email `txiadev@163.com`.
 Smoke artifacts, raw traces, dependency/loader logs and `summary.json` are saved
 under `artifacts/native-smoke/`. These checks also pass after step 4 extracted
-the shared runtime into `runtime.h`.
+the shared runtime into `runtime/runtime.h`.
 
 ## Validate all three execution paths
 
@@ -358,21 +379,21 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
 export TORCHINDUCTOR_COMPILE_THREADS=2
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor-eager-reductions"
 
-.venv/bin/python export.py prefill --eager-numerics --output artifacts/aoti-eager
-.venv/bin/python export.py decode --eager-numerics --output artifacts/aoti-eager
-.venv/bin/python validate_aoti.py --packages artifacts/aoti-eager
+.venv/bin/python compiler/export.py prefill --eager-numerics --output artifacts/aoti-eager
+.venv/bin/python compiler/export.py decode --eager-numerics --output artifacts/aoti-eager
+.venv/bin/python compiler/validate_aoti.py --packages artifacts/aoti-eager
 
 /data/workspace/abo/.venv/bin/cmake -S . -B build -DQWEN_BUILD_VALIDATION=ON
 /data/workspace/abo/.venv/bin/cmake --build build -j2
 
-.venv/bin/python validate_cpp.py --packages artifacts/aoti-eager \
+.venv/bin/python compiler/validate_cpp.py --packages artifacts/aoti-eager \
   --output artifacts/three-path-eager
-.venv/bin/python tests/smoke_cpp.py --packages artifacts/aoti-eager \
+.venv/bin/python compiler/tests/smoke_cpp.py --packages artifacts/aoti-eager \
   --output artifacts/native-smoke-eager
 ```
 
 Export refuses to replace packages; choose a fresh package directory for a
-rebuild. The `validate_cpp.py` output directory must be absent; choose a fresh
+rebuild. The `compiler/validate_cpp.py` output directory must be absent; choose a fresh
 `--output` for another run.
 `--native`, `--packages`, `--reference`, and `--model-dir` select alternate inputs.
 This is a correctness test, with cache snapshots and CPU transfers; do not use
@@ -381,8 +402,8 @@ packages in `artifacts/aoti/` still return exit status 1 for the full-cache
 numerical failures below. Every completed report records `passed`, all cases,
 any violating tensors and an independent FP32 control, including passing runs.
 
-`tests/validate_native.cpp` runs one pair of loaders and one set of 56 KV buffers
-through 24 cases. `validate_cpp.py` runs the original HF StaticCache model and
+`runtime/tests/validate_native.cpp` runs one pair of loaders and one set of 56 KV buffers
+through 24 cases. `compiler/validate_cpp.py` runs the original HF StaticCache model and
 Python-loaded AOTI on the same inputs, then compares their results with C++:
 
 - Teacher-forced reference continuations and explicit alternative tokens,
@@ -502,14 +523,14 @@ example. The full-model FP32 activation at this coordinate is instead
 17.30856514 because its upstream activations differ: the local arithmetic
 control and full-model control answer different questions.
 
-`tests/rope_precision.py` reproduces this with four values repeated 256 times
+`compiler/tests/rope_precision.py` reproduces this with four values repeated 256 times
 to exercise packed BF16 arithmetic. It needs only Torch and CUDA, without a
 checkpoint or Transformers. A one-element kernel has a different lowering
 and does not reproduce the discrepancy on this build.
 
 ```bash
-.venv/bin/python tests/rope_precision.py --output work/rope-vector-default
-.venv/bin/python tests/rope_precision.py --disable-fp-fusion \
+.venv/bin/python compiler/tests/rope_precision.py --output work/rope-vector-default
+.venv/bin/python compiler/tests/rope_precision.py --disable-fp-fusion \
   --output work/rope-vector-no-fusion
 ```
 
@@ -576,7 +597,7 @@ Evidence on the remote host, relative to the project directory:
 
 ### Step 4 acceptance with eager numerics — 2026-10-23
 
-`export.py --eager-numerics` combines two controls: it disables Triton FP
+`compiler/export.py --eager-numerics` combines two controls: it disables Triton FP
 contraction and retains `aten.mean.dim` as a native LibTorch operation. This
 preserves eager's RMSNorm reduction order on the tested workload. All other
 operators follow the existing AOTI compilation path, with
