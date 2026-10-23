@@ -1,5 +1,11 @@
 find_package(Torch 2.7 REQUIRED)
 
+# Match the installed LibTorch headers (PyTorch 2.13 requires C++20).
+get_target_property(QWEN_CXX_STANDARD torch CXX_STANDARD)
+if(NOT QWEN_CXX_STANDARD)
+  set(QWEN_CXX_STANDARD 17)
+endif()
+
 # Header-only JSON parsing; pinned release and checksum, no runtime dependency.
 include(FetchContent)
 FetchContent_Declare(nlohmann_json
@@ -21,7 +27,7 @@ if(QWEN_BUILD_BENCHMARK)
 endif()
 separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 foreach(target IN LISTS QWEN_TARGETS)
-  target_compile_features(${target} PRIVATE cxx_std_17)
+  target_compile_features(${target} PRIVATE cxx_std_${QWEN_CXX_STANDARD})
   target_compile_options(${target} PRIVATE ${TORCH_FLAGS} -Wall -Wextra)
   target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json)
 endforeach()

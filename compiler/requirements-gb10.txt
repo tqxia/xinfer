@@ -1,0 +1,10 @@
+# GB10 / ARM64 / CUDA 13.0. Install Torch from its official CUDA index first:
+# python -m pip install torch==2.13.0 --index-url https://download.pytorch.org/whl/cu130
+# Then install this file using the normal Python package index.
+torch==2.13.0+cu130
+triton==3.7.1
+transformers==4.51.3
+tokenizers==0.21.4
+safetensors==0.5.3
+huggingface-hub==0.30.2
+ninja==1.13.0
