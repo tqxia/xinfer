@@ -3,10 +3,13 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
-DEFAULT_MODEL = Path("/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b")
+DEFAULT_MODEL = Path(os.environ.get(
+    "XINFER_MODEL_DIR", Path(__file__).resolve().parents[1] / "work/models/qwen3-0.6b"
+)).expanduser()
 
 
 def verify_model(model_dir):

@@ -2,6 +2,10 @@
 
 Qwen3-0.6B AOTInductor / C++ PoC.
 
+For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
+[GB10.md](GB10.md) for setup, architecture, validation and run commands.
+The environment and measurements below describe the original L20 run.
+
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
 first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
 Its compiler/runtime code, dependencies and artifacts are separate from the
@@ -85,9 +89,12 @@ PY
 
 ## Model and offline commands
 
-The default checkpoint directory is
-`/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b`.
-Its manifest records revision `c1899de289a04d12100db370d81485cdf75e47ca`.
+The default checkpoint directory is now `work/models/qwen3-0.6b` under the
+repository root; `XINFER_MODEL_DIR` and `--model-dir` can override it.
+The original L20 checkpoint lives at
+`/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b`; set that override
+when reproducing the historical run below. Its manifest records revision
+`c1899de289a04d12100db370d81485cdf75e47ca`.
 The helpers read these files without modifying them or downloading another copy.
 
 ```bash
