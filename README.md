@@ -4,7 +4,7 @@ Qwen3-0.6B AOTInductor / C++ PoC.
 
 For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
 [GB10.md](GB10.md) for setup, architecture, validation and run commands.
-The [full GB10 benchmark](benchmarks/gb10-2026-10-23/REPORT.md) records the completed eager/AOTI comparison.
+The [latest full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records the eager/AOTI comparison after GPU clock recovery.
 The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
@@ -780,13 +780,20 @@ GPU reported 99-100% utilization. Evidence is saved under
 `work/benchmark-position-smoke.json` and `work/benchmark-idle-check.log`.
 
 Full measurements subsequently completed on GB10 using PyTorch 2.13/CUDA 13.0.
-The [report](benchmarks/gb10-2026-10-23/REPORT.md) records 135 measured requests,
+The [latest report](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records 135 measured requests,
 15 samples per profile/length and passing idle checks around all nine workers.
-AOTI eager numerics delivers 1.48–1.49x decode and 1.33–1.50x prefill speedups;
-fused AOTI delivers 1.61–1.62x decode speedup but fails the unchanged full-cache
-criterion on 9/56 tensors. All profiles agree on the benchmark predictions.
-These measurements used automatic clocks, with active-sample median SM clock
-611 MHz. Step 6 has not started.
+Eager decode measured 69.3–69.5 tokens/s; AOTI eager numerics measured
+91.8–92.0 tokens/s (1.32–1.33x speedup), and fused AOTI measured
+97.6–98.0 tokens/s (1.41x speedup). AOTI eager numerics improves
+prefill by 1.36–1.38x. Both AOTI profiles match all benchmark predictions.
+The same packages retain their prior validation status: eager numerics passes
+bitwise parity; fused AOTI fails the full-cache criterion on 9/56 tensors.
+
+Active-sample median SM clocks were 2509–2515 MHz across the profiles. The earlier
+[611 MHz run](benchmarks/gb10-2026-10-23/REPORT.md) is retained for comparison; the rerun follows
+recovery from the persistent low-clock state. Source, native executable, model,
+workload and package hashes match between runs. Automatic clocks were retained.
+Step 6 has not started.
 
 ## Planned optimization phase
 

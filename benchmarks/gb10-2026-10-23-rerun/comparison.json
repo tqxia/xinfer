@@ -1,0 +1,84 @@
+{
+  "identical_inputs": {
+    "source_sha256": true,
+    "binary_sha256": true,
+    "workload_sha256": true,
+    "model_manifest": true,
+    "packages": true,
+    "cpu_threads": true,
+    "allow_busy": true
+  },
+  "prior_commit": "dcb07fa3f49e4e40b1bc07c46ccf587da383e110",
+  "rerun_commit": "01f16c696b505c47da50604574d4373bda40016c",
+  "profiles": {
+    "eager": {
+      "length_25": {
+        "before_decode_tps": 34.21920270860722,
+        "after_decode_tps": 69.49218503265037,
+        "decode_gain": 2.0307949786092143,
+        "prefill_gain": 2.0510749721475836,
+        "predictions_identical": true
+      },
+      "length_128": {
+        "before_decode_tps": 34.00735341002952,
+        "after_decode_tps": 69.46368391011978,
+        "decode_gain": 2.0426077581689555,
+        "prefill_gain": 2.244358736108426,
+        "predictions_identical": true
+      },
+      "length_512": {
+        "before_decode_tps": 34.05777092817793,
+        "after_decode_tps": 69.26961015817645,
+        "decode_gain": 2.0338856087867385,
+        "prefill_gain": 2.7195093778885138,
+        "predictions_identical": true
+      }
+    },
+    "aoti_eager": {
+      "length_25": {
+        "before_decode_tps": 50.7187208473597,
+        "after_decode_tps": 91.99954928270812,
+        "decode_gain": 1.813916986581443,
+        "prefill_gain": 1.863839116957738,
+        "predictions_identical": true
+      },
+      "length_128": {
+        "before_decode_tps": 50.737378571094006,
+        "after_decode_tps": 91.79091475326115,
+        "decode_gain": 1.8091379046050298,
+        "prefill_gain": 2.151611053964784,
+        "predictions_identical": true
+      },
+      "length_512": {
+        "before_decode_tps": 50.68346911519182,
+        "after_decode_tps": 91.85062122787348,
+        "decode_gain": 1.8122402201616907,
+        "prefill_gain": 2.821544448591948,
+        "predictions_identical": true
+      }
+    },
+    "aoti_fused": {
+      "length_25": {
+        "before_decode_tps": 55.189085273921556,
+        "after_decode_tps": 98.00391446010089,
+        "decode_gain": 1.7757843597819256,
+        "prefill_gain": 1.815737727149444,
+        "predictions_identical": true
+      },
+      "length_128": {
+        "before_decode_tps": 55.122339851754724,
+        "after_decode_tps": 97.7046210627946,
+        "decode_gain": 1.7725049648755857,
+        "prefill_gain": 2.1456943020824775,
+        "predictions_identical": true
+      },
+      "length_512": {
+        "before_decode_tps": 55.16335031198335,
+        "after_decode_tps": 97.55297388655657,
+        "decode_gain": 1.7684381629258068,
+        "prefill_gain": 2.8765744487164606,
+        "predictions_identical": true
+      }
+    }
+  }
+}

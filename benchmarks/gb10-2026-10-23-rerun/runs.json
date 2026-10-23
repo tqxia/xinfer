@@ -1,0 +1,101 @@
+[
+  {
+    "round": 1,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-1-eager.json",
+    "process_ms": 34085.595555,
+    "host_loadavg": [
+      0.6298828125,
+      0.349609375,
+      0.16650390625
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-1-aoti_eager.json",
+    "process_ms": 30050.23141800001,
+    "host_loadavg": [
+      0.8662109375,
+      0.439453125,
+      0.2041015625
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-1-aoti_fused.json",
+    "process_ms": 29046.822583000052,
+    "host_loadavg": [
+      0.83935546875,
+      0.48095703125,
+      0.2275390625
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-2-aoti_eager.json",
+    "process_ms": 28048.410929999987,
+    "host_loadavg": [
+      0.8095703125,
+      0.50830078125,
+      0.24658203125
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-2-aoti_fused.json",
+    "process_ms": 28112.036889000025,
+    "host_loadavg": [
+      0.86279296875,
+      0.556640625,
+      0.275390625
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-2-eager.json",
+    "process_ms": 34073.109564999984,
+    "host_loadavg": [
+      0.83740234375,
+      0.58349609375,
+      0.29541015625
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_fused",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-3-aoti_fused.json",
+    "process_ms": 28082.916993000028,
+    "host_loadavg": [
+      0.744140625,
+      0.58984375,
+      0.30908203125
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-3-eager.json",
+    "process_ms": 33125.50542700001,
+    "host_loadavg": [
+      0.87744140625,
+      0.64306640625,
+      0.33984375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_eager",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-gb10-full-rerun-20261023T150003Z/round-3-aoti_eager.json",
+    "process_ms": 30081.233794000014,
+    "host_loadavg": [
+      0.76416015625,
+      0.64208984375,
+      0.353515625
+    ]
+  }
+]
