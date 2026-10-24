@@ -5,6 +5,7 @@ Qwen3-0.6B AOTInductor / C++ PoC.
 For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
 [GB10.md](GB10.md) for setup, architecture, validation and run commands.
 The [latest full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records the eager/AOTI comparison after GPU clock recovery.
+The [fused-AOTI profile](benchmarks/gb10-profile-2026-10-24/REPORT.md) identifies the measured bottlenecks and records isolated attention/graph experiments.
 The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
@@ -793,9 +794,9 @@ Active-sample median SM clocks were 2509–2515 MHz across the profiles. The ear
 [611 MHz run](benchmarks/gb10-2026-10-23/REPORT.md) is retained for comparison; the rerun follows
 recovery from the persistent low-clock state. Source, native executable, model,
 workload and package hashes match between runs. Automatic clocks were retained.
-Step 6 has not started.
+Step 6 profiling and isolated experiments are complete; production integration is next.
 
-## Planned optimization phase
+## Optimization phase
 
 Step 6 in [PLAN.md](PLAN.md) follows the C++ implementation, validation and
 baseline measurements in steps 3-5. It covers supported Torch/Inductor options,
