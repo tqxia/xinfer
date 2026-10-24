@@ -1,0 +1,14 @@
+{
+  "decode": {
+    "wrapper": "decode/data/aotinductor/model/cmydulxrdl6f7ygkytfjrh7jdv7cz6qvr4sxxvdietstbr7eejqr.wrapper.cpp",
+    "flash_calls": 28,
+    "efficient_calls": 0,
+    "cache_copy_api_calls": 0
+  },
+  "prefill": {
+    "wrapper": "prefill/data/aotinductor/model/c3phjnlxp27iwzs37its5h2vmycqz4y5ixg3uelueryixmk5dgnx.wrapper.cpp",
+    "flash_calls": 28,
+    "efficient_calls": 0,
+    "cache_copy_api_calls": 0
+  }
+}

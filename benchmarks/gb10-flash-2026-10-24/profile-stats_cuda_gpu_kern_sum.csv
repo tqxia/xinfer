@@ -1,0 +1,43 @@
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Name
+33.2,68630592,1371,50058.8,9888.0,9376,2113536,280819.2,"std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)"
+30.5,62951136,2016,31225.8,27232.0,21600,89024,8172.4,"std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)"
+19.2,39706976,1344,29543.9,28992.0,26272,99936,3827.3,void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)
+2.1,4325024,448,9654.1,11392.0,5632,130176,6919.0,"void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<(int)128, (int)64, (int)128, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)64, (int)128, (int)4, cutlass::bfloat16_t>>, (bool)0, (bool)0, (bool)0, (bool)0, (bool)1, (bool)0, (bool)1, (bool)0>(pytorch_flash::Flash_fwd_params)"
+1.9,3820864,84,45486.5,46544.0,34560,56768,5301.0,void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8>(T1::Params)
+1.1,2311104,112,20634.9,18448.0,11360,36416,8857.1,nvjet_sm121_tst_mma_64x80x64_5_16x80x64_tmaAB_bz_TNNN
+1.0,1999200,56,35700.0,35424.0,27328,47232,6790.2,nvjet_sm121_tst_mma_128x96x64_3_64x24x64_tmaAB_bz_TNNN
+0.9,1944992,56,34732.0,34240.0,31040,43008,2109.0,void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x128_64x3_tn_align8>(T1::Params)
+0.9,1847328,168,10996.0,11520.0,4000,13152,1778.5,"void at::native::elementwise_kernel<(int)128, (int)4, void at::native::gpu_kernel_impl_nocast<at::native::FillFunctor<c10::BFloat16>>(at::TensorIteratorBase &, const T1 &)::[lambda(int) (instance 1)]>(int, T3)"
+0.9,1827136,56,32627.4,31840.0,29408,46656,2770.9,void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align2>(T1::Params)
+0.8,1617728,56,28888.0,31200.0,22688,35840,4633.5,nvjet_sm121_tst_mma_32x32x64_12_32x8x64_tmaAB_bz_TNNN
+0.6,1304800,224,5825.0,5184.0,5056,31616,3219.7,"void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<(int)128, (int)128, (int)64, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)128, (int)64, (int)4, cutlass::bfloat16_t>>, (bool)0, (bool)0, (bool)0, (bool)0, (bool)0, (bool)1, (bool)0, (bool)0>(pytorch_flash::Flash_fwd_params)"
+0.6,1251453,56,22347.4,22416.0,8480,36032,12546.6,"void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<(int)128, (int)128, (int)64, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)128, (int)64, (int)4, cutlass::bfloat16_t>>, (bool)0, (bool)1, (bool)0, (bool)0, (bool)1, (bool)1, (bool)0, (bool)0>(pytorch_flash::Flash_fwd_params)"
+0.6,1190080,672,1771.0,1600.0,1536,16896,976.4,triton_per_fused__to_copy__unsafe_view_add_bmm_cat_cos_expand_index_copy_mean_mul_neg_pow_rsqrt_sin_slice_transpose_unsqueeze_view_2
+0.6,1163776,672,1731.8,1408.0,1280,95552,3734.7,triton_per_fused__scaled_dot_product_flash_attention__to_copy__unsafe_view_add_bmm_cat_cos_expand_mean_mul_neg_pow_rsqrt_sin_slice_transpose_unsqueeze_view_1
+0.5,1096832,56,19586.3,19296.0,17856,22944,1265.3,nvjet_sm121_tst_mma_128x96x64_3_64x32x64_tmaAB_bz_TNNN
+0.4,763808,351,2176.1,1408.0,1312,20544,2805.4,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_10
+0.4,749312,56,13380.6,13376.0,11744,16640,765.1,nvjet_sm121_tst_mma_64x32x64_8_16x32x64_tmaAB_bz_TNNN
+0.4,745440,224,3327.9,2912.0,2880,26976,2418.4,"void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<(int)128, (int)64, (int)128, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)64, (int)128, (int)4, cutlass::bfloat16_t>>, (int)4, (int)3, (bool)1>(pytorch_flash::Flash_fwd_params)"
+0.4,736224,672,1095.6,896.0,864,19744,1512.4,triton_poi_fused__unsafe_view_mul_silu_5
+0.3,718655,351,2047.5,1408.0,1280,16799,2494.8,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_9
+0.3,687680,672,1023.3,832.0,800,23200,1325.6,triton_poi_fused__unsafe_view_index_copy_transpose_view_3
+0.3,647712,28,23132.6,22896.0,21376,35136,2487.0,nvjet_sm121_tst_mma_96x64x64_4_16x64x64_tmaAB_bz_TNNN
+0.3,633792,351,1805.7,1408.0,1280,9664,1484.6,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_8
+0.3,607808,28,21707.4,21456.0,19872,28864,1540.2,nvjet_sm121_tst_mma_64x32x64_8_32x16x64_tmaAB_bz_TNNN
+0.3,588640,224,2627.9,2368.0,2336,18400,1499.1,"void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<(int)128, (int)64, (int)128, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)64, (int)128, (int)4, cutlass::bfloat16_t>>, (int)4, (int)1, (bool)1>(pytorch_flash::Flash_fwd_params)"
+0.3,553119,84,6584.8,5152.0,3840,19136,3188.3,triton_per_fused__to_copy__unsafe_view_add_bmm_cat_cos_expand_index_copy_mean_mul_neg_pow_rsqrt_sin_slice_transpose_unsqueeze_view_1
+0.2,511136,315,1622.7,1408.0,1344,19488,1502.7,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_11
+0.2,449632,84,5352.8,3456.0,1440,12000,4109.3,triton_per_fused__scaled_dot_product_flash_attention__to_copy__unsafe_view_add_bmm_cat_cos_expand_mean_mul_neg_pow_rsqrt_sin_slice_transpose_unsqueeze_view_2
+0.1,268991,84,3202.3,2144.0,992,7552,2331.6,triton_poi_fused__unsafe_view_mul_silu_4
+0.1,207966,28,7427.4,7663.5,4992,10112,1013.0,"void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<(int)128, (int)128, (int)64, (int)4, (bool)0, (bool)0, cutlass::bfloat16_t, Flash_kernel_traits<(int)128, (int)128, (int)64, (int)4, cutlass::bfloat16_t>>, (bool)0, (bool)1, (bool)0, (bool)0, (bool)0, (bool)1, (bool)0, (bool)0>(pytorch_flash::Flash_fwd_params)"
+0.1,160384,27,5940.1,5664.0,5536,10240,951.3,"void at::native::reduce_kernel<(int)512, (int)1, at::native::ReduceOp<c10::BFloat16, at::native::ArgMaxOps<float>, unsigned int, long, (int)4, (int)4>>(T3)"
+0.1,118847,39,3047.4,3168.0,1471,6528,1307.4,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_7
+0.0,72672,27,2691.6,1504.0,1440,20992,3842.7,triton_per_fused__to_copy_add_embedding_mean_mul_pow_rsqrt_0
+0.0,53792,27,1992.3,1504.0,1472,10400,1723.5,triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_6
+0.0,44032,24,1834.7,1632.0,1440,6496,994.6,triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_4
+0.0,41568,48,866.0,864.0,800,1088,47.8,"void at::native::vectorized_elementwise_kernel<(int)2, at::native::FillFunctor<long>, std::array<char *, (unsigned long)1>>(int, T2, T3)"
+0.0,37376,24,1557.3,1536.0,1472,1824,88.9,triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_7
+0.0,33472,24,1394.7,1312.0,1280,3232,395.6,triton_per_fused__to_copy__unsafe_view_add_mean_mul_pow_rsqrt_12
+0.0,12672,3,4224.0,3744.0,2304,6624,2199.6,triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_5
+0.0,8896,3,2965.3,2240.0,2240,4416,1256.3,triton_per_fused__to_copy__unsafe_view_add_embedding_mean_mul_pow_rsqrt_3
+0.0,3200,3,1066.7,960.0,928,1312,213.1,"void <unnamed>::elementwise_kernel_with_index<int, at::native::arange_cuda_out(const c10::Scalar &, const c10::Scalar &, const c10::Scalar &, at::Tensor &)::[lambda() (instance 1)]::operator ()() const::[lambda() (instance 4)]::operator ()() const::[lambda(long) (instance 1)]>(T1, T2, function_traits<T2>::result_type *)"

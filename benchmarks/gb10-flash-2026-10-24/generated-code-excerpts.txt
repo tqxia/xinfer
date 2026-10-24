@@ -1,0 +1,50 @@
+decode: decode/data/aotinductor/model/cmydulxrdl6f7ygkytfjrh7jdv7cz6qvr4sxxvdietstbr7eejqr.wrapper.cpp
+
+12175:     call_triton_poi_fused__unsafe_view_index_copy_transpose_view_3(arg313_1, buf11, arg315_1, 1024L, this->device_idx_, stream, kernels, this->cubin_dir_);
+12176:     // Topologically Sorted Source Nodes: [unsqueeze_1, unsqueeze_2, expand, unsqueeze, unsqueeze_3, to_2, wrap_with_autocast, to_6, unsqueeze_5, mul_9, add_3, _scaled_dot_product_flash_attention], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.slice, aten._scaled_dot_product_flash_attention]
+12177:     const int64_t int_array_14[] = {1L, 8L, (-1L) + s79, 128L};
+12178:     static constexpr int64_t int_array_15[] = {1049600L, 131200L, 128L, 1L};
+12179:     double var_0 = 0.08838834764831845;
+12180:     AtenTensorHandle buf15_handle;
+12181:     AtenTensorHandle buf16_handle;
+12182:     int64_t buf14_4 = 1;
+12183:     auto buf14_5 = (-1L) + s79;
+12184:     AtenTensorHandle buf17_handle;
+12185:     AtenTensorHandle buf18_handle;
+12186:     AtenTensorHandle buf19_handle;
+12187:     AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda__scaled_dot_product_flash_attention(buf13, wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(arg314_1, 4, int_array_14, int_array_15, 0L)), wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(arg315_1, 4, int_array_14, int_array_15, 0L)), 0.0, 1, 0, &var_0, &buf15_handle, &buf16_handle, nullptr, nullptr, &buf14_4, &buf14_5, &buf17_handle, &buf18_handle, &buf19_handle));
+12188:     RAIIAtenTensorHandle buf15(buf15_handle);
+12189:     RAIIAtenTensorHandle buf16(buf16_handle);
+    auto arg370_1_size = arg370_1.sizes();
+
+    if (arg370_1_size[0] < 2) {
+        std::stringstream ss;
+        ss << "input_handles[58]: dim value is too small at 0, "
+           << "expected it to be >= 2, " << "but got: "
+           << arg370_1_size[0] << "\n";
+        throw std::runtime_error(std::move(ss).str());
+prefill: prefill/data/aotinductor/model/c3phjnlxp27iwzs37its5h2vmycqz4y5ixg3uelueryixmk5dgnx.wrapper.cpp
+
+12139:     buf2.reset();
+12140:     // Topologically Sorted Source Nodes: [unsqueeze_1, unsqueeze_2, expand, unsqueeze, unsqueeze_3, to_2, wrap_with_autocast, to_6, unsqueeze_5, mul_9, add_3, _scaled_dot_product_flash_attention], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.slice, aten._scaled_dot_product_flash_attention]
+12141:     const int64_t int_array_13[] = {1L, 8L, (-1L) + s79, 128L};
+12142:     static constexpr int64_t int_array_14[] = {1049600L, 131200L, 128L, 1L};
+12143:     double var_0 = 0.08838834764831845;
+12144:     AtenTensorHandle buf15_handle;
+12145:     AtenTensorHandle buf16_handle;
+12146:     auto buf14_4 = s58;
+12147:     auto buf14_5 = (-1L) + s79;
+12148:     AtenTensorHandle buf17_handle;
+12149:     AtenTensorHandle buf18_handle;
+12150:     AtenTensorHandle buf19_handle;
+12151:     AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda__scaled_dot_product_flash_attention(buf13, wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(arg314_1, 4, int_array_13, int_array_14, 0L)), wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(arg315_1, 4, int_array_13, int_array_14, 0L)), 0.0, 1, 0, &var_0, &buf15_handle, &buf16_handle, nullptr, nullptr, &buf14_4, &buf14_5, &buf17_handle, &buf18_handle, &buf19_handle));
+12152:     RAIIAtenTensorHandle buf15(buf15_handle);
+12153:     RAIIAtenTensorHandle buf16(buf16_handle);
+    auto arg370_1_size = arg370_1.sizes();
+
+    if (arg370_1_size[0] < 2) {
+        std::stringstream ss;
+        ss << "input_handles[58]: dim value is too small at 0, "
+           << "expected it to be >= 2, " << "but got: "
+           << arg370_1_size[0] << "\n";
+        throw std::runtime_error(std::move(ss).str());
