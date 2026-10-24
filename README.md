@@ -6,6 +6,7 @@ For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
 [GB10.md](GB10.md) for setup, architecture, validation and run commands.
 The [latest full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records the eager/AOTI comparison after GPU clock recovery.
 The [fused-AOTI profile](benchmarks/gb10-profile-2026-10-24/REPORT.md) identifies the measured bottlenecks and records isolated attention/graph experiments.
+The optional [FlashAttention path](GB10.md#optional-flashattention-path) uses native GQA and valid KV prefixes, with its numerical limitations and validation commands documented separately.
 The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its

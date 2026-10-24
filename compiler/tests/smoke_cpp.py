@@ -80,6 +80,18 @@ result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/p
 assert result.returncode != 0 and 'Package numerical settings differ' in result.stderr, result.stderr
 report['rejections'].append('mixed_numerical_settings')
 
+# Attention/cache contracts must also agree before CUDA initialization.
+for kind in ('prefill', 'decode'):
+    metadata = json.loads((packages/(kind+'.json')).read_text())
+    if kind == 'prefill':
+        metadata['attention_backend'] = ('efficient' if metadata.get('attention_backend') == 'flash' else 'flash')
+    (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/prompt.ids',
+                         str(out/'mixed.ids')], env=env | {'CUDA_VISIBLE_DEVICES':''},
+                        capture_output=True, text=True, timeout=20)
+assert result.returncode != 0 and 'Package attention/cache settings differ' in result.stderr, result.stderr
+report['rejections'].append('mixed_attention_settings')
+
 # A real generation-limit stop must produce exactly one prediction, even before EOS.
 result = subprocess.run([str(binary), str(packages), 'artifacts/reference/capital/prompt.ids',
                          str(out/'limit.ids'), '--max-new-tokens','1'], env=env,
@@ -108,13 +120,14 @@ with torch.inference_mode():
         generated = [int(x) for x in ids_path.read_text().split()]
         assert 1 <= len(generated) <= 3
         rows = np.fromfile(trace_path,dtype='<f4').reshape(len(generated),spec['vocab_size'])
-        cache = tuple(torch.zeros(spec['cache_shape'],dtype=torch.bfloat16,device='cuda')
+        cache = tuple(torch.empty_strided(spec['cache_shape'],spec['cache_stride'],dtype=torch.bfloat16,device='cuda').zero_()
                       for _ in range(2*spec['layers']))
         tokens, position = prompt, 0
         for token, row in zip(generated,rows):
             ids = torch.tensor([tokens],dtype=torch.int64,device='cuda')
             positions = torch.arange(position,position+len(tokens),device='cuda')
-            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache)
+            extra = (torch.empty(position+len(tokens)+1,dtype=torch.uint8),) if spec.get('attention_backend') == 'flash' else ()
+            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache,*extra)
             assert scores.argmax(-1).item() == token
             assert np.array_equal(scores.float().cpu().numpy()[0],row)
             position += len(tokens)

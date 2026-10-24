@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
-from model import CACHE_LENGTH, allocate_cache, load_model
+from model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
 from prepare import DEFAULT_MODEL
 from validate_aoti import MAX_RELATIVE_ERROR, compare, error_metrics, ids_from
 
@@ -110,6 +110,20 @@ def main():
         greedy_case('limit_one', 'capital', 1),
         greedy_case('limit_three', 'capital', 3),
     ])
+    if spec.get('attention_backend') == 'flash':
+        # Exercise shape boundaries and rectangular causal alignment, including
+        # a multi-token append immediately after a one-token initial prompt.
+        sizes = (1, 2, 13, 16, 31, 1, 64, 128, 256, 511, 1)
+        chunks, offset = [], 0
+        for size in sizes:
+            chunks.append(full[offset:offset+size])
+            offset += size
+        assert offset == CACHE_LENGTH
+        cases.extend([
+            dict(name='prefix_boundaries', mode='trace', chunks=chunks, check_overflow=True),
+            dict(name='prefix_boundaries_poison', mode='trace', chunks=chunks, fill=3,
+                 same_as='prefix_boundaries', check_overflow=True),
+        ])
     manifest = args.output/'cases.json'
     manifest.write_text(json.dumps({'cases': cases}, indent=2)+'\n')
     env = {k: v for k, v in os.environ.items()
@@ -126,13 +140,14 @@ def main():
 
     prefill = torch._inductor.aoti_load_package(str(args.packages/'prefill.pt2'))
     decode = torch._inductor.aoti_load_package(str(args.packages/'decode.pt2'))
-    py_cache = allocate_cache(model.config)
+    py_cache = allocate_cache(model.config, spec.get('attention_backend', 'efficient'))
     pointers = [t.data_ptr() for t in py_cache]
 
     def py_step(tokens, position):
         ids = torch.tensor([tokens], dtype=torch.int64, device='cuda')
         positions = torch.arange(position, position+len(tokens), device='cuda')
-        return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache).float()
+        extra = (cache_extent(position + len(tokens)),) if spec.get('attention_backend') == 'flash' else ()
+        return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache, *extra).float()
 
     report = dict(cases=[], error_limit=MAX_RELATIVE_ERROR, native_loader_pairs=native['loader_pairs'],
                   numerical_failures=[])

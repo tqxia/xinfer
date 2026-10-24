@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 
-from model import CACHE_LENGTH, MAX_PROMPT, QwenStep, allocate_cache, load_model
+from model import CACHE_LENGTH, MAX_PROMPT, QwenStep, allocate_cache, load_model, cache_extent
 from prepare import DEFAULT_MODEL
 
 
@@ -17,6 +17,8 @@ def main():
     parser.add_argument("kind", choices=("decode", "prefill"))
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
+    parser.add_argument("--attention-backend", choices=("efficient", "flash"), default="efficient",
+                        help="Flash uses native GQA and dynamic valid-prefix KV views")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Use native mean reductions and disable FP contraction for eager BF16 parity")
     args = parser.parse_args()
@@ -33,19 +35,31 @@ def main():
         make_fallback(torch.ops.aten.mean.dim, warn=False)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    model = load_model(args.model_dir)
+    if args.attention_backend == "flash":
+        # Preserve size-one intermediate prefix views, including a one-token
+        # initial prompt. Mutation inputs stay fixed-size; extent is always >=2.
+        from torch.fx.experimental import _config as symbolic_config
+        symbolic_config.backed_size_oblivious = True
+    model = load_model(args.model_dir, args.attention_backend)
     step = QwenStep(model)
     with torch.inference_mode():
         length = 1 if args.kind == "decode" else 16
+        cache = allocate_cache(model.config, args.attention_backend)
         inputs = (
             torch.ones((1, length), dtype=torch.int64, device="cuda"),
             torch.arange(length, device="cuda"),
-            allocate_cache(model.config),
+            cache,
         )
         shapes = None
         if args.kind == "prefill":
             seq = torch.export.Dim("tokens", min=2, max=MAX_PROMPT)
             shapes = ({1: seq}, {0: seq}, tuple({} for _ in inputs[2]))
+        if args.attention_backend == "flash":
+            inputs += (cache_extent(32),)
+            extent = torch.export.Dim("kv_extent", min=2, max=CACHE_LENGTH + 1)
+            shapes = ({} if args.kind == "decode" else {1: seq},
+                      {} if args.kind == "decode" else {0: seq},
+                      tuple({} for _ in inputs[2]), {0: extent})
         start = time.perf_counter()
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
         # Text dumps expose mutation/shape behavior without another copy of the weights.
@@ -73,14 +87,21 @@ def main():
             "vocab_size": model.config.vocab_size,
             "dtype": "bfloat16",
             "inductor_configs": options,
+            "export_options": {"backed_size_oblivious": True} if args.attention_backend == "flash" else {},
             "eager_numerics": args.eager_numerics,
+            "attention_backend": args.attention_backend,
+            "cache_input": "full_capacity_with_extent" if args.attention_backend == "flash" else "full_capacity",
+            "valid_cache_length": [1, CACHE_LENGTH],
+            "kv_extent": {"device": "cpu", "dtype": "uint8", "shape": "[valid_length + 1]", "data_read": False}
+                         if args.attention_backend == "flash" else None,
             "triton_enable_fp_fusion": get_backend_options()["enable_fp_fusion"],
-            "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ...",
-            "flat_input_count": 2 + len(inputs[2]),
+            "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..." +
+                                (", kv_extent" if args.attention_backend == "flash" else ""),
+            "flat_input_count": 2 + len(inputs[2]) + int(args.attention_backend == "flash"),
             "input_alignment_bytes": 16,
             "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
-            "cache_shape": list(inputs[2][0].shape),
-            "cache_stride": list(inputs[2][0].stride()),
+            "cache_shape": list(cache[0].shape),
+            "cache_stride": list(cache[0].stride()),
             "output": "last-token logits [1, vocab_size]",
             "eos_token_ids": model.generation_config.eos_token_id,
             "export_and_compile_seconds": time.perf_counter() - start,
