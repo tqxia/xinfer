@@ -1,0 +1,50 @@
+{
+  "q_proj": {
+    "n": 2016,
+    "mean_us": 26.087698412698412,
+    "median_us": 25.824,
+    "total_ms_per_token": 0.7304555555555559
+  },
+  "k_proj": {
+    "n": 2016,
+    "mean_us": 10.393174603174604,
+    "median_us": 10.144,
+    "total_ms_per_token": 0.2910088888888888
+  },
+  "v_proj": {
+    "n": 2016,
+    "mean_us": 10.406428571428572,
+    "median_us": 10.144,
+    "total_ms_per_token": 0.2913799999999996
+  },
+  "o_proj": {
+    "n": 2016,
+    "mean_us": 27.26531746031746,
+    "median_us": 26.688,
+    "total_ms_per_token": 0.7634288888888894
+  },
+  "gate_proj": {
+    "n": 2016,
+    "mean_us": 29.31452380952381,
+    "median_us": 28.96,
+    "total_ms_per_token": 0.8208066666666655
+  },
+  "up_proj": {
+    "n": 2016,
+    "mean_us": 32.79553968253968,
+    "median_us": 32.4,
+    "total_ms_per_token": 0.9182751111111099
+  },
+  "down_proj": {
+    "n": 2016,
+    "mean_us": 53.1214126984127,
+    "median_us": 52.512,
+    "total_ms_per_token": 1.4873995555555548
+  },
+  "lm_head": {
+    "n": 72,
+    "mean_us": 2036.96,
+    "median_us": 2021.808,
+    "total_ms_per_token": 2.03696
+  }
+}

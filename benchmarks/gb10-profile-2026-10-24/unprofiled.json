@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "name": "length_25",
+      "samples": [
+        {
+          "decode_ms_per_token": 10.591956375,
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 10.240131,
+          "request_ms": 95.675956,
+          "reset_ms": 0.700174
+        },
+        {
+          "decode_ms_per_token": 10.62581225,
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 10.488179,
+          "request_ms": 96.212883,
+          "reset_ms": 0.718206
+        },
+        {
+          "decode_ms_per_token": 10.5428365,
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 10.464499,
+          "request_ms": 95.513221,
+          "reset_ms": 0.70603
+        }
+      ]
+    },
+    {
+      "name": "length_128",
+      "samples": [
+        {
+          "decode_ms_per_token": 10.745512,
+          "prediction_ids": [
+            3838,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 11.264337,
+          "request_ms": 97.928255,
+          "reset_ms": 0.699822
+        },
+        {
+          "decode_ms_per_token": 10.582650375,
+          "prediction_ids": [
+            3838,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 11.24632,
+          "request_ms": 96.624129,
+          "reset_ms": 0.716606
+        },
+        {
+          "decode_ms_per_token": 10.65237425,
+          "prediction_ids": [
+            3838,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 11.275953,
+          "request_ms": 97.203393,
+          "reset_ms": 0.708446
+        }
+      ]
+    },
+    {
+      "name": "length_512",
+      "samples": [
+        {
+          "decode_ms_per_token": 10.680212125,
+          "prediction_ids": [
+            825,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 17.673598,
+          "request_ms": 103.827053,
+          "reset_ms": 0.711758
+        },
+        {
+          "decode_ms_per_token": 10.65513425,
+          "prediction_ids": [
+            825,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 17.676143,
+          "request_ms": 103.626111,
+          "reset_ms": 0.708894
+        },
+        {
+          "decode_ms_per_token": 10.66085225,
+          "prediction_ids": [
+            825,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 17.651566,
+          "request_ms": 103.637902,
+          "reset_ms": 0.699518
+        }
+      ]
+    }
+  ],
+  "cpu_threads": 1,
+  "repeats": 3,
+  "torch_version": "2.13.0",
+  "warmup": 2
+}

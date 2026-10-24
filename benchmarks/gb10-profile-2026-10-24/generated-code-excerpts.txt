@@ -1,0 +1,76 @@
+// decode/data/aotinductor/model/cfzb2jetpl5v2jf2u2weqdehopapyw7cspdarm6djo7sytulc3cg.wrapper.cpp:12316
+
+    if ((reinterpret_cast<std::uintptr_t>(arg368_1.data_ptr()) & (16 -1)) != 0) {
+        AOTI_TORCH_WARN("Input 56 was compiled as 16-bytes aligned, but it is not aligned at run time. Copying to an aligned tensor to guarantee correctness, but expect a performance hit.");
+        AtenTensorHandle arg368_1_aligned;
+        aoti_torch_clone_preserve_strides(arg368_1, &arg368_1_aligned);
+        arg368_1 = std::move(RAIIAtenTensorHandle(arg368_1_aligned));
+    }
+
+    if ((reinterpret_cast<std::uintptr_t>(arg369_1.data_ptr()) & (16 -1)) != 0) {
+        AOTI_TORCH_WARN("Input 57 was compiled as 16-bytes aligned, but it is not aligned at run time. Copying to an aligned tensor to guarantee correctness, but expect a performance hit.");
+        AtenTensorHandle arg369_1_aligned;
+        aoti_torch_clone_preserve_strides(arg369_1, &arg369_1_aligned);
+        arg369_1 = std::move(RAIIAtenTensorHandle(arg369_1_aligned));
+    }
+    inputs.clear();
+    [[maybe_unused]] auto& kernels = static_cast<AOTInductorModelKernels&>(*this->kernels_.get());
+    if (_check_aoti_runtime_check_inputs_env()) { assert_size_stride(arg312_1, {1L, 1L}, {1L, 1L}, "input"); }
+
+    AOTICudaStreamGuard stream_guard(stream, this->device_idx_);
+    static constexpr int64_t int_array_0[] = {1L, 1L, 1024L};
+    static constexpr int64_t int_array_1[] = {1024L, 1024L, 1L};
+    AtenTensorHandle buf1_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(3, int_array_0, int_array_1, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf1_handle));
+    RAIIAtenTensorHandle buf1(buf1_handle);
+    // Topologically Sorted Source Nodes: [embedding, to_7, pow_1, mean, add_1, rsqrt, mul_3, to_8, mul_4], Original ATen: [aten.embedding, aten._to_copy, aten.pow, aten.mean, aten.add, aten.rsqrt, aten.mul]
+    call_triton_per_fused__to_copy_add_embedding_mean_mul_pow_rsqrt_0(arg312_1, model_lm_head_weight, model_model_layers_0_input_layernorm_weight, buf1, 1L, 1024L, this->device_idx_, stream, kernels, this->cubin_dir_);
+    static constexpr int64_t int_array_2[] = {1L, 2048L};
+    static constexpr int64_t int_array_3[] = {2048L, 1L};
+    AtenTensorHandle buf2_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(2, int_array_2, int_array_3, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf2_handle));
+    RAIIAtenTensorHandle buf2(buf2_handle);
+    // Topologically Sorted Source Nodes: [embedding, to_7, pow_1, mean, add_1, rsqrt, mul_3, to_8, mul_4, linear], Original ATen: [aten.embedding, aten._to_copy, aten.pow, aten.mean, aten.add, aten.rsqrt, aten.mul, aten.view, aten.t, aten.mm]
+    static constexpr int64_t int_array_4[] = {1L, 1024L};
+    static constexpr int64_t int_array_5[] = {0L, 1L};
+    static constexpr int64_t int_array_6[] = {1024L, 2048L};
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda_mm_out(buf2, wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(buf1, 2, int_array_4, int_array_5, 0L)), wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(model_model_layers_0_self_attn_q_proj_weight, 2, int_array_6, int_array_4, 0L))));
+    if (_check_aoti_runtime_check_inputs_env()) { assert_size_stride(arg313_1, {1L, }, {1L, }, "input"); }
+// decode/data/aotinductor/model/cfzb2jetpl5v2jf2u2weqdehopapyw7cspdarm6djo7sytulc3cg.wrapper.cpp:12452
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_14, int_array_15, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf748_handle));
+    RAIIAtenTensorHandle buf748(buf748_handle);
+    AtenTensorHandle buf779_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_14, int_array_15, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf779_handle));
+    RAIIAtenTensorHandle buf779(buf779_handle);
+    AtenTensorHandle buf809_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_14, int_array_15, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf809_handle));
+    RAIIAtenTensorHandle buf809(buf809_handle);
+    AtenTensorHandle buf840_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_14, int_array_15, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf840_handle));
+    RAIIAtenTensorHandle buf840(buf840_handle);
+    // Topologically Sorted Source Nodes: [unsqueeze_5, unsqueeze_6, expand, unsqueeze_4, unsqueeze_7, to_2, wrap_with_autocast, to_6, unsqueeze_9, mul_10, add_4, reshape, reshape_1, arange, unsqueeze, unsqueeze_1, gt, masked_fill, zeros_like, unsqueeze_2, unsqueeze_3, eq, all_1, bitwise_not, mul, scaled_dot_product_attention, unsqueeze_13, mul_23, add_12, reshape_3, reshape_4, scaled_dot_product_attention_1, unsqueeze_17, mul_36, add_20, reshape_6, reshape_7, scaled_dot_product_attention_2, unsqueeze_21, mul_49, add_28, reshape_9, reshape_10, scaled_dot_product_attention_3, unsqueeze_25, mul_62, add_36, reshape_12, reshape_13, scaled_dot_product_attention_4, unsqueeze_29, mul_75, add_44, reshape_15, reshape_16, scaled_dot_product_attention_5, unsqueeze_33, mul_88, add_52, reshape_18, reshape_19, scaled_dot_product_attention_6, unsqueeze_37, mul_101, add_60, reshape_21, reshape_22, scaled_dot_product_attention_7, unsqueeze_41, mul_114, add_68, reshape_24, reshape_25, scaled_dot_product_attention_8, unsqueeze_45, mul_127, add_76, reshape_27, reshape_28, scaled_dot_product_attention_9, unsqueeze_49, mul_140, add_84, reshape_30, reshape_31, scaled_dot_product_attention_10, unsqueeze_53, mul_153, add_92, reshape_33, reshape_34, scaled_dot_product_attention_11, unsqueeze_57, mul_166, add_100, reshape_36, reshape_37, scaled_dot_product_attention_12, unsqueeze_61, mul_179, add_108, reshape_39, reshape_40, scaled_dot_product_attention_13, unsqueeze_65, mul_192, add_116, reshape_42, reshape_43, scaled_dot_product_attention_14, unsqueeze_69, mul_205, add_124, reshape_45, reshape_46, scaled_dot_product_attention_15, unsqueeze_73, mul_218, add_132, reshape_48, reshape_49, scaled_dot_product_attention_16, unsqueeze_77, mul_231, add_140, reshape_51, reshape_52, scaled_dot_product_attention_17, unsqueeze_81, mul_244, add_148, reshape_54, reshape_55, scaled_dot_product_attention_18, unsqueeze_85, mul_257, add_156, reshape_57, reshape_58, scaled_dot_product_attention_19, unsqueeze_89, mul_270, add_164, reshape_60, reshape_61, scaled_dot_product_attention_20, unsqueeze_93, mul_283, add_172, reshape_63, reshape_64, scaled_dot_product_attention_21, unsqueeze_97, mul_296, add_180, reshape_66, reshape_67, scaled_dot_product_attention_22, unsqueeze_101, mul_309, add_188, reshape_69, reshape_70, scaled_dot_product_attention_23, unsqueeze_105, mul_322, add_196, reshape_72, reshape_73, scaled_dot_product_attention_24, unsqueeze_109, mul_335, add_204, reshape_75, reshape_76, scaled_dot_product_attention_25, unsqueeze_113, mul_348, add_212, reshape_78, reshape_79, scaled_dot_product_attention_26, unsqueeze_117, mul_361, add_220, reshape_81, reshape_82, scaled_dot_product_attention_27], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.clone, aten._unsafe_view, aten.arange, aten.gt, aten.masked_fill, aten.zeros_like, aten.eq, aten.all, aten.bitwise_not, aten._scaled_dot_product_efficient_attention]
+    call_triton_per_fused__scaled_dot_product_efficient_attention__to_copy__unsafe_view_add_all_arange_bitwise_not_bmm_cat_clone_eq_expand_gt_masked_fill_mul_sin_transpose_unsqueeze_zeros_like_4(arg313_1, buf17, buf47, buf77, buf108, buf138, buf169, buf199, buf230, buf260, buf291, buf321, buf352, buf382, buf413, buf443, buf474, buf504, buf535, buf565, buf596, buf626, buf657, buf687, buf718, buf748, buf779, buf809, buf840, 1L, 1024L, this->device_idx_, stream, kernels, this->cubin_dir_);
+    static constexpr int64_t int_array_16[] = {1L, 16L, 1024L, 128L};
+    static constexpr int64_t int_array_17[] = {2097152L, 131072L, 128L, 1L};
+    AtenTensorHandle buf15_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_16, int_array_17, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf15_handle));
+    RAIIAtenTensorHandle buf15(buf15_handle);
+    // Topologically Sorted Source Nodes: [unsqueeze_5, unsqueeze_6, expand, unsqueeze_4, unsqueeze_7, to_2, wrap_with_autocast, to_6, unsqueeze_9, mul_10, add_4, reshape, reshape_1, arange, unsqueeze, unsqueeze_1, gt, masked_fill, zeros_like, unsqueeze_2, unsqueeze_3, all_1, bitwise_not, mul, scaled_dot_product_attention], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.clone, aten._unsafe_view, aten.arange, aten.gt, aten.masked_fill, aten.zeros_like, aten.all, aten.bitwise_not, aten._scaled_dot_product_efficient_attention]
+    call_triton_poi_fused__scaled_dot_product_efficient_attention__to_copy__unsafe_view_add_all_arange_bitwise_not_bmm_cat_clone_expand_gt_masked_fill_mul_sin_transpose_unsqueeze_zeros_like_5(arg314_1, buf15, 2097152L, this->device_idx_, stream, kernels, this->cubin_dir_);
+    arg314_1.reset();
+    AtenTensorHandle buf16_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_empty_strided(4, int_array_16, int_array_17, cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, this->device_idx_, &buf16_handle));
+    RAIIAtenTensorHandle buf16(buf16_handle);
+    // Topologically Sorted Source Nodes: [unsqueeze_5, unsqueeze_6, expand, unsqueeze_4, unsqueeze_7, to_2, wrap_with_autocast, to_6, unsqueeze_9, mul_10, add_4, reshape, reshape_1, arange, unsqueeze, unsqueeze_1, gt, masked_fill, zeros_like, unsqueeze_2, unsqueeze_3, all_1, bitwise_not, mul, scaled_dot_product_attention], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.clone, aten._unsafe_view, aten.arange, aten.gt, aten.masked_fill, aten.zeros_like, aten.all, aten.bitwise_not, aten._scaled_dot_product_efficient_attention]
+    call_triton_poi_fused__scaled_dot_product_efficient_attention__to_copy__unsafe_view_add_all_arange_bitwise_not_bmm_cat_clone_expand_gt_masked_fill_mul_sin_transpose_unsqueeze_zeros_like_5(arg315_1, buf16, 2097152L, this->device_idx_, stream, kernels, this->cubin_dir_);
+    arg315_1.reset();
+    // Topologically Sorted Source Nodes: [unsqueeze_5, unsqueeze_6, expand, unsqueeze_4, unsqueeze_7, to_2, wrap_with_autocast, to_6, unsqueeze_9, mul_10, add_4, reshape, reshape_1, arange, unsqueeze, unsqueeze_1, gt, masked_fill, zeros_like, unsqueeze_2, unsqueeze_3, all_1, bitwise_not, mul, scaled_dot_product_attention], Original ATen: [aten.unsqueeze, aten.expand, aten._to_copy, aten.bmm, aten.transpose, aten.cat, aten.sin, aten.mul, aten.add, aten.clone, aten._unsafe_view, aten.arange, aten.gt, aten.masked_fill, aten.zeros_like, aten.all, aten.bitwise_not, aten._scaled_dot_product_efficient_attention]
+    static constexpr int64_t int_array_18[] = {1L, 16L, 1L, 1024L};
+    static constexpr int64_t int_array_19[] = {1024L, 0L, 1024L, 1L};
+    double var_0 = 0.08838834764831845;
+    AtenTensorHandle buf19_handle;
+    AtenTensorHandle buf20_handle;
+    AtenTensorHandle buf21_handle;
+    AtenTensorHandle buf22_handle;
+    AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda__scaled_dot_product_efficient_attention(buf14, buf15, buf16, &temporary_reference(wrap_with_raii_handle_if_needed(reinterpret_tensor_wrapper(buf17, 4, int_array_18, int_array_19, 0L)).get()), 0, 0.0, 0, &var_0, &buf19_handle, &buf20_handle, &buf21_handle, &buf22_handle));
+    RAIIAtenTensorHandle buf19(buf19_handle);

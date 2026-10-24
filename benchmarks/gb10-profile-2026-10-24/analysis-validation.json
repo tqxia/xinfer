@@ -1,0 +1,8 @@
+{
+  "kernel_count": 37143,
+  "total_kernel_gpu_ms": 815.238645,
+  "every_kernel_attributed_once": true,
+  "analyzer_summary_reproduced_on_gb10": true,
+  "cross_python_max_absolute_summary_difference": 2.842170943040401e-14,
+  "graph_all_prediction_sequences_match_prior_fused_benchmark": true
+}

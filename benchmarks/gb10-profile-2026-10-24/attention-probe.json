@@ -1,0 +1,162 @@
+{
+  "torch_version": "2.13.0+cu130",
+  "device": "NVIDIA GB10",
+  "cases": [
+    {
+      "phase": "decode",
+      "prompt_length": 25,
+      "valid_keys": 26,
+      "max_abs_error": 0.0,
+      "relative_l2": 0.0,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            71.85808181762695,
+            72.02107906341553,
+            72.01672077178955
+          ],
+          "median": 72.01672077178955
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            4.556240141391754,
+            4.545759856700897,
+            4.544200003147125
+          ],
+          "median": 4.545759856700897
+        }
+      }
+    },
+    {
+      "phase": "decode",
+      "prompt_length": 128,
+      "valid_keys": 129,
+      "max_abs_error": 0.0009765625,
+      "relative_l2": 0.0003389896301086992,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            72.69999980926514,
+            72.23663806915283,
+            71.25184059143066
+          ],
+          "median": 72.23663806915283
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            6.789039969444275,
+            6.782159805297852,
+            6.782919764518738
+          ],
+          "median": 6.782919764518738
+        }
+      }
+    },
+    {
+      "phase": "decode",
+      "prompt_length": 512,
+      "valid_keys": 513,
+      "max_abs_error": 0.0009765625,
+      "relative_l2": 0.0024045289028435946,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            72.53928184509277,
+            71.00152015686035,
+            71.50100231170654
+          ],
+          "median": 71.50100231170654
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            7.6006001234054565,
+            7.594360113143921,
+            7.586759924888611
+          ],
+          "median": 7.594360113143921
+        }
+      }
+    },
+    {
+      "phase": "prefill",
+      "prompt_length": 25,
+      "valid_keys": 25,
+      "max_abs_error": 0.00390625,
+      "relative_l2": 4.419257675181143e-05,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            73.6930799484253,
+            74.07931804656982,
+            74.25916194915771
+          ],
+          "median": 74.07931804656982
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            4.617280066013336,
+            4.611999988555908,
+            4.610599875450134
+          ],
+          "median": 4.611999988555908
+        }
+      }
+    },
+    {
+      "phase": "prefill",
+      "prompt_length": 128,
+      "valid_keys": 128,
+      "max_abs_error": 0.00390625,
+      "relative_l2": 0.0006301783141680062,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            87.11828231811523,
+            86.5939998626709,
+            86.54228210449219
+          ],
+          "median": 86.5939998626709
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            7.809640169143677,
+            7.808600068092346,
+            7.930920124053955
+          ],
+          "median": 7.809640169143677
+        }
+      }
+    },
+    {
+      "phase": "prefill",
+      "prompt_length": 512,
+      "valid_keys": 512,
+      "max_abs_error": 0.00390625,
+      "relative_l2": 0.0013623412232846022,
+      "finite": true,
+      "timings_us": {
+        "efficient_full_cache_repeat_kv": {
+          "samples": [
+            228.2337188720703,
+            227.2410774230957,
+            226.7184829711914
+          ],
+          "median": 227.2410774230957
+        },
+        "flash_valid_prefix_native_gqa": {
+          "samples": [
+            31.501479148864746,
+            31.509480476379395,
+            31.27232074737549
+          ],
+          "median": 31.501479148864746
+        }
+      }
+    }
+  ]
+}
