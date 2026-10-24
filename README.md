@@ -8,6 +8,7 @@ The [latest full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) rec
 The [fused-AOTI profile](benchmarks/gb10-profile-2026-10-24/REPORT.md) identifies the measured bottlenecks and records isolated attention/graph experiments.
 The optional [FlashAttention path](GB10.md#optional-flashattention-path) uses native GQA and valid KV prefixes, with its numerical limitations and validation commands documented separately.
 The [FlashAttention benchmark](benchmarks/gb10-flash-2026-10-24/REPORT.md) records a 27–32% decode-throughput improvement, with the backend retained as experimental because full-cache numerical acceptance fails.
+The [FlashAttention implementation notes](docs/gb10-flash-attention-implementation.md) explain the three integration issues: causal alignment, the full-cache layout boundary, and AOTI's size-one mutation guard, with worked examples and code references.
 The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its

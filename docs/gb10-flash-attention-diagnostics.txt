@@ -1,0 +1,96 @@
+GB10 FlashAttention integration: diagnostic excerpts
+==================================================
+
+Recorded during implementation on 2026-10-24; archived on 2026-10-25.
+Environment: PyTorch 2.13.0+cu130, Triton 3.7.1, NVIDIA GB10.
+Source root: /home/tqxia/workspace/xinfer
+Implementation: add91ea; validation and benchmark evidence: 98da53f.
+
+These are excerpts from existing probe logs, not newly executed tests.
+Unrelated copyreg deprecation warnings, exported graphs and duplicate traceback
+messages are omitted. Symbol names and guard/error text are preserved.
+The interpretation and final implementation are in
+  gb10-flash-attention-implementation.md
+
+Issue 2: the full-capacity layout guard
+--------------------------------------
+Source: work/flash-probe/export.log
+The tensor input has dynamic sequence length valid_keys. At length 1024,
+128 * valid_keys equals the original head stride, 131072.
+
+torch.fx.experimental.symbolic_shapes.ConstraintViolationError: Constraints violated (valid_keys)! For more information, run with TORCH_LOGS="+dynamic".
+  - Not all values of valid_keys = L['k'].size()[2] in the specified range valid_keys <= 1024 satisfy the generated guard (128*L['k'].size()[2]) != 131072.
+
+
+Issue 3: dynamic mutation inputs retain a minimum-size-two guard
+--------------------------------------------------------------
+Source: work/flash-probe/mutation.log
+"copy" uses index_copy_; "put" uses indexed assignment. Both probes enable
+backed_size_oblivious and use strict AOTI input checks. Export reports [1, 1024],
+but the generated wrapper checks for length >= 2. The probe's first KV tensor
+is input_handles[1]; the full model's first KV tensor is input_handles[2].
+
+copy {s49: VR[1, 1024]}
+    }
+
+    if (arg1_1_size[2] < 2) {
+        std::stringstream ss;
+        ss << "input_handles[1]: dim value is too small at 2, "
+           << "expected it to be >= 2, " << "but got: "
+           << arg1_1_size[2] << "\n";
+Error: input_handles[1]: dim value is too small at 2, expected it to be >= 2, but got: 1
+
+copy 1 RuntimeError input_handles[1]: dim value is too small at 2, expected it to be >= 2, but got: 1
+
+copy 2 ok
+copy 1024 ok
+put {s49: VR[1, 1024]}
+    }
+
+    if (arg1_1_size[2] < 2) {
+        std::stringstream ss;
+        ss << "input_handles[1]: dim value is too small at 2, "
+           << "expected it to be >= 2, " << "but got: "
+           << arg1_1_size[2] << "\n";
+Error: input_handles[1]: dim value is too small at 2, expected it to be >= 2, but got: 1
+
+put 1 RuntimeError input_handles[1]: dim value is too small at 2, expected it to be >= 2, but got: 1
+
+put 2 ok
+put 1024 ok
+
+
+Read-only comparison
+--------------------
+Source: work/flash-probe/size-oblivious.log
+With backed_size_oblivious enabled and no input mutation, the attention probe
+runs at key lengths 1, 2 and 1024. Columns: mode, query length, key length,
+relative L2 output difference against the probe's reference.
+
+decode {s49: VR[1, 1024]}
+decode 1 1 0.0
+decode 1 2 0.0011450567981228232
+decode 1 1024 0.0022064554505050182
+
+
+Fixed mutation inputs plus shape-only extent
+-------------------------------------------
+Source: work/flash-probe/extent-mutation.log
+The fixed-size cache is mutated; the extra CPU tensor has dynamic length L+1,
+so its exported range is [2, 1025]. backed_size_oblivious remains enabled.
+The result lines below report actual valid cache lengths L, not extent lengths.
+All three calls pass strict AOTI input checks.
+
+{s35: VR[2, 1025]}
+1 ok
+2 ok
+1024 ok
+
+
+Scope of the conclusion
+-----------------------
+These probes isolate a mutation interaction in the tested compiler build.
+They do not establish which internal compiler pass introduced the narrower
+minimum. The final implementation avoids that input contract and passes the
+full-model shape/cache checks. Numerical acceptance is a separate limitation;
+see ../benchmarks/gb10-flash-2026-10-24/REPORT.md.
