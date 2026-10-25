@@ -1,0 +1,7 @@
+{'name': 'arithmetic', 'tokens': 11, 'logits_bitwise_equal': True}
+{'name': 'capital', 'tokens': 8, 'logits_bitwise_equal': True}
+{'name': 'chinese', 'tokens': 24, 'logits_bitwise_equal': True}
+{'prompt_length': 1, 'tokens': 3, 'logits_bitwise_equal': True}
+{'prompt_length': 2, 'tokens': 3, 'logits_bitwise_equal': True}
+{'prompt_length': 512, 'tokens': 3, 'logits_bitwise_equal': True}
+PASS: native generation, exact AOTI logits, invalid inputs, generation limit, Python-free linkage

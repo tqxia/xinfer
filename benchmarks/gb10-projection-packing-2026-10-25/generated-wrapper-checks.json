@@ -1,0 +1,30 @@
+{
+  "all": {
+    "decode": {
+      "linear_calls": 113,
+      "packed_calls": 56,
+      "wrapper_sha256": "da6f968ca8bf06df2675eb88c89836d4f9ed749ff5307db79ab0b4bddac9860c",
+      "old_q_weight_absent": true
+    },
+    "prefill": {
+      "linear_calls": 113,
+      "packed_calls": 56,
+      "wrapper_sha256": "0eaaf79ea7e16e8af586dad7292f961eb05e810b44f88923be880fdb35382039",
+      "old_q_weight_absent": true
+    }
+  },
+  "qkv": {
+    "decode": {
+      "linear_calls": 141,
+      "packed_calls": 28,
+      "wrapper_sha256": "d239fcfede3dbcb8ba10af50121a15c76ae8bada5f5b5e3bcb7dbca82e1566ef",
+      "old_q_weight_absent": true
+    },
+    "prefill": {
+      "linear_calls": 141,
+      "packed_calls": 28,
+      "wrapper_sha256": "1a484a28b06c7f7b06fd0ae9876a12a90c1c3872aa7983a5fc5f59e7ea9ba54e",
+      "old_q_weight_absent": true
+    }
+  }
+}

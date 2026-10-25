@@ -10,6 +10,7 @@ import torch
 
 from model import CACHE_LENGTH, MAX_PROMPT, QwenStep, allocate_cache, load_model, cache_extent
 from prepare import DEFAULT_MODEL
+from passes.projections import PACKING_MODES
 
 
 def main():
@@ -21,6 +22,8 @@ def main():
                         help="Native graph rewrite: flash, or experimental FlashInfer decode + Flash prefill")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Use native mean reductions and disable FP contraction for eager BF16 parity")
+    parser.add_argument("--projection-packing", choices=PACKING_MODES, default="none",
+                        help="Pack independent BF16 projection weights once during export")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     package = args.output / f"{args.kind}.pt2"
@@ -77,6 +80,16 @@ def main():
             exported = torch.export.export(rewritten, inputs, dynamic_shapes=shapes, strict=False)
             exported.validate()
             (args.output / f"{args.kind}.rewrite.json").write_text(json.dumps(rewrite_report, indent=2) + "\n")
+        packing_report = None
+        if args.projection_packing != "none":
+            from passes.projections import pack_projections
+            (args.output / f"{args.kind}.before-packing.graph.txt").write_text(exported.graph_module.code)
+            packed, packing_report = pack_projections(exported, model.config.num_hidden_layers,
+                                                       args.projection_packing)
+            exported = torch.export.export(packed, inputs, dynamic_shapes=shapes, strict=False)
+            exported.validate()
+            assert all(name not in exported.state_dict for name in packing_report["removed_weight_attributes"])
+            (args.output / f"{args.kind}.packing.json").write_text(json.dumps(packing_report, indent=2) + "\n")
         # Text dumps expose mutation/shape behavior without another copy of the weights.
         (args.output / f"{args.kind}.graph.txt").write_text(exported.graph_module.code)
         print(f"Exported {args.kind}; compiling...", flush=True)
@@ -105,6 +118,7 @@ def main():
             "export_options": export_options,
             "eager_numerics": args.eager_numerics,
             "attention_backend": args.attention_backend,
+            "projection_packing": args.projection_packing,
             "cache_input": "full_capacity_with_extent" if prefix_attention else "full_capacity",
             "valid_cache_length": [1, CACHE_LENGTH],
             "kv_extent": {"device": "cpu", "dtype": "uint8", "shape": "[valid_length + 1]", "data_read": False}
@@ -130,6 +144,8 @@ def main():
         if args.attention_backend == "flashinfer-decode":
             from custom_ops.flashinfer_decode import SOURCE
             metadata["flashinfer_source"] = SOURCE
+        if packing_report is not None:
+            metadata["projection_packing_report"] = packing_report
         (args.output / f"{args.kind}.json").write_text(json.dumps(metadata, indent=2) + "\n")
         print(f"Saved {package} ({package.stat().st_size} bytes)", flush=True)
 

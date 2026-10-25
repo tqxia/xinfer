@@ -52,6 +52,8 @@ def main():
     parser.add_argument('--output', type=Path, default=Path('artifacts/three-path'))
     parser.add_argument('--collect-logit-errors', action='store_true',
                         help='Record all logit tolerance failures; keep limits unchanged and exit nonzero on failure')
+    parser.add_argument('--collect-top1-errors', action='store_true',
+                        help='Record top-1 differences while continuing diagnostics; token failures still exit nonzero')
     args = parser.parse_args()
     if args.output.exists():
         parser.error('Output directory already exists; choose a fresh --output')
@@ -158,7 +160,8 @@ def main():
         return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache, *extra).float()
 
     report = dict(cases=[], error_limit=MAX_RELATIVE_ERROR, native_loader_pairs=native['loader_pairs'],
-                  numerical_failures=[], collect_logit_errors=args.collect_logit_errors)
+                  numerical_failures=[], token_failures=[], collect_logit_errors=args.collect_logit_errors,
+                  collect_top1_errors=args.collect_top1_errors)
 
     def compare_logits(actual, expected, name, comparison):
         if not args.collect_logit_errors:
@@ -196,9 +199,13 @@ def main():
         different = torch.where(actual.argmax(-1) != eager.argmax(-1))[0].tolist()
         metrics['top1_differences'] = [dict(row=i, hf_id=eager[i].argmax().item(),
                                           compiled_id=actual[i].argmax().item(),
-                                          hf_top2_margin=(eager[i].topk(2).values.diff().abs().item()))
+                                          hf_top2_margin=(eager[i].topk(2).values.diff().abs().item()),
+                                          hf_selected_token_gap=(eager[i].max()-eager[i,actual[i].argmax()]).item(),
+                                          compiled_top2_margin=actual[i].topk(2).values.diff().abs().item())
                                      for i in different]
-        assert not different, metrics['top1_differences']
+        if different:
+            assert args.collect_top1_errors, metrics['top1_differences']
+            report['token_failures'].append(dict(case=name,differences=metrics['top1_differences']))
         if case.get('fixture') and case['mode'] == 'trace':
             baseline = torch.from_numpy(np.fromfile(args.reference/case['fixture']/'logits.f32', dtype='<f4')
                                         .reshape(entry['rows'], spec['vocab_size']))
@@ -255,11 +262,12 @@ def main():
                 error.pop('top1_agreement')
             report['full_cache_fp32_control'].append(dict(layer=index//2, kind='K' if index % 2 == 0 else 'V', **errors))
     report.update(total_rows=sum(c['rows'] for c in report['cases']), repeated_request_exact=True)
-    report['passed'] = not report['numerical_failures']
+    report['passed'] = not report['numerical_failures'] and not report['token_failures']
     (args.output/'summary.json').write_text(json.dumps(report, indent=2)+'\n')
     if not report['passed']:
         raise SystemExit(f"FAIL: {len(report['numerical_failures'])} numerical comparisons exceed the unchanged "
-                         f"{MAX_RELATIVE_ERROR:.0%} error limits; all cases and FP32 controls recorded in {args.output}/summary.json")
+                         f"{MAX_RELATIVE_ERROR:.0%} error limits; {len(report['token_failures'])} cases have top-1 differences; "
+                         f"all cases and FP32 controls recorded in {args.output}/summary.json")
     print('PASS: three execution paths, forced inputs, boundaries, cache contents, masks, repeated requests', flush=True)
 
 

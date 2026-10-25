@@ -204,7 +204,8 @@ def run(args):
                  'runtime/custom_ops/attention.cpp', 'runtime/custom_ops/attention.h',
                  'runtime/custom_ops/flashinfer_decode.cu', 'compiler/custom_ops/flashinfer_decode.py',
                  'compiler/custom_ops/__init__.py', 'compiler/custom_ops/attention.py',
-                 'compiler/passes/__init__.py', 'compiler/passes/attention.py'):
+                 'compiler/passes/__init__.py', 'compiler/passes/attention.py',
+                 'compiler/passes/projections.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),

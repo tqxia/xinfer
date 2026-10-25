@@ -1,0 +1,2029 @@
+{
+  "cases": [
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.001953125,
+            "max_relative_l2": 0.00010557512723607942,
+            "max_peak_relative": 0.0008503401186317205,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "qkv",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 5,
+      "packed_weight_bytes": 8388608,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "qkv",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 5,
+      "packed_weight_bytes": 8388608,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 25,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.003868499305099249,
+            "max_peak_relative": 0.006289307959377766,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.003905890742316842,
+            "max_peak_relative": 0.005988024175167084,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.003875593887642026,
+            "max_peak_relative": 0.0059523810632526875,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0021896373946219683,
+            "max_peak_relative": 0.0035714285913854837,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.004503859672695398,
+            "max_peak_relative": 0.0061349691823124886,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0234375,
+            "max_relative_l2": 0.004466991871595383,
+            "max_peak_relative": 0.008522727526724339,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.00390625,
+            "max_relative_l2": 0.0072953845374286175,
+            "max_peak_relative": 0.007299270015209913,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "qkv",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 5,
+      "packed_weight_bytes": 8388608,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 128,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "qkv",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 5,
+      "packed_weight_bytes": 8388608,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "qkv",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 5,
+      "packed_weight_bytes": 8388608,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight"
+      ]
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.00048828125,
+            "max_relative_l2": 1.501179940532893e-05,
+            "max_peak_relative": 0.00023854961909819394,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0009765625,
+            "max_relative_l2": 0.00046543058124370873,
+            "max_peak_relative": 0.002336448524147272,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "gate-up",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 6,
+      "packed_weight_bytes": 12582912,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "gate-up",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 6,
+      "packed_weight_bytes": 12582912,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 25,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0038615460507571697,
+            "max_peak_relative": 0.005917159840464592,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0038674441166222095,
+            "max_peak_relative": 0.005291005130857229,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.00311279296875,
+            "max_relative_l2": 0.006549281533807516,
+            "max_peak_relative": 0.005732913501560688,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "gate-up",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 6,
+      "packed_weight_bytes": 12582912,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 128,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "gate-up",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 6,
+      "packed_weight_bytes": 12582912,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "gate-up",
+      "groups": 1,
+      "linear_calls_before": 7,
+      "linear_calls_after": 6,
+      "packed_weight_bytes": 12582912,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0009765625,
+            "max_relative_l2": 2.8369133360683918e-05,
+            "max_peak_relative": 0.00044014083687216043,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "all",
+      "groups": 2,
+      "linear_calls_before": 7,
+      "linear_calls_after": 4,
+      "packed_weight_bytes": 20971520,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "all",
+      "groups": 2,
+      "linear_calls_before": 7,
+      "linear_calls_after": 4,
+      "packed_weight_bytes": 20971520,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 25,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.003877563402056694,
+            "max_peak_relative": 0.0059523810632526875,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.003923838958144188,
+            "max_peak_relative": 0.006172839552164078,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0038799052126705647,
+            "max_peak_relative": 0.00671140942722559,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0022079050540924072,
+            "max_peak_relative": 0.0036764706019312143,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.0044748480431735516,
+            "max_peak_relative": 0.005747126415371895,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.015625,
+            "max_relative_l2": 0.004461793228983879,
+            "max_peak_relative": 0.005235602147877216,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.00390625,
+            "max_relative_l2": 0.00739759998396039,
+            "max_peak_relative": 0.007751937955617905,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "all",
+      "groups": 2,
+      "linear_calls_before": 7,
+      "linear_calls_after": 4,
+      "packed_weight_bytes": 20971520,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 128,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "all",
+      "groups": 2,
+      "linear_calls_before": 7,
+      "linear_calls_after": 4,
+      "packed_weight_bytes": 20971520,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "errors": [
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        },
+        {
+          "unpacked": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          },
+          "packed_eager": {
+            "max_abs": 0.0,
+            "max_relative_l2": 0.0,
+            "max_peak_relative": 0.0,
+            "top1_agreement": 1,
+            "rows": 1
+          }
+        }
+      ],
+      "cache_exact": true,
+      "stable_storage": true,
+      "source_weights_unchanged": true,
+      "pass_name": "qwen_pack_projections_v1",
+      "mode": "all",
+      "groups": 2,
+      "linear_calls_before": 7,
+      "linear_calls_after": 4,
+      "packed_weight_bytes": 20971520,
+      "cache_updates_preserved": 1,
+      "runtime_weight_packing": false,
+      "removed_weight_attributes": [
+        "layers.0.self_attn.q_proj.weight",
+        "layers.0.self_attn.k_proj.weight",
+        "layers.0.self_attn.v_proj.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight"
+      ]
+    }
+  ],
+  "rejections": [
+    "missing_projection",
+    "different_input",
+    "bias",
+    "shared_weight",
+    "wrong_layers",
+    "side_effect"
+  ],
+  "strict_runtime_checks": true,
+  "passed": true
+}

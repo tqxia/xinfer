@@ -1,0 +1,722 @@
+{
+  "platform": "Linux-6.17.0-1018-nvidia-aarch64-with-glibc2.39",
+  "cpu_count": 20,
+  "affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "git_commit": "189adc3f81e275db51748f122258739614126882",
+  "source_sha256": {
+    "CMakeLists.txt": "e19d8be3735ed79979929a6e9cfdac32402974f3a6e6013029841573deb34d19",
+    "compiler/benchmark.py": "e0a5f281e43b2a27eb65d37e8f28770947441c89d7099ce0b94a952709b0de15",
+    "compiler/custom_ops/__init__.py": "ae99b538a28980bfa6b6631a57318cce527c73350962f0901db13369952c6f77",
+    "compiler/custom_ops/attention.py": "8c7a92688bb1455aca957cb7963238869eb88ab778e8ef0c3dc21ed806cc4de1",
+    "compiler/custom_ops/flashinfer_decode.py": "61aae67286737a73be632802425d22b20defc3bc4aee3f2136c88e1d1fdc328d",
+    "compiler/export.py": "86c9c5f416a615c4b993b70ad146eef8283730ad9b544c07d0bdd685544c1020",
+    "compiler/model.py": "2722c287d194b4f10ad1110464cbc2afab1f62b0ce4c1b54e14afb8db24c9bd4",
+    "compiler/passes/__init__.py": "18c21b4e8f286f4d91b7b044c06fe09bf213389ecc011245cabd913793db5308",
+    "compiler/passes/attention.py": "ac58b622b6abab14308e4410a505fc7f034e52cb80aaa10f861f778ae69acc9c",
+    "compiler/passes/projections.py": "cc809a627eac76913013fd6ce84bf54946da42f24d485fe762b587b88ee11ab4",
+    "compiler/prepare.py": "0d4bdcbbcb680abf764ce7f37049af841f10f71543c1b31979eb059e3a436269",
+    "runtime/CMakeLists.txt": "44905e88b23a8e61d1a22ac703f5a8f99ccd562b879d93ae4de02be21a36052e",
+    "runtime/benchmark.cpp": "1bcdcfcdddbb5635b9022e7ec2e03f25d0e2b582f1e21a655f93a69b238b58cd",
+    "runtime/custom_ops/attention.cpp": "7d46cd19ac08aa2407837dd60c6c56daea6abe755fad825221c307f7c1c0a46c",
+    "runtime/custom_ops/attention.h": "0ccedd38e98415a581612934e621290636393fbcefd9d39c93f8ce775a3d96b7",
+    "runtime/custom_ops/flashinfer_decode.cu": "6ed2a563b3969d0a50f85a2ee6bf4f6a4ff0e77b611789ffa142bbac4e26bc8d",
+    "runtime/runtime.h": "56a9d7187c95a892f8dce946aa6bb130bc84c6684312d14a21aa0a5242b308b6"
+  },
+  "binary_sha256": "54216b775ce4f19f01fc00b7d47ef79c90e52eebebf426090a8a4841cf4c5213",
+  "workload_sha256": "9c0f55a0c917cf668dd8a4640e5c79d508dd70b519056364affd7d02eb97f92f",
+  "model_manifest": {
+    "repo_id": "Qwen/Qwen3-0.6B",
+    "revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+    "files": {
+      "config.json": {
+        "bytes": 726,
+        "sha256": "660db3b73d788119c04535e48cf9be5f55bc3100841a718637ae695b442f27dd"
+      },
+      "generation_config.json": {
+        "bytes": 239,
+        "sha256": "2325da0f15bb848e018c5ae071b7943332e9f871d6b60e2ed22ca97d4cb993d2"
+      },
+      "merges.txt": {
+        "bytes": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+      },
+      "model.safetensors": {
+        "bytes": 1503300328,
+        "sha256": "f47f71177f32bcd101b7573ec9171e6a57f4f4d31148d38e382306f42996874b"
+      },
+      "tokenizer.json": {
+        "bytes": 11422654,
+        "sha256": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
+      },
+      "tokenizer_config.json": {
+        "bytes": 9732,
+        "sha256": "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101"
+      },
+      "vocab.json": {
+        "bytes": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910"
+      },
+      "README.md": {
+        "bytes": 13965,
+        "sha256": "1ab64a26fcb3b461423b89a433a8c858f1bf8d4086f979cbb3ff878d47cf20e9"
+      }
+    }
+  },
+  "allow_busy": false,
+  "cpu_threads": 1,
+  "packages": {
+    "aoti_flash": {
+      "prefill": {
+        "metadata": {
+          "entry_point": "prefill",
+          "torch_version": "2.13.0+cu130",
+          "torch_cuda_version": "13.0",
+          "cxx11_abi": true,
+          "cuda_compute_capability": [
+            12,
+            1
+          ],
+          "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "batch_size": 1,
+          "token_length": [
+            2,
+            512
+          ],
+          "cache_length": 1024,
+          "layers": 28,
+          "kv_heads": 8,
+          "head_dim": 128,
+          "vocab_size": 151936,
+          "dtype": "bfloat16",
+          "inductor_configs": {
+            "emulate_precision_casts": true,
+            "aot_inductor.package": true
+          },
+          "export_options": {
+            "backed_size_oblivious": false
+          },
+          "eager_numerics": false,
+          "attention_backend": "flash",
+          "cache_input": "full_capacity_with_extent",
+          "valid_cache_length": [
+            1,
+            1024
+          ],
+          "kv_extent": {
+            "device": "cpu",
+            "dtype": "uint8",
+            "shape": "[valid_length + 1]",
+            "data_read": false
+          },
+          "triton_enable_fp_fusion": true,
+          "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+          "flat_input_count": 59,
+          "input_alignment_bytes": 16,
+          "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+          "cache_shape": [
+            1,
+            8,
+            1024,
+            128
+          ],
+          "cache_stride": [
+            1048576,
+            131072,
+            128,
+            1
+          ],
+          "cache_padding": 0,
+          "output": "last-token logits [1, vocab_size]",
+          "eos_token_ids": [
+            151645,
+            151643
+          ],
+          "export_and_compile_seconds": 39.57062044600025,
+          "custom_attention": {
+            "name": "xinfer::flash_attention",
+            "abi_version": 1,
+            "read_only": true
+          },
+          "graph_rewrite": {
+            "pass": "qwen_sdpa_to_custom_flash_v1",
+            "replacements": 28,
+            "cache_updates_preserved": 56
+          }
+        },
+        "bytes": 1196804268,
+        "sha256": "24d7606eff2c1f34466f7124021e4b8ae827493df79d183fd16d3ecc0f636245"
+      },
+      "decode": {
+        "metadata": {
+          "entry_point": "decode",
+          "torch_version": "2.13.0+cu130",
+          "torch_cuda_version": "13.0",
+          "cxx11_abi": true,
+          "cuda_compute_capability": [
+            12,
+            1
+          ],
+          "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "batch_size": 1,
+          "token_length": [
+            1,
+            1
+          ],
+          "cache_length": 1024,
+          "layers": 28,
+          "kv_heads": 8,
+          "head_dim": 128,
+          "vocab_size": 151936,
+          "dtype": "bfloat16",
+          "inductor_configs": {
+            "emulate_precision_casts": true,
+            "aot_inductor.package": true
+          },
+          "export_options": {
+            "backed_size_oblivious": false
+          },
+          "eager_numerics": false,
+          "attention_backend": "flash",
+          "cache_input": "full_capacity_with_extent",
+          "valid_cache_length": [
+            1,
+            1024
+          ],
+          "kv_extent": {
+            "device": "cpu",
+            "dtype": "uint8",
+            "shape": "[valid_length + 1]",
+            "data_read": false
+          },
+          "triton_enable_fp_fusion": true,
+          "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+          "flat_input_count": 59,
+          "input_alignment_bytes": 16,
+          "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+          "cache_shape": [
+            1,
+            8,
+            1024,
+            128
+          ],
+          "cache_stride": [
+            1048576,
+            131072,
+            128,
+            1
+          ],
+          "cache_padding": 0,
+          "output": "last-token logits [1, vocab_size]",
+          "eos_token_ids": [
+            151645,
+            151643
+          ],
+          "export_and_compile_seconds": 29.152953437005635,
+          "custom_attention": {
+            "name": "xinfer::flash_attention",
+            "abi_version": 1,
+            "read_only": true
+          },
+          "graph_rewrite": {
+            "pass": "qwen_sdpa_to_custom_flash_v1",
+            "replacements": 28,
+            "cache_updates_preserved": 56
+          }
+        },
+        "bytes": 1196450452,
+        "sha256": "33bf376d97cce12f1a952530379e7f05e64cc6188b2103f681ab28df2abd6b66"
+      }
+    },
+    "aoti_packed": {
+      "prefill": {
+        "metadata": {
+          "entry_point": "prefill",
+          "torch_version": "2.13.0+cu130",
+          "torch_cuda_version": "13.0",
+          "cxx11_abi": true,
+          "cuda_compute_capability": [
+            12,
+            1
+          ],
+          "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "batch_size": 1,
+          "token_length": [
+            2,
+            512
+          ],
+          "cache_length": 1024,
+          "layers": 28,
+          "kv_heads": 8,
+          "head_dim": 128,
+          "vocab_size": 151936,
+          "dtype": "bfloat16",
+          "inductor_configs": {
+            "emulate_precision_casts": true,
+            "aot_inductor.package": true
+          },
+          "export_options": {
+            "backed_size_oblivious": false
+          },
+          "eager_numerics": false,
+          "attention_backend": "flash",
+          "projection_packing": "all",
+          "cache_input": "full_capacity_with_extent",
+          "valid_cache_length": [
+            1,
+            1024
+          ],
+          "kv_extent": {
+            "device": "cpu",
+            "dtype": "uint8",
+            "shape": "[valid_length + 1]",
+            "data_read": false
+          },
+          "triton_enable_fp_fusion": true,
+          "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+          "flat_input_count": 59,
+          "input_alignment_bytes": 16,
+          "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+          "cache_shape": [
+            1,
+            8,
+            1024,
+            128
+          ],
+          "cache_stride": [
+            1048576,
+            131072,
+            128,
+            1
+          ],
+          "cache_padding": 0,
+          "output": "last-token logits [1, vocab_size]",
+          "eos_token_ids": [
+            151645,
+            151643
+          ],
+          "export_and_compile_seconds": 43.51085777499247,
+          "custom_attention": {
+            "name": "xinfer::flash_attention",
+            "abi_version": 1,
+            "read_only": true
+          },
+          "graph_rewrite": {
+            "pass": "qwen_sdpa_to_custom_flash_v1",
+            "replacements": 28,
+            "cache_updates_preserved": 56
+          },
+          "projection_packing_report": {
+            "pass_name": "qwen_pack_projections_v1",
+            "mode": "all",
+            "groups": 56,
+            "linear_calls_before": 197,
+            "linear_calls_after": 113,
+            "packed_weight_bytes": 587202560,
+            "cache_updates_preserved": 56,
+            "runtime_weight_packing": false,
+            "removed_weight_attributes": [
+              "model.model.layers.0.self_attn.q_proj.weight",
+              "model.model.layers.0.self_attn.k_proj.weight",
+              "model.model.layers.0.self_attn.v_proj.weight",
+              "model.model.layers.1.self_attn.q_proj.weight",
+              "model.model.layers.1.self_attn.k_proj.weight",
+              "model.model.layers.1.self_attn.v_proj.weight",
+              "model.model.layers.2.self_attn.q_proj.weight",
+              "model.model.layers.2.self_attn.k_proj.weight",
+              "model.model.layers.2.self_attn.v_proj.weight",
+              "model.model.layers.3.self_attn.q_proj.weight",
+              "model.model.layers.3.self_attn.k_proj.weight",
+              "model.model.layers.3.self_attn.v_proj.weight",
+              "model.model.layers.4.self_attn.q_proj.weight",
+              "model.model.layers.4.self_attn.k_proj.weight",
+              "model.model.layers.4.self_attn.v_proj.weight",
+              "model.model.layers.5.self_attn.q_proj.weight",
+              "model.model.layers.5.self_attn.k_proj.weight",
+              "model.model.layers.5.self_attn.v_proj.weight",
+              "model.model.layers.6.self_attn.q_proj.weight",
+              "model.model.layers.6.self_attn.k_proj.weight",
+              "model.model.layers.6.self_attn.v_proj.weight",
+              "model.model.layers.7.self_attn.q_proj.weight",
+              "model.model.layers.7.self_attn.k_proj.weight",
+              "model.model.layers.7.self_attn.v_proj.weight",
+              "model.model.layers.8.self_attn.q_proj.weight",
+              "model.model.layers.8.self_attn.k_proj.weight",
+              "model.model.layers.8.self_attn.v_proj.weight",
+              "model.model.layers.9.self_attn.q_proj.weight",
+              "model.model.layers.9.self_attn.k_proj.weight",
+              "model.model.layers.9.self_attn.v_proj.weight",
+              "model.model.layers.10.self_attn.q_proj.weight",
+              "model.model.layers.10.self_attn.k_proj.weight",
+              "model.model.layers.10.self_attn.v_proj.weight",
+              "model.model.layers.11.self_attn.q_proj.weight",
+              "model.model.layers.11.self_attn.k_proj.weight",
+              "model.model.layers.11.self_attn.v_proj.weight",
+              "model.model.layers.12.self_attn.q_proj.weight",
+              "model.model.layers.12.self_attn.k_proj.weight",
+              "model.model.layers.12.self_attn.v_proj.weight",
+              "model.model.layers.13.self_attn.q_proj.weight",
+              "model.model.layers.13.self_attn.k_proj.weight",
+              "model.model.layers.13.self_attn.v_proj.weight",
+              "model.model.layers.14.self_attn.q_proj.weight",
+              "model.model.layers.14.self_attn.k_proj.weight",
+              "model.model.layers.14.self_attn.v_proj.weight",
+              "model.model.layers.15.self_attn.q_proj.weight",
+              "model.model.layers.15.self_attn.k_proj.weight",
+              "model.model.layers.15.self_attn.v_proj.weight",
+              "model.model.layers.16.self_attn.q_proj.weight",
+              "model.model.layers.16.self_attn.k_proj.weight",
+              "model.model.layers.16.self_attn.v_proj.weight",
+              "model.model.layers.17.self_attn.q_proj.weight",
+              "model.model.layers.17.self_attn.k_proj.weight",
+              "model.model.layers.17.self_attn.v_proj.weight",
+              "model.model.layers.18.self_attn.q_proj.weight",
+              "model.model.layers.18.self_attn.k_proj.weight",
+              "model.model.layers.18.self_attn.v_proj.weight",
+              "model.model.layers.19.self_attn.q_proj.weight",
+              "model.model.layers.19.self_attn.k_proj.weight",
+              "model.model.layers.19.self_attn.v_proj.weight",
+              "model.model.layers.20.self_attn.q_proj.weight",
+              "model.model.layers.20.self_attn.k_proj.weight",
+              "model.model.layers.20.self_attn.v_proj.weight",
+              "model.model.layers.21.self_attn.q_proj.weight",
+              "model.model.layers.21.self_attn.k_proj.weight",
+              "model.model.layers.21.self_attn.v_proj.weight",
+              "model.model.layers.22.self_attn.q_proj.weight",
+              "model.model.layers.22.self_attn.k_proj.weight",
+              "model.model.layers.22.self_attn.v_proj.weight",
+              "model.model.layers.23.self_attn.q_proj.weight",
+              "model.model.layers.23.self_attn.k_proj.weight",
+              "model.model.layers.23.self_attn.v_proj.weight",
+              "model.model.layers.24.self_attn.q_proj.weight",
+              "model.model.layers.24.self_attn.k_proj.weight",
+              "model.model.layers.24.self_attn.v_proj.weight",
+              "model.model.layers.25.self_attn.q_proj.weight",
+              "model.model.layers.25.self_attn.k_proj.weight",
+              "model.model.layers.25.self_attn.v_proj.weight",
+              "model.model.layers.26.self_attn.q_proj.weight",
+              "model.model.layers.26.self_attn.k_proj.weight",
+              "model.model.layers.26.self_attn.v_proj.weight",
+              "model.model.layers.27.self_attn.q_proj.weight",
+              "model.model.layers.27.self_attn.k_proj.weight",
+              "model.model.layers.27.self_attn.v_proj.weight",
+              "model.model.layers.0.mlp.gate_proj.weight",
+              "model.model.layers.0.mlp.up_proj.weight",
+              "model.model.layers.1.mlp.gate_proj.weight",
+              "model.model.layers.1.mlp.up_proj.weight",
+              "model.model.layers.2.mlp.gate_proj.weight",
+              "model.model.layers.2.mlp.up_proj.weight",
+              "model.model.layers.3.mlp.gate_proj.weight",
+              "model.model.layers.3.mlp.up_proj.weight",
+              "model.model.layers.4.mlp.gate_proj.weight",
+              "model.model.layers.4.mlp.up_proj.weight",
+              "model.model.layers.5.mlp.gate_proj.weight",
+              "model.model.layers.5.mlp.up_proj.weight",
+              "model.model.layers.6.mlp.gate_proj.weight",
+              "model.model.layers.6.mlp.up_proj.weight",
+              "model.model.layers.7.mlp.gate_proj.weight",
+              "model.model.layers.7.mlp.up_proj.weight",
+              "model.model.layers.8.mlp.gate_proj.weight",
+              "model.model.layers.8.mlp.up_proj.weight",
+              "model.model.layers.9.mlp.gate_proj.weight",
+              "model.model.layers.9.mlp.up_proj.weight",
+              "model.model.layers.10.mlp.gate_proj.weight",
+              "model.model.layers.10.mlp.up_proj.weight",
+              "model.model.layers.11.mlp.gate_proj.weight",
+              "model.model.layers.11.mlp.up_proj.weight",
+              "model.model.layers.12.mlp.gate_proj.weight",
+              "model.model.layers.12.mlp.up_proj.weight",
+              "model.model.layers.13.mlp.gate_proj.weight",
+              "model.model.layers.13.mlp.up_proj.weight",
+              "model.model.layers.14.mlp.gate_proj.weight",
+              "model.model.layers.14.mlp.up_proj.weight",
+              "model.model.layers.15.mlp.gate_proj.weight",
+              "model.model.layers.15.mlp.up_proj.weight",
+              "model.model.layers.16.mlp.gate_proj.weight",
+              "model.model.layers.16.mlp.up_proj.weight",
+              "model.model.layers.17.mlp.gate_proj.weight",
+              "model.model.layers.17.mlp.up_proj.weight",
+              "model.model.layers.18.mlp.gate_proj.weight",
+              "model.model.layers.18.mlp.up_proj.weight",
+              "model.model.layers.19.mlp.gate_proj.weight",
+              "model.model.layers.19.mlp.up_proj.weight",
+              "model.model.layers.20.mlp.gate_proj.weight",
+              "model.model.layers.20.mlp.up_proj.weight",
+              "model.model.layers.21.mlp.gate_proj.weight",
+              "model.model.layers.21.mlp.up_proj.weight",
+              "model.model.layers.22.mlp.gate_proj.weight",
+              "model.model.layers.22.mlp.up_proj.weight",
+              "model.model.layers.23.mlp.gate_proj.weight",
+              "model.model.layers.23.mlp.up_proj.weight",
+              "model.model.layers.24.mlp.gate_proj.weight",
+              "model.model.layers.24.mlp.up_proj.weight",
+              "model.model.layers.25.mlp.gate_proj.weight",
+              "model.model.layers.25.mlp.up_proj.weight",
+              "model.model.layers.26.mlp.gate_proj.weight",
+              "model.model.layers.26.mlp.up_proj.weight",
+              "model.model.layers.27.mlp.gate_proj.weight",
+              "model.model.layers.27.mlp.up_proj.weight"
+            ]
+          }
+        },
+        "bytes": 1196189420,
+        "sha256": "4b005e2bd872e8708e1bff82d1fa68f9bb69d81713a38d49a065553bd078bee0"
+      },
+      "decode": {
+        "metadata": {
+          "entry_point": "decode",
+          "torch_version": "2.13.0+cu130",
+          "torch_cuda_version": "13.0",
+          "cxx11_abi": true,
+          "cuda_compute_capability": [
+            12,
+            1
+          ],
+          "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+          "batch_size": 1,
+          "token_length": [
+            1,
+            1
+          ],
+          "cache_length": 1024,
+          "layers": 28,
+          "kv_heads": 8,
+          "head_dim": 128,
+          "vocab_size": 151936,
+          "dtype": "bfloat16",
+          "inductor_configs": {
+            "emulate_precision_casts": true,
+            "aot_inductor.package": true
+          },
+          "export_options": {
+            "backed_size_oblivious": false
+          },
+          "eager_numerics": false,
+          "attention_backend": "flash",
+          "projection_packing": "all",
+          "cache_input": "full_capacity_with_extent",
+          "valid_cache_length": [
+            1,
+            1024
+          ],
+          "kv_extent": {
+            "device": "cpu",
+            "dtype": "uint8",
+            "shape": "[valid_length + 1]",
+            "data_read": false
+          },
+          "triton_enable_fp_fusion": true,
+          "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+          "flat_input_count": 59,
+          "input_alignment_bytes": 16,
+          "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+          "cache_shape": [
+            1,
+            8,
+            1024,
+            128
+          ],
+          "cache_stride": [
+            1048576,
+            131072,
+            128,
+            1
+          ],
+          "cache_padding": 0,
+          "output": "last-token logits [1, vocab_size]",
+          "eos_token_ids": [
+            151645,
+            151643
+          ],
+          "export_and_compile_seconds": 30.9997022979951,
+          "custom_attention": {
+            "name": "xinfer::flash_attention",
+            "abi_version": 1,
+            "read_only": true
+          },
+          "graph_rewrite": {
+            "pass": "qwen_sdpa_to_custom_flash_v1",
+            "replacements": 28,
+            "cache_updates_preserved": 56
+          },
+          "projection_packing_report": {
+            "pass_name": "qwen_pack_projections_v1",
+            "mode": "all",
+            "groups": 56,
+            "linear_calls_before": 197,
+            "linear_calls_after": 113,
+            "packed_weight_bytes": 587202560,
+            "cache_updates_preserved": 56,
+            "runtime_weight_packing": false,
+            "removed_weight_attributes": [
+              "model.model.layers.0.self_attn.q_proj.weight",
+              "model.model.layers.0.self_attn.k_proj.weight",
+              "model.model.layers.0.self_attn.v_proj.weight",
+              "model.model.layers.1.self_attn.q_proj.weight",
+              "model.model.layers.1.self_attn.k_proj.weight",
+              "model.model.layers.1.self_attn.v_proj.weight",
+              "model.model.layers.2.self_attn.q_proj.weight",
+              "model.model.layers.2.self_attn.k_proj.weight",
+              "model.model.layers.2.self_attn.v_proj.weight",
+              "model.model.layers.3.self_attn.q_proj.weight",
+              "model.model.layers.3.self_attn.k_proj.weight",
+              "model.model.layers.3.self_attn.v_proj.weight",
+              "model.model.layers.4.self_attn.q_proj.weight",
+              "model.model.layers.4.self_attn.k_proj.weight",
+              "model.model.layers.4.self_attn.v_proj.weight",
+              "model.model.layers.5.self_attn.q_proj.weight",
+              "model.model.layers.5.self_attn.k_proj.weight",
+              "model.model.layers.5.self_attn.v_proj.weight",
+              "model.model.layers.6.self_attn.q_proj.weight",
+              "model.model.layers.6.self_attn.k_proj.weight",
+              "model.model.layers.6.self_attn.v_proj.weight",
+              "model.model.layers.7.self_attn.q_proj.weight",
+              "model.model.layers.7.self_attn.k_proj.weight",
+              "model.model.layers.7.self_attn.v_proj.weight",
+              "model.model.layers.8.self_attn.q_proj.weight",
+              "model.model.layers.8.self_attn.k_proj.weight",
+              "model.model.layers.8.self_attn.v_proj.weight",
+              "model.model.layers.9.self_attn.q_proj.weight",
+              "model.model.layers.9.self_attn.k_proj.weight",
+              "model.model.layers.9.self_attn.v_proj.weight",
+              "model.model.layers.10.self_attn.q_proj.weight",
+              "model.model.layers.10.self_attn.k_proj.weight",
+              "model.model.layers.10.self_attn.v_proj.weight",
+              "model.model.layers.11.self_attn.q_proj.weight",
+              "model.model.layers.11.self_attn.k_proj.weight",
+              "model.model.layers.11.self_attn.v_proj.weight",
+              "model.model.layers.12.self_attn.q_proj.weight",
+              "model.model.layers.12.self_attn.k_proj.weight",
+              "model.model.layers.12.self_attn.v_proj.weight",
+              "model.model.layers.13.self_attn.q_proj.weight",
+              "model.model.layers.13.self_attn.k_proj.weight",
+              "model.model.layers.13.self_attn.v_proj.weight",
+              "model.model.layers.14.self_attn.q_proj.weight",
+              "model.model.layers.14.self_attn.k_proj.weight",
+              "model.model.layers.14.self_attn.v_proj.weight",
+              "model.model.layers.15.self_attn.q_proj.weight",
+              "model.model.layers.15.self_attn.k_proj.weight",
+              "model.model.layers.15.self_attn.v_proj.weight",
+              "model.model.layers.16.self_attn.q_proj.weight",
+              "model.model.layers.16.self_attn.k_proj.weight",
+              "model.model.layers.16.self_attn.v_proj.weight",
+              "model.model.layers.17.self_attn.q_proj.weight",
+              "model.model.layers.17.self_attn.k_proj.weight",
+              "model.model.layers.17.self_attn.v_proj.weight",
+              "model.model.layers.18.self_attn.q_proj.weight",
+              "model.model.layers.18.self_attn.k_proj.weight",
+              "model.model.layers.18.self_attn.v_proj.weight",
+              "model.model.layers.19.self_attn.q_proj.weight",
+              "model.model.layers.19.self_attn.k_proj.weight",
+              "model.model.layers.19.self_attn.v_proj.weight",
+              "model.model.layers.20.self_attn.q_proj.weight",
+              "model.model.layers.20.self_attn.k_proj.weight",
+              "model.model.layers.20.self_attn.v_proj.weight",
+              "model.model.layers.21.self_attn.q_proj.weight",
+              "model.model.layers.21.self_attn.k_proj.weight",
+              "model.model.layers.21.self_attn.v_proj.weight",
+              "model.model.layers.22.self_attn.q_proj.weight",
+              "model.model.layers.22.self_attn.k_proj.weight",
+              "model.model.layers.22.self_attn.v_proj.weight",
+              "model.model.layers.23.self_attn.q_proj.weight",
+              "model.model.layers.23.self_attn.k_proj.weight",
+              "model.model.layers.23.self_attn.v_proj.weight",
+              "model.model.layers.24.self_attn.q_proj.weight",
+              "model.model.layers.24.self_attn.k_proj.weight",
+              "model.model.layers.24.self_attn.v_proj.weight",
+              "model.model.layers.25.self_attn.q_proj.weight",
+              "model.model.layers.25.self_attn.k_proj.weight",
+              "model.model.layers.25.self_attn.v_proj.weight",
+              "model.model.layers.26.self_attn.q_proj.weight",
+              "model.model.layers.26.self_attn.k_proj.weight",
+              "model.model.layers.26.self_attn.v_proj.weight",
+              "model.model.layers.27.self_attn.q_proj.weight",
+              "model.model.layers.27.self_attn.k_proj.weight",
+              "model.model.layers.27.self_attn.v_proj.weight",
+              "model.model.layers.0.mlp.gate_proj.weight",
+              "model.model.layers.0.mlp.up_proj.weight",
+              "model.model.layers.1.mlp.gate_proj.weight",
+              "model.model.layers.1.mlp.up_proj.weight",
+              "model.model.layers.2.mlp.gate_proj.weight",
+              "model.model.layers.2.mlp.up_proj.weight",
+              "model.model.layers.3.mlp.gate_proj.weight",
+              "model.model.layers.3.mlp.up_proj.weight",
+              "model.model.layers.4.mlp.gate_proj.weight",
+              "model.model.layers.4.mlp.up_proj.weight",
+              "model.model.layers.5.mlp.gate_proj.weight",
+              "model.model.layers.5.mlp.up_proj.weight",
+              "model.model.layers.6.mlp.gate_proj.weight",
+              "model.model.layers.6.mlp.up_proj.weight",
+              "model.model.layers.7.mlp.gate_proj.weight",
+              "model.model.layers.7.mlp.up_proj.weight",
+              "model.model.layers.8.mlp.gate_proj.weight",
+              "model.model.layers.8.mlp.up_proj.weight",
+              "model.model.layers.9.mlp.gate_proj.weight",
+              "model.model.layers.9.mlp.up_proj.weight",
+              "model.model.layers.10.mlp.gate_proj.weight",
+              "model.model.layers.10.mlp.up_proj.weight",
+              "model.model.layers.11.mlp.gate_proj.weight",
+              "model.model.layers.11.mlp.up_proj.weight",
+              "model.model.layers.12.mlp.gate_proj.weight",
+              "model.model.layers.12.mlp.up_proj.weight",
+              "model.model.layers.13.mlp.gate_proj.weight",
+              "model.model.layers.13.mlp.up_proj.weight",
+              "model.model.layers.14.mlp.gate_proj.weight",
+              "model.model.layers.14.mlp.up_proj.weight",
+              "model.model.layers.15.mlp.gate_proj.weight",
+              "model.model.layers.15.mlp.up_proj.weight",
+              "model.model.layers.16.mlp.gate_proj.weight",
+              "model.model.layers.16.mlp.up_proj.weight",
+              "model.model.layers.17.mlp.gate_proj.weight",
+              "model.model.layers.17.mlp.up_proj.weight",
+              "model.model.layers.18.mlp.gate_proj.weight",
+              "model.model.layers.18.mlp.up_proj.weight",
+              "model.model.layers.19.mlp.gate_proj.weight",
+              "model.model.layers.19.mlp.up_proj.weight",
+              "model.model.layers.20.mlp.gate_proj.weight",
+              "model.model.layers.20.mlp.up_proj.weight",
+              "model.model.layers.21.mlp.gate_proj.weight",
+              "model.model.layers.21.mlp.up_proj.weight",
+              "model.model.layers.22.mlp.gate_proj.weight",
+              "model.model.layers.22.mlp.up_proj.weight",
+              "model.model.layers.23.mlp.gate_proj.weight",
+              "model.model.layers.23.mlp.up_proj.weight",
+              "model.model.layers.24.mlp.gate_proj.weight",
+              "model.model.layers.24.mlp.up_proj.weight",
+              "model.model.layers.25.mlp.gate_proj.weight",
+              "model.model.layers.25.mlp.up_proj.weight",
+              "model.model.layers.26.mlp.gate_proj.weight",
+              "model.model.layers.26.mlp.up_proj.weight",
+              "model.model.layers.27.mlp.gate_proj.weight",
+              "model.model.layers.27.mlp.up_proj.weight"
+            ]
+          }
+        },
+        "bytes": 1196107668,
+        "sha256": "92aa2aebe37bef56d7f970dd4815dbae3e8e35c02ac2fb44828784a2f6bcc2dc"
+      }
+    }
+  },
+  "attention_library_sha256": "7f362444d181e3e139ffc09c0145427ec825b30b33da457ce967e65b00b9b54f",
+  "gpu": "name, uuid, driver_version, memory.total [MiB], clocks.max.sm [MHz], clocks.max.memory [MHz]\nNVIDIA GB10, GPU-223055d8-46d8-fe1e-2a79-fdd2963c0eb3, 580.159.03, [N/A], 3003 MHz, [N/A]\n"
+}

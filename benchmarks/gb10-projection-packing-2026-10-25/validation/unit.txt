@@ -1,0 +1,29 @@
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+W1025 23:00:53.498000 2660553 torch/_inductor/utils.py:1953] Not enough SMs to use max_autotune_gemm mode
+qkv-decode 1 passed; linear calls 5
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+qkv-prefill 2 passed; linear calls 5
+qkv-prefill 25 passed; linear calls 5
+qkv-prefill 128 passed; linear calls 5
+qkv-prefill 512 passed; linear calls 5
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+gate-up-decode 1 passed; linear calls 6
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+gate-up-prefill 2 passed; linear calls 6
+gate-up-prefill 25 passed; linear calls 6
+gate-up-prefill 128 passed; linear calls 6
+gate-up-prefill 512 passed; linear calls 6
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+all-decode 1 passed; linear calls 4
+/usr/lib/python3.12/copyreg.py:99: FutureWarning: `isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and treespec.is_leaf()` instead.
+  return cls.__new__(cls, *args)
+all-prefill 2 passed; linear calls 4
+all-prefill 25 passed; linear calls 4
+all-prefill 128 passed; linear calls 4
+all-prefill 512 passed; linear calls 4
+PASS: export-time packing, all modes, dynamic prefill, compiled cache writes

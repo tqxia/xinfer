@@ -1,0 +1,1663 @@
+{
+  "package": "artifacts/aoti-flash",
+  "linear_order": {
+    "prefill": [
+      "model_model_layers_0_self_attn_k_proj_weight",
+      "model_model_layers_0_self_attn_v_proj_weight",
+      "model_model_layers_0_self_attn_q_proj_weight",
+      "model_model_layers_0_self_attn_o_proj_weight",
+      "model_model_layers_0_mlp_gate_proj_weight",
+      "model_model_layers_0_mlp_up_proj_weight",
+      "model_model_layers_0_mlp_down_proj_weight",
+      "model_model_layers_1_self_attn_k_proj_weight",
+      "model_model_layers_1_self_attn_v_proj_weight",
+      "model_model_layers_1_self_attn_q_proj_weight",
+      "model_model_layers_1_self_attn_o_proj_weight",
+      "model_model_layers_1_mlp_gate_proj_weight",
+      "model_model_layers_1_mlp_up_proj_weight",
+      "model_model_layers_1_mlp_down_proj_weight",
+      "model_model_layers_2_self_attn_k_proj_weight",
+      "model_model_layers_2_self_attn_v_proj_weight",
+      "model_model_layers_2_self_attn_q_proj_weight",
+      "model_model_layers_2_self_attn_o_proj_weight",
+      "model_model_layers_2_mlp_gate_proj_weight",
+      "model_model_layers_2_mlp_up_proj_weight",
+      "model_model_layers_2_mlp_down_proj_weight",
+      "model_model_layers_3_self_attn_k_proj_weight",
+      "model_model_layers_3_self_attn_v_proj_weight",
+      "model_model_layers_3_self_attn_q_proj_weight",
+      "model_model_layers_3_self_attn_o_proj_weight",
+      "model_model_layers_3_mlp_gate_proj_weight",
+      "model_model_layers_3_mlp_up_proj_weight",
+      "model_model_layers_3_mlp_down_proj_weight",
+      "model_model_layers_4_self_attn_k_proj_weight",
+      "model_model_layers_4_self_attn_v_proj_weight",
+      "model_model_layers_4_self_attn_q_proj_weight",
+      "model_model_layers_4_self_attn_o_proj_weight",
+      "model_model_layers_4_mlp_gate_proj_weight",
+      "model_model_layers_4_mlp_up_proj_weight",
+      "model_model_layers_4_mlp_down_proj_weight",
+      "model_model_layers_5_self_attn_k_proj_weight",
+      "model_model_layers_5_self_attn_v_proj_weight",
+      "model_model_layers_5_self_attn_q_proj_weight",
+      "model_model_layers_5_self_attn_o_proj_weight",
+      "model_model_layers_5_mlp_gate_proj_weight",
+      "model_model_layers_5_mlp_up_proj_weight",
+      "model_model_layers_5_mlp_down_proj_weight",
+      "model_model_layers_6_self_attn_k_proj_weight",
+      "model_model_layers_6_self_attn_v_proj_weight",
+      "model_model_layers_6_self_attn_q_proj_weight",
+      "model_model_layers_6_self_attn_o_proj_weight",
+      "model_model_layers_6_mlp_gate_proj_weight",
+      "model_model_layers_6_mlp_up_proj_weight",
+      "model_model_layers_6_mlp_down_proj_weight",
+      "model_model_layers_7_self_attn_k_proj_weight",
+      "model_model_layers_7_self_attn_v_proj_weight",
+      "model_model_layers_7_self_attn_q_proj_weight",
+      "model_model_layers_7_self_attn_o_proj_weight",
+      "model_model_layers_7_mlp_gate_proj_weight",
+      "model_model_layers_7_mlp_up_proj_weight",
+      "model_model_layers_7_mlp_down_proj_weight",
+      "model_model_layers_8_self_attn_k_proj_weight",
+      "model_model_layers_8_self_attn_v_proj_weight",
+      "model_model_layers_8_self_attn_q_proj_weight",
+      "model_model_layers_8_self_attn_o_proj_weight",
+      "model_model_layers_8_mlp_gate_proj_weight",
+      "model_model_layers_8_mlp_up_proj_weight",
+      "model_model_layers_8_mlp_down_proj_weight",
+      "model_model_layers_9_self_attn_k_proj_weight",
+      "model_model_layers_9_self_attn_v_proj_weight",
+      "model_model_layers_9_self_attn_q_proj_weight",
+      "model_model_layers_9_self_attn_o_proj_weight",
+      "model_model_layers_9_mlp_gate_proj_weight",
+      "model_model_layers_9_mlp_up_proj_weight",
+      "model_model_layers_9_mlp_down_proj_weight",
+      "model_model_layers_10_self_attn_k_proj_weight",
+      "model_model_layers_10_self_attn_v_proj_weight",
+      "model_model_layers_10_self_attn_q_proj_weight",
+      "model_model_layers_10_self_attn_o_proj_weight",
+      "model_model_layers_10_mlp_gate_proj_weight",
+      "model_model_layers_10_mlp_up_proj_weight",
+      "model_model_layers_10_mlp_down_proj_weight",
+      "model_model_layers_11_self_attn_k_proj_weight",
+      "model_model_layers_11_self_attn_v_proj_weight",
+      "model_model_layers_11_self_attn_q_proj_weight",
+      "model_model_layers_11_self_attn_o_proj_weight",
+      "model_model_layers_11_mlp_gate_proj_weight",
+      "model_model_layers_11_mlp_up_proj_weight",
+      "model_model_layers_11_mlp_down_proj_weight",
+      "model_model_layers_12_self_attn_k_proj_weight",
+      "model_model_layers_12_self_attn_v_proj_weight",
+      "model_model_layers_12_self_attn_q_proj_weight",
+      "model_model_layers_12_self_attn_o_proj_weight",
+      "model_model_layers_12_mlp_gate_proj_weight",
+      "model_model_layers_12_mlp_up_proj_weight",
+      "model_model_layers_12_mlp_down_proj_weight",
+      "model_model_layers_13_self_attn_k_proj_weight",
+      "model_model_layers_13_self_attn_v_proj_weight",
+      "model_model_layers_13_self_attn_q_proj_weight",
+      "model_model_layers_13_self_attn_o_proj_weight",
+      "model_model_layers_13_mlp_gate_proj_weight",
+      "model_model_layers_13_mlp_up_proj_weight",
+      "model_model_layers_13_mlp_down_proj_weight",
+      "model_model_layers_14_self_attn_k_proj_weight",
+      "model_model_layers_14_self_attn_v_proj_weight",
+      "model_model_layers_14_self_attn_q_proj_weight",
+      "model_model_layers_14_self_attn_o_proj_weight",
+      "model_model_layers_14_mlp_gate_proj_weight",
+      "model_model_layers_14_mlp_up_proj_weight",
+      "model_model_layers_14_mlp_down_proj_weight",
+      "model_model_layers_15_self_attn_k_proj_weight",
+      "model_model_layers_15_self_attn_v_proj_weight",
+      "model_model_layers_15_self_attn_q_proj_weight",
+      "model_model_layers_15_self_attn_o_proj_weight",
+      "model_model_layers_15_mlp_gate_proj_weight",
+      "model_model_layers_15_mlp_up_proj_weight",
+      "model_model_layers_15_mlp_down_proj_weight",
+      "model_model_layers_16_self_attn_k_proj_weight",
+      "model_model_layers_16_self_attn_v_proj_weight",
+      "model_model_layers_16_self_attn_q_proj_weight",
+      "model_model_layers_16_self_attn_o_proj_weight",
+      "model_model_layers_16_mlp_gate_proj_weight",
+      "model_model_layers_16_mlp_up_proj_weight",
+      "model_model_layers_16_mlp_down_proj_weight",
+      "model_model_layers_17_self_attn_k_proj_weight",
+      "model_model_layers_17_self_attn_v_proj_weight",
+      "model_model_layers_17_self_attn_q_proj_weight",
+      "model_model_layers_17_self_attn_o_proj_weight",
+      "model_model_layers_17_mlp_gate_proj_weight",
+      "model_model_layers_17_mlp_up_proj_weight",
+      "model_model_layers_17_mlp_down_proj_weight",
+      "model_model_layers_18_self_attn_k_proj_weight",
+      "model_model_layers_18_self_attn_v_proj_weight",
+      "model_model_layers_18_self_attn_q_proj_weight",
+      "model_model_layers_18_self_attn_o_proj_weight",
+      "model_model_layers_18_mlp_gate_proj_weight",
+      "model_model_layers_18_mlp_up_proj_weight",
+      "model_model_layers_18_mlp_down_proj_weight",
+      "model_model_layers_19_self_attn_k_proj_weight",
+      "model_model_layers_19_self_attn_v_proj_weight",
+      "model_model_layers_19_self_attn_q_proj_weight",
+      "model_model_layers_19_self_attn_o_proj_weight",
+      "model_model_layers_19_mlp_gate_proj_weight",
+      "model_model_layers_19_mlp_up_proj_weight",
+      "model_model_layers_19_mlp_down_proj_weight",
+      "model_model_layers_20_self_attn_k_proj_weight",
+      "model_model_layers_20_self_attn_v_proj_weight",
+      "model_model_layers_20_self_attn_q_proj_weight",
+      "model_model_layers_20_self_attn_o_proj_weight",
+      "model_model_layers_20_mlp_gate_proj_weight",
+      "model_model_layers_20_mlp_up_proj_weight",
+      "model_model_layers_20_mlp_down_proj_weight",
+      "model_model_layers_21_self_attn_k_proj_weight",
+      "model_model_layers_21_self_attn_v_proj_weight",
+      "model_model_layers_21_self_attn_q_proj_weight",
+      "model_model_layers_21_self_attn_o_proj_weight",
+      "model_model_layers_21_mlp_gate_proj_weight",
+      "model_model_layers_21_mlp_up_proj_weight",
+      "model_model_layers_21_mlp_down_proj_weight",
+      "model_model_layers_22_self_attn_k_proj_weight",
+      "model_model_layers_22_self_attn_v_proj_weight",
+      "model_model_layers_22_self_attn_q_proj_weight",
+      "model_model_layers_22_self_attn_o_proj_weight",
+      "model_model_layers_22_mlp_gate_proj_weight",
+      "model_model_layers_22_mlp_up_proj_weight",
+      "model_model_layers_22_mlp_down_proj_weight",
+      "model_model_layers_23_self_attn_k_proj_weight",
+      "model_model_layers_23_self_attn_v_proj_weight",
+      "model_model_layers_23_self_attn_q_proj_weight",
+      "model_model_layers_23_self_attn_o_proj_weight",
+      "model_model_layers_23_mlp_gate_proj_weight",
+      "model_model_layers_23_mlp_up_proj_weight",
+      "model_model_layers_23_mlp_down_proj_weight",
+      "model_model_layers_24_self_attn_k_proj_weight",
+      "model_model_layers_24_self_attn_v_proj_weight",
+      "model_model_layers_24_self_attn_q_proj_weight",
+      "model_model_layers_24_self_attn_o_proj_weight",
+      "model_model_layers_24_mlp_gate_proj_weight",
+      "model_model_layers_24_mlp_up_proj_weight",
+      "model_model_layers_24_mlp_down_proj_weight",
+      "model_model_layers_25_self_attn_k_proj_weight",
+      "model_model_layers_25_self_attn_v_proj_weight",
+      "model_model_layers_25_self_attn_q_proj_weight",
+      "model_model_layers_25_self_attn_o_proj_weight",
+      "model_model_layers_25_mlp_gate_proj_weight",
+      "model_model_layers_25_mlp_up_proj_weight",
+      "model_model_layers_25_mlp_down_proj_weight",
+      "model_model_layers_26_self_attn_k_proj_weight",
+      "model_model_layers_26_self_attn_v_proj_weight",
+      "model_model_layers_26_self_attn_q_proj_weight",
+      "model_model_layers_26_self_attn_o_proj_weight",
+      "model_model_layers_26_mlp_gate_proj_weight",
+      "model_model_layers_26_mlp_up_proj_weight",
+      "model_model_layers_26_mlp_down_proj_weight",
+      "model_model_layers_27_self_attn_k_proj_weight",
+      "model_model_layers_27_self_attn_v_proj_weight",
+      "model_model_layers_27_self_attn_q_proj_weight",
+      "model_model_layers_27_self_attn_o_proj_weight",
+      "model_model_layers_27_mlp_gate_proj_weight",
+      "model_model_layers_27_mlp_up_proj_weight",
+      "model_model_layers_27_mlp_down_proj_weight",
+      "model_lm_head_weight"
+    ],
+    "decode": [
+      "model_model_layers_0_self_attn_q_proj_weight",
+      "model_model_layers_0_self_attn_k_proj_weight",
+      "model_model_layers_0_self_attn_v_proj_weight",
+      "model_model_layers_0_self_attn_o_proj_weight",
+      "model_model_layers_0_mlp_gate_proj_weight",
+      "model_model_layers_0_mlp_up_proj_weight",
+      "model_model_layers_0_mlp_down_proj_weight",
+      "model_model_layers_1_self_attn_q_proj_weight",
+      "model_model_layers_1_self_attn_k_proj_weight",
+      "model_model_layers_1_self_attn_v_proj_weight",
+      "model_model_layers_1_self_attn_o_proj_weight",
+      "model_model_layers_1_mlp_gate_proj_weight",
+      "model_model_layers_1_mlp_up_proj_weight",
+      "model_model_layers_1_mlp_down_proj_weight",
+      "model_model_layers_2_self_attn_q_proj_weight",
+      "model_model_layers_2_self_attn_k_proj_weight",
+      "model_model_layers_2_self_attn_v_proj_weight",
+      "model_model_layers_2_self_attn_o_proj_weight",
+      "model_model_layers_2_mlp_gate_proj_weight",
+      "model_model_layers_2_mlp_up_proj_weight",
+      "model_model_layers_2_mlp_down_proj_weight",
+      "model_model_layers_3_self_attn_q_proj_weight",
+      "model_model_layers_3_self_attn_k_proj_weight",
+      "model_model_layers_3_self_attn_v_proj_weight",
+      "model_model_layers_3_self_attn_o_proj_weight",
+      "model_model_layers_3_mlp_gate_proj_weight",
+      "model_model_layers_3_mlp_up_proj_weight",
+      "model_model_layers_3_mlp_down_proj_weight",
+      "model_model_layers_4_self_attn_q_proj_weight",
+      "model_model_layers_4_self_attn_k_proj_weight",
+      "model_model_layers_4_self_attn_v_proj_weight",
+      "model_model_layers_4_self_attn_o_proj_weight",
+      "model_model_layers_4_mlp_gate_proj_weight",
+      "model_model_layers_4_mlp_up_proj_weight",
+      "model_model_layers_4_mlp_down_proj_weight",
+      "model_model_layers_5_self_attn_q_proj_weight",
+      "model_model_layers_5_self_attn_k_proj_weight",
+      "model_model_layers_5_self_attn_v_proj_weight",
+      "model_model_layers_5_self_attn_o_proj_weight",
+      "model_model_layers_5_mlp_gate_proj_weight",
+      "model_model_layers_5_mlp_up_proj_weight",
+      "model_model_layers_5_mlp_down_proj_weight",
+      "model_model_layers_6_self_attn_q_proj_weight",
+      "model_model_layers_6_self_attn_k_proj_weight",
+      "model_model_layers_6_self_attn_v_proj_weight",
+      "model_model_layers_6_self_attn_o_proj_weight",
+      "model_model_layers_6_mlp_gate_proj_weight",
+      "model_model_layers_6_mlp_up_proj_weight",
+      "model_model_layers_6_mlp_down_proj_weight",
+      "model_model_layers_7_self_attn_q_proj_weight",
+      "model_model_layers_7_self_attn_k_proj_weight",
+      "model_model_layers_7_self_attn_v_proj_weight",
+      "model_model_layers_7_self_attn_o_proj_weight",
+      "model_model_layers_7_mlp_gate_proj_weight",
+      "model_model_layers_7_mlp_up_proj_weight",
+      "model_model_layers_7_mlp_down_proj_weight",
+      "model_model_layers_8_self_attn_q_proj_weight",
+      "model_model_layers_8_self_attn_k_proj_weight",
+      "model_model_layers_8_self_attn_v_proj_weight",
+      "model_model_layers_8_self_attn_o_proj_weight",
+      "model_model_layers_8_mlp_gate_proj_weight",
+      "model_model_layers_8_mlp_up_proj_weight",
+      "model_model_layers_8_mlp_down_proj_weight",
+      "model_model_layers_9_self_attn_q_proj_weight",
+      "model_model_layers_9_self_attn_k_proj_weight",
+      "model_model_layers_9_self_attn_v_proj_weight",
+      "model_model_layers_9_self_attn_o_proj_weight",
+      "model_model_layers_9_mlp_gate_proj_weight",
+      "model_model_layers_9_mlp_up_proj_weight",
+      "model_model_layers_9_mlp_down_proj_weight",
+      "model_model_layers_10_self_attn_q_proj_weight",
+      "model_model_layers_10_self_attn_k_proj_weight",
+      "model_model_layers_10_self_attn_v_proj_weight",
+      "model_model_layers_10_self_attn_o_proj_weight",
+      "model_model_layers_10_mlp_gate_proj_weight",
+      "model_model_layers_10_mlp_up_proj_weight",
+      "model_model_layers_10_mlp_down_proj_weight",
+      "model_model_layers_11_self_attn_q_proj_weight",
+      "model_model_layers_11_self_attn_k_proj_weight",
+      "model_model_layers_11_self_attn_v_proj_weight",
+      "model_model_layers_11_self_attn_o_proj_weight",
+      "model_model_layers_11_mlp_gate_proj_weight",
+      "model_model_layers_11_mlp_up_proj_weight",
+      "model_model_layers_11_mlp_down_proj_weight",
+      "model_model_layers_12_self_attn_q_proj_weight",
+      "model_model_layers_12_self_attn_k_proj_weight",
+      "model_model_layers_12_self_attn_v_proj_weight",
+      "model_model_layers_12_self_attn_o_proj_weight",
+      "model_model_layers_12_mlp_gate_proj_weight",
+      "model_model_layers_12_mlp_up_proj_weight",
+      "model_model_layers_12_mlp_down_proj_weight",
+      "model_model_layers_13_self_attn_q_proj_weight",
+      "model_model_layers_13_self_attn_k_proj_weight",
+      "model_model_layers_13_self_attn_v_proj_weight",
+      "model_model_layers_13_self_attn_o_proj_weight",
+      "model_model_layers_13_mlp_gate_proj_weight",
+      "model_model_layers_13_mlp_up_proj_weight",
+      "model_model_layers_13_mlp_down_proj_weight",
+      "model_model_layers_14_self_attn_q_proj_weight",
+      "model_model_layers_14_self_attn_k_proj_weight",
+      "model_model_layers_14_self_attn_v_proj_weight",
+      "model_model_layers_14_self_attn_o_proj_weight",
+      "model_model_layers_14_mlp_gate_proj_weight",
+      "model_model_layers_14_mlp_up_proj_weight",
+      "model_model_layers_14_mlp_down_proj_weight",
+      "model_model_layers_15_self_attn_q_proj_weight",
+      "model_model_layers_15_self_attn_k_proj_weight",
+      "model_model_layers_15_self_attn_v_proj_weight",
+      "model_model_layers_15_self_attn_o_proj_weight",
+      "model_model_layers_15_mlp_gate_proj_weight",
+      "model_model_layers_15_mlp_up_proj_weight",
+      "model_model_layers_15_mlp_down_proj_weight",
+      "model_model_layers_16_self_attn_q_proj_weight",
+      "model_model_layers_16_self_attn_k_proj_weight",
+      "model_model_layers_16_self_attn_v_proj_weight",
+      "model_model_layers_16_self_attn_o_proj_weight",
+      "model_model_layers_16_mlp_gate_proj_weight",
+      "model_model_layers_16_mlp_up_proj_weight",
+      "model_model_layers_16_mlp_down_proj_weight",
+      "model_model_layers_17_self_attn_q_proj_weight",
+      "model_model_layers_17_self_attn_k_proj_weight",
+      "model_model_layers_17_self_attn_v_proj_weight",
+      "model_model_layers_17_self_attn_o_proj_weight",
+      "model_model_layers_17_mlp_gate_proj_weight",
+      "model_model_layers_17_mlp_up_proj_weight",
+      "model_model_layers_17_mlp_down_proj_weight",
+      "model_model_layers_18_self_attn_q_proj_weight",
+      "model_model_layers_18_self_attn_k_proj_weight",
+      "model_model_layers_18_self_attn_v_proj_weight",
+      "model_model_layers_18_self_attn_o_proj_weight",
+      "model_model_layers_18_mlp_gate_proj_weight",
+      "model_model_layers_18_mlp_up_proj_weight",
+      "model_model_layers_18_mlp_down_proj_weight",
+      "model_model_layers_19_self_attn_q_proj_weight",
+      "model_model_layers_19_self_attn_k_proj_weight",
+      "model_model_layers_19_self_attn_v_proj_weight",
+      "model_model_layers_19_self_attn_o_proj_weight",
+      "model_model_layers_19_mlp_gate_proj_weight",
+      "model_model_layers_19_mlp_up_proj_weight",
+      "model_model_layers_19_mlp_down_proj_weight",
+      "model_model_layers_20_self_attn_q_proj_weight",
+      "model_model_layers_20_self_attn_k_proj_weight",
+      "model_model_layers_20_self_attn_v_proj_weight",
+      "model_model_layers_20_self_attn_o_proj_weight",
+      "model_model_layers_20_mlp_gate_proj_weight",
+      "model_model_layers_20_mlp_up_proj_weight",
+      "model_model_layers_20_mlp_down_proj_weight",
+      "model_model_layers_21_self_attn_q_proj_weight",
+      "model_model_layers_21_self_attn_k_proj_weight",
+      "model_model_layers_21_self_attn_v_proj_weight",
+      "model_model_layers_21_self_attn_o_proj_weight",
+      "model_model_layers_21_mlp_gate_proj_weight",
+      "model_model_layers_21_mlp_up_proj_weight",
+      "model_model_layers_21_mlp_down_proj_weight",
+      "model_model_layers_22_self_attn_q_proj_weight",
+      "model_model_layers_22_self_attn_k_proj_weight",
+      "model_model_layers_22_self_attn_v_proj_weight",
+      "model_model_layers_22_self_attn_o_proj_weight",
+      "model_model_layers_22_mlp_gate_proj_weight",
+      "model_model_layers_22_mlp_up_proj_weight",
+      "model_model_layers_22_mlp_down_proj_weight",
+      "model_model_layers_23_self_attn_q_proj_weight",
+      "model_model_layers_23_self_attn_k_proj_weight",
+      "model_model_layers_23_self_attn_v_proj_weight",
+      "model_model_layers_23_self_attn_o_proj_weight",
+      "model_model_layers_23_mlp_gate_proj_weight",
+      "model_model_layers_23_mlp_up_proj_weight",
+      "model_model_layers_23_mlp_down_proj_weight",
+      "model_model_layers_24_self_attn_q_proj_weight",
+      "model_model_layers_24_self_attn_k_proj_weight",
+      "model_model_layers_24_self_attn_v_proj_weight",
+      "model_model_layers_24_self_attn_o_proj_weight",
+      "model_model_layers_24_mlp_gate_proj_weight",
+      "model_model_layers_24_mlp_up_proj_weight",
+      "model_model_layers_24_mlp_down_proj_weight",
+      "model_model_layers_25_self_attn_q_proj_weight",
+      "model_model_layers_25_self_attn_k_proj_weight",
+      "model_model_layers_25_self_attn_v_proj_weight",
+      "model_model_layers_25_self_attn_o_proj_weight",
+      "model_model_layers_25_mlp_gate_proj_weight",
+      "model_model_layers_25_mlp_up_proj_weight",
+      "model_model_layers_25_mlp_down_proj_weight",
+      "model_model_layers_26_self_attn_q_proj_weight",
+      "model_model_layers_26_self_attn_k_proj_weight",
+      "model_model_layers_26_self_attn_v_proj_weight",
+      "model_model_layers_26_self_attn_o_proj_weight",
+      "model_model_layers_26_mlp_gate_proj_weight",
+      "model_model_layers_26_mlp_up_proj_weight",
+      "model_model_layers_26_mlp_down_proj_weight",
+      "model_model_layers_27_self_attn_q_proj_weight",
+      "model_model_layers_27_self_attn_k_proj_weight",
+      "model_model_layers_27_self_attn_v_proj_weight",
+      "model_model_layers_27_self_attn_o_proj_weight",
+      "model_model_layers_27_mlp_gate_proj_weight",
+      "model_model_layers_27_mlp_up_proj_weight",
+      "model_model_layers_27_mlp_down_proj_weight",
+      "model_lm_head_weight"
+    ]
+  },
+  "summary": {
+    "length_25": {
+      "prefill": {
+        "k": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.4015680000000001
+        },
+        "v": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.3863359999999999
+        },
+        "q": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.7177599999999998
+        },
+        "o": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.812352
+        },
+        "gate": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.084672
+        },
+        "up": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.9756800000000001
+        },
+        "down": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.95632
+        },
+        "lm_head": {
+          "count_per_stage": 1,
+          "mean_gpu_ms": 2.111136
+        }
+      },
+      "decode": {
+        "q": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.6901320000000001
+        },
+        "k": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.28474
+        },
+        "v": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.28510800000000003
+        },
+        "o": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.779196
+        },
+        "gate": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.829988
+        },
+        "up": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.822032
+        },
+        "down": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.150544
+        },
+        "lm_head": {
+          "count_per_stage": 1,
+          "mean_gpu_ms": 2.009292
+        }
+      }
+    },
+    "length_512": {
+      "prefill": {
+        "k": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.532928
+        },
+        "v": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.549216
+        },
+        "q": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.1010879999999998
+        },
+        "o": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.8213760000000001
+        },
+        "gate": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.2656960000000006
+        },
+        "up": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.3756480000000002
+        },
+        "down": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.1931839999999998
+        },
+        "lm_head": {
+          "count_per_stage": 1,
+          "mean_gpu_ms": 2.035456
+        }
+      },
+      "decode": {
+        "q": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.709948
+        },
+        "k": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.302352
+        },
+        "v": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.29336
+        },
+        "o": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.7908999999999999
+        },
+        "gate": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.84162
+        },
+        "up": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 0.8614599999999999
+        },
+        "down": {
+          "count_per_stage": 28,
+          "mean_gpu_ms": 1.186072
+        },
+        "lm_head": {
+          "count_per_stage": 1,
+          "mean_gpu_ms": 2.006768
+        }
+      }
+    }
+  },
+  "stages": [
+    {
+      "case": "length_25",
+      "stage": "prefill",
+      "groups": {
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.4015680000000001,
+          "kernels": {
+            "nvjet_sm121_tst_mma_64x32x64_8_16x32x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.3863359999999999,
+          "kernels": {
+            "nvjet_sm121_tst_mma_64x32x64_8_16x32x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.7177599999999998,
+          "kernels": {
+            "nvjet_sm121_tst_mma_64x32x64_8_32x16x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.812352,
+          "kernels": {
+            "nvjet_sm121_tst_mma_32x32x64_12_32x8x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 1.084672,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align2>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.9756800000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x1_tn_align2>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 0.95632,
+          "kernels": {
+            "nvjet_sm121_tst_mma_32x32x64_12_32x8x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.111136,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6972800000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.29088,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.29657600000000006,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.798848,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8870079999999997,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8856319999999999,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1822400000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.942912,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.681472,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27952,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27680000000000005,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7626559999999999,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.807232,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.807008,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1303999999999996,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.995456,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6857280000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.287904,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27856000000000003,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.8055680000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.805856,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.809984,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1553600000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.178848,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.730208,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.30956799999999995,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.317792,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.8311679999999999,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.9080960000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8443200000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.21248,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.99312,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.682944,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27625600000000006,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27724800000000005,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7573120000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8076159999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8085760000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1319360000000003,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.991136,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6810240000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27743999999999996,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27737600000000007,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.762304,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8069120000000002,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.807456,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1320000000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.986304,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.681056,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27907200000000004,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27798399999999995,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7588479999999997,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8096,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8044479999999999,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.134176,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.988448,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_25",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6813440000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27728,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27852799999999994,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.756864,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.807584,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8088319999999999,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.12576,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.998112,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "prefill",
+      "groups": {
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.532928,
+          "kernels": {
+            "nvjet_sm121_tst_mma_128x96x64_3_64x32x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.549216,
+          "kernels": {
+            "nvjet_sm121_tst_mma_128x96x64_3_64x32x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "q": {
+          "count": 28,
+          "gpu_ms": 1.1010879999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8>(T1::Params)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.8213760000000001,
+          "kernels": {
+            "nvjet_sm121_tst_mma_128x96x64_3_64x24x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 1.2656960000000006,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 1.3756480000000002,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128_32x3_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1931839999999998,
+          "kernels": {
+            "nvjet_sm121_tst_mma_128x96x64_3_64x24x64_tmaAB_bz_TNNN": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.035456,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.712736,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.353408,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.3068480000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.853056,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8624640000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8497279999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.182848,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.009472,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.72992,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.29836799999999997,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.295872,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7776000000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8971840000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.850432,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.170752,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.99968,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.682784,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.279584,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27792,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7608320000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8084480000000002,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8165439999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1391040000000003,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.058976,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.7817600000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.310208,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.32544,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.842208,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8599039999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.9322560000000001,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.299552,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.991616,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6813440000000003,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.278912,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.2793919999999999,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7645440000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.812896,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.810016,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1389760000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.97648,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.728672,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.34172800000000003,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.30777599999999994,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.8111999999999998,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.876736,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 1.014624,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.286432,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 2.028928,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6819839999999999,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.2784960000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27702399999999994,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7584959999999997,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.8104,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8109759999999999,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.1359040000000002,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.989408,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    },
+    {
+      "case": "length_512",
+      "stage": "decode",
+      "groups": {
+        "q": {
+          "count": 28,
+          "gpu_ms": 0.6803840000000001,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "k": {
+          "count": 28,
+          "gpu_ms": 0.27811199999999997,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "v": {
+          "count": 28,
+          "gpu_ms": 0.27660799999999997,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "o": {
+          "count": 28,
+          "gpu_ms": 0.7592639999999999,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "gate": {
+          "count": 28,
+          "gpu_ms": 0.804928,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "up": {
+          "count": 28,
+          "gpu_ms": 0.8071039999999998,
+          "kernels": {
+            "void cutlass::Kernel2<cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_32x32_128x2_tn_align8>(T1::Params)": 28
+          }
+        },
+        "down": {
+          "count": 28,
+          "gpu_ms": 1.135008,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)6, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 28
+          }
+        },
+        "lm_head": {
+          "count": 1,
+          "gpu_ms": 1.999584,
+          "kernels": {
+            "std::enable_if<!T7, void>::type internal::gemvx::kernel<int, int, __nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float, (bool)0, (bool)1, (bool)1, (bool)0, (int)7, (bool)0, cublasGemvParamsEx<int, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<const __nv_bfloat16>, cublasGemvTensorStridedBatched<__nv_bfloat16>, float>>(T13)": 1
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "cases": [
+    {
+      "name": "capital_initial",
+      "rows": 8,
+      "top1_agreement": 8,
+      "max_relative_l2": 0.04533922299742699
+    },
+    {
+      "name": "capital_teacher",
+      "rows": 8,
+      "top1_agreement": 8,
+      "max_relative_l2": 0.04533922299742699
+    },
+    {
+      "name": "arithmetic_teacher",
+      "rows": 11,
+      "top1_agreement": 11,
+      "max_relative_l2": 0.04861115664243698
+    },
+    {
+      "name": "chinese_teacher",
+      "rows": 24,
+      "top1_agreement": 24,
+      "max_relative_l2": 0.02387118525803089
+    },
+    {
+      "name": "length_1",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.026184741407632828
+    },
+    {
+      "name": "length_1_poison",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.026184741407632828
+    },
+    {
+      "name": "length_2",
+      "rows": 4,
+      "top1_agreement": 3,
+      "max_relative_l2": 0.04284375160932541
+    },
+    {
+      "name": "length_2_poison",
+      "rows": 4,
+      "top1_agreement": 3,
+      "max_relative_l2": 0.04284375160932541
+    },
+    {
+      "name": "length_7",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.01954888179898262
+    },
+    {
+      "name": "length_7_poison",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.01954888179898262
+    },
+    {
+      "name": "length_128",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.020780688151717186
+    },
+    {
+      "name": "length_128_poison",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.020780688151717186
+    },
+    {
+      "name": "length_511",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.01579098217189312
+    },
+    {
+      "name": "length_511_poison",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.01579098217189312
+    },
+    {
+      "name": "length_512",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.020119350403547287
+    },
+    {
+      "name": "length_512_poison",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.020119350403547287
+    },
+    {
+      "name": "forced_tokens",
+      "rows": 5,
+      "top1_agreement": 5,
+      "max_relative_l2": 0.030496971681714058
+    },
+    {
+      "name": "context_end",
+      "rows": 4,
+      "top1_agreement": 4,
+      "max_relative_l2": 0.02220606431365013
+    },
+    {
+      "name": "capital_after_full",
+      "rows": 8,
+      "top1_agreement": 8,
+      "max_relative_l2": 0.04533922299742699
+    },
+    {
+      "name": "arithmetic_after_capital",
+      "rows": 11,
+      "top1_agreement": 11,
+      "max_relative_l2": 0.04861115664243698
+    },
+    {
+      "name": "chinese_after_arithmetic",
+      "rows": 24,
+      "top1_agreement": 24,
+      "max_relative_l2": 0.02387118525803089
+    },
+    {
+      "name": "capital_repeat",
+      "rows": 8,
+      "top1_agreement": 8,
+      "max_relative_l2": 0.04533922299742699
+    },
+    {
+      "name": "limit_one",
+      "rows": 1,
+      "top1_agreement": 1,
+      "max_relative_l2": 0.028325483202934265
+    },
+    {
+      "name": "limit_three",
+      "rows": 3,
+      "top1_agreement": 3,
+      "max_relative_l2": 0.028325483202934265
+    },
+    {
+      "name": "prefix_boundaries",
+      "rows": 11,
+      "top1_agreement": 11,
+      "max_relative_l2": 0.025836767628788948
+    },
+    {
+      "name": "prefix_boundaries_poison",
+      "rows": 11,
+      "top1_agreement": 11,
+      "max_relative_l2": 0.025836767628788948
+    }
+  ]
+}
