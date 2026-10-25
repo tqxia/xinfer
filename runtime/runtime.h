@@ -56,15 +56,27 @@ struct Spec {
             prefill.value("cache_input", std::string("full_capacity")) == cache_input,
             "Package attention/cache settings differ");
     require((backend == "efficient" && cache_input == "full_capacity") ||
-            ((backend == "flash" || backend == "flash-custom") && cache_input == "full_capacity_with_extent"),
+            ((backend == "flash" || backend == "flash-custom" || backend == "flashinfer-decode") &&
+             cache_input == "full_capacity_with_extent"),
             "Unsupported attention/cache settings");
     prefix_attention = cache_input == "full_capacity_with_extent";
     if (prefix_attention) {
       require(prefill.contains("custom_attention") && decode.contains("custom_attention"),
               "Flash packages require the custom-op graph rewrite; re-export with --attention-backend flash");
       const Json contract = {{"name", "xinfer::flash_attention"}, {"abi_version", 1}, {"read_only", true}};
-      require(prefill.at("custom_attention") == contract && decode.at("custom_attention") == contract &&
+      const Json decode_contract = backend == "flashinfer-decode" ?
+          Json({{"name", "xinfer::flashinfer_decode"}, {"abi_version", 1}, {"read_only", true}}) : contract;
+      require(prefill.at("custom_attention") == contract && decode.at("custom_attention") == decode_contract &&
               xinfer::attention_ops_abi_version() == 1, "Unsupported custom attention contract");
+      if (backend == "flashinfer-decode") {
+        const Json source = {{"version", "0.7.2.post1"},
+          {"revision", "beabf5004585b03da60e927bbb803acbaa62fe36"},
+          {"implementation", "single_decode_cuda_core"}};
+        require(prefill.value("flashinfer_source", Json()) == source &&
+                decode.value("flashinfer_source", Json()) == source, "Unsupported FlashInfer source contract");
+        require(source.at("revision") == xinfer::flashinfer_revision(),
+                "FlashInfer packages require a runtime built with -DQWEN_ENABLE_FLASHINFER=ON");
+      }
     }
     // flash-custom is a legacy package label for the same custom operator.
     // Older custom packages predate cache_padding and used one spare slot.

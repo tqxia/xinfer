@@ -1,0 +1,81 @@
+{
+  "entry_point": "decode",
+  "torch_version": "2.13.0+cu130",
+  "torch_cuda_version": "13.0",
+  "cxx11_abi": true,
+  "cuda_compute_capability": [
+    12,
+    1
+  ],
+  "model_revision": "c1899de289a04d12100db370d81485cdf75e47ca",
+  "batch_size": 1,
+  "token_length": [
+    1,
+    1
+  ],
+  "cache_length": 1024,
+  "layers": 28,
+  "kv_heads": 8,
+  "head_dim": 128,
+  "vocab_size": 151936,
+  "dtype": "bfloat16",
+  "inductor_configs": {
+    "emulate_precision_casts": true,
+    "aot_inductor.package": true
+  },
+  "export_options": {
+    "backed_size_oblivious": false
+  },
+  "eager_numerics": false,
+  "attention_backend": "flashinfer-decode",
+  "cache_input": "full_capacity_with_extent",
+  "valid_cache_length": [
+    1,
+    1024
+  ],
+  "kv_extent": {
+    "device": "cpu",
+    "dtype": "uint8",
+    "shape": "[valid_length + 1]",
+    "data_read": false
+  },
+  "triton_enable_fp_fusion": true,
+  "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+  "flat_input_count": 59,
+  "input_alignment_bytes": 16,
+  "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+  "cache_shape": [
+    1,
+    8,
+    1024,
+    128
+  ],
+  "cache_stride": [
+    1048576,
+    131072,
+    128,
+    1
+  ],
+  "cache_padding": 0,
+  "output": "last-token logits [1, vocab_size]",
+  "eos_token_ids": [
+    151645,
+    151643
+  ],
+  "export_and_compile_seconds": 30.651299175980967,
+  "custom_attention": {
+    "name": "xinfer::flashinfer_decode",
+    "abi_version": 1,
+    "read_only": true
+  },
+  "graph_rewrite": {
+    "pass": "qwen_sdpa_to_flashinfer_decode_v1",
+    "replacements": 28,
+    "cache_updates_preserved": 56
+  },
+  "flashinfer_source": {
+    "version": "0.7.2.post1",
+    "revision": "beabf5004585b03da60e927bbb803acbaa62fe36",
+    "implementation": "single_decode_cuda_core"
+  }
+}

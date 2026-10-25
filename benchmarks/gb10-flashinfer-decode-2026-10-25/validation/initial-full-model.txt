@@ -1,0 +1,18 @@
+Native driver passed 26 cases with one pair of loaders.
+{'name': 'capital_initial', 'rows': 8, 'hf_relative_l2': 0.037076324224472046, 'top1_differences': []}
+{'name': 'capital_teacher', 'rows': 8, 'hf_relative_l2': 0.037076324224472046, 'top1_differences': []}
+{'name': 'arithmetic_teacher', 'rows': 11, 'hf_relative_l2': 0.038834504783153534, 'top1_differences': []}
+{'name': 'chinese_teacher', 'rows': 24, 'hf_relative_l2': 0.02846709080040455, 'top1_differences': []}
+Traceback (most recent call last):
+  File "/home/tqxia/workspace/xinfer/compiler/validate_cpp.py", line 252, in <module>
+    main()
+  File "/home/tqxia/workspace/xinfer/.venv/lib/python3.12/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/tqxia/workspace/xinfer/compiler/validate_cpp.py", line 178, in main
+    aoti_vs_hf_static=compare(aoti, eager), cpp_vs_hf_static=compare(actual, eager))
+                      ^^^^^^^^^^^^^^^^^^^^
+  File "/home/tqxia/workspace/xinfer/compiler/validate_aoti.py", line 55, in compare
+    assert metrics["max_relative_l2"] <= MAX_RELATIVE_ERROR, metrics
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'max_abs': 0.6875, 'max_relative_l2': 0.056454941630363464, 'max_peak_relative': 0.031609196215867996, 'top1_agreement': 4, 'rows': 4}

@@ -1,0 +1,292 @@
+{
+  "operator_cases": [
+    {
+      "tokens": 1,
+      "valid_keys": 1,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.0,
+      "max_relative_l2": 0.0,
+      "max_peak_relative": 0.0,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 2,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.0078067779541015625,
+      "max_relative_l2": 0.0017729593673720956,
+      "max_peak_relative": 0.002510887337848544,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 32,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.002956390380859375,
+      "max_relative_l2": 0.0020666616037487984,
+      "max_peak_relative": 0.002688729204237461,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 1024,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.0005114525556564331,
+      "max_relative_l2": 0.0021727983839809895,
+      "max_peak_relative": 0.0030334533657878637,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 2,
+      "valid_keys": 2,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.008968114852905273,
+      "max_relative_l2": 0.0010912924772128463,
+      "max_peak_relative": 0.002049854723736644,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 2,
+      "valid_keys": 3,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.00849294662475586,
+      "max_relative_l2": 0.0017971259076148272,
+      "max_peak_relative": 0.002392894821241498,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 16,
+      "valid_keys": 32,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.004385471343994141,
+      "max_relative_l2": 0.0020340653136372566,
+      "max_peak_relative": 0.0029159237165004015,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 512,
+      "valid_keys": 512,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.008644342422485352,
+      "max_relative_l2": 0.001961600035429001,
+      "max_peak_relative": 0.0027119505684822798,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 510,
+      "valid_keys": 1022,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.001893162727355957,
+      "max_relative_l2": 0.002215886954218149,
+      "max_peak_relative": 0.0036384223494678736,
+      "top1_agreement": 1,
+      "rows": 1
+    }
+  ],
+  "compiled_cases": [
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 1,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 2,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 1024,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "valid_keys": 2,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "valid_keys": 3,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 16,
+      "valid_keys": 32,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 510,
+      "valid_keys": 1022,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "valid_keys": 512,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "valid_keys": 1024,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    }
+  ],
+  "rejections": [
+    "zero_length",
+    "shorter_than_queries",
+    "overflow",
+    "decode_unknown_mask",
+    "prefill_unknown_mask"
+  ],
+  "strict_runtime_checks": true,
+  "cache_padding": 0,
+  "backed_size_oblivious": false,
+  "strided_inputs_opcheck": {
+    "test_schema": "SUCCESS",
+    "test_autograd_registration": "SUCCESS",
+    "test_faketensor": "SUCCESS",
+    "test_aot_dispatch_dynamic": "SUCCESS"
+  }
+}

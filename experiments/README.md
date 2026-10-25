@@ -1,10 +1,24 @@
-# Historical optimization experiments
+# Optimization experiments
 
-These probes preserve the experiments behind the [GB10 fused-AOTI profiling
+These probes include the experiments behind the [GB10 fused-AOTI profiling
 report](../benchmarks/gb10-profile-2026-10-24/REPORT.md). They are manually run
 reproducers with narrow assumptions. Use `compiler/benchmark.py`,
 `compiler/validate_cpp.py` and
 `compiler/tests/custom_attention.py` to assess the current implementation.
+
+## FlashInfer decode probe
+
+[flashinfer_decode_probe.py](flashinfer_decode_probe.py) compares the native
+Flash and FlashInfer decode operators at cache lengths around split-KV boundaries.
+It uses no CUDA Graphs. It records alternating call timings and profiler traces
+to distinguish kernel work from launch overhead; Python loop timings are not
+a substitute for the full native model benchmark. Build the optional backend
+and validate it with `compiler/tests/flashinfer_decode.py` first; see the
+[experiment guide](../docs/gb10-flashinfer-decode.md).
+
+```bash
+.venv/bin/python experiments/flashinfer_decode_probe.py --output artifacts/flashinfer-decode-probe
+```
 
 ## Attention opportunity probe
 

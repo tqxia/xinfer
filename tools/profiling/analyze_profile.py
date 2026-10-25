@@ -41,7 +41,8 @@ def merged_duration(rows):
 
 def group(name):
     n = name.lower()
-    if 'fmha' in n or 'pytorch_flash::' in n:
+    if ('fmha' in n or 'pytorch_flash::' in n or
+            ('flashinfer::' in n and ('decodewithkvcache' in n or 'mergestates' in n))):
         return 'attention'
     if 'gemv' in n:
         return 'linear_gemv'

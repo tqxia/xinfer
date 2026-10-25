@@ -38,6 +38,10 @@ def load_attention_ops():
 
 
 def load_package_attention_ops(metadata):
+    if metadata.get("attention_backend") == "flashinfer-decode":
+        from .flashinfer_decode import load_package
+        load_package(metadata)
+        return
     # flash-custom is accepted only as a legacy package label, not an exporter.
     if metadata.get("attention_backend") in ("flash", "flash-custom"):
         if "custom_attention" not in metadata:

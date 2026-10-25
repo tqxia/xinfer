@@ -55,8 +55,16 @@ def _check_mask(mask, positions):
         raise ValueError("Expected the QwenStep absolute-position causal mask")
 
 
-def rewrite_attention(exported, expected_layers):
+def rewrite_attention(exported, expected_layers, backend="flash"):
     load_attention_ops()
+    if backend == "flashinfer-decode":
+        from custom_ops.flashinfer_decode import load_flashinfer_ops
+        load_flashinfer_ops()
+        target = torch.ops.xinfer.flashinfer_decode.default
+    elif backend == "flash":
+        target = torch.ops.xinfer.flash_attention.default
+    else:
+        raise ValueError(f"Unsupported rewrite backend: {backend}")
     gm = exported.module()
     graph = gm.graph
     placeholders = {n.target: n for n in graph.nodes if n.op == "placeholder"}
@@ -75,12 +83,14 @@ def rewrite_attention(exported, expected_layers):
         if len(node.args) != 4 or set(node.kwargs) != {"scale"}:
             raise ValueError("Only explicit-mask, zero-dropout Qwen SDPA is supported")
         q, k, v, mask = node.args
+        if backend == "flashinfer-decode" and q.meta["val"].shape[2] != 1:
+            raise ValueError("FlashInfer decode rewrite requires exactly one query token")
         _check_mask(mask, positions)
         k, v = _cache_before_repeat(k, positions), _cache_before_repeat(v, positions)
         replacements.append((node, q, k, v))
     for node, q, k, v in replacements:
         with graph.inserting_before(node):
-            replacement = graph.call_function(torch.ops.xinfer.flash_attention.default,
+            replacement = graph.call_function(target,
                                                (q, k, v, extent, node.kwargs["scale"]))
             # Preserve provenance, not stale output layout metadata. Re-export
             # invokes the fake kernel and reconstructs tensor metadata/signatures.
@@ -93,5 +103,5 @@ def rewrite_attention(exported, expected_layers):
     assert all(n in graph.nodes for n in updates)
     graph.lint()
     gm.recompile()
-    return gm, {"pass": "qwen_sdpa_to_custom_flash_v1", "replacements": len(sites),
+    return gm, {"pass": "qwen_sdpa_to_custom_flash_v1" if backend == "flash" else "qwen_sdpa_to_flashinfer_decode_v1", "replacements": len(sites),
                 "cache_updates_preserved": len(updates)}

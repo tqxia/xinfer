@@ -1,0 +1,46 @@
+-- Found CUDAToolkit: /usr/local/cuda/include (found version "13.0.88")
+-- PyTorch: CUDA detected: 13.0
+-- PyTorch: CUDA nvcc is: /usr/local/cuda/bin/nvcc
+-- PyTorch: CUDA toolkit directory: /usr/local/cuda
+-- PyTorch: Header version is: 13.0
+-- /usr/local/cuda/lib64/libnvrtc.so shorthash is 64db9c3f
+-- USE_CUDNN is set to 0. Compiling without cuDNN support
+-- USE_CUSPARSELT is set to 0. Compiling without cuSPARSELt support
+-- USE_CUDSS is set to 0. Compiling without cuDSS support
+-- USE_CUFILE is set to 0. Compiling without cuFile support
+CMake Warning at .venv/lib/python3.12/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:332 (message):
+  pytorch is not compatible with `CMAKE_CUDA_ARCHITECTURES` and will ignore
+  its value.  Please configure `TORCH_CUDA_ARCH_LIST` instead.
+Call Stack (most recent call first):
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:62 (find_package)
+  runtime/CMakeLists.txt:1 (find_package)
+
+
+-- Added CUDA NVCC flags for: -gencode;arch=compute_121,code=sm_121
+CMake Warning at .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  library kineto not found.
+Call Stack (most recent call first):
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:119 (append_torchlib_if_found)
+  runtime/CMakeLists.txt:1 (find_package)
+
+
+-- Using the multi-header code from /home/tqxia/workspace/xinfer/build/_deps/nlohmann_json-src/include/
+-- Found CUDAToolkit: /usr/local/cuda/targets/sbsa-linux/include (found version "13.0.88")
+-- Found CUDAToolkit: /usr/local/cuda/targets/sbsa-linux/include (found suitable version "13.0.88", minimum required is "13.0")
+-- Configuring done (0.6s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/tqxia/workspace/xinfer/build
+[1/13] Building CXX object runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/attention.cpp.o
+[2/13] Building CXX object runtime/CMakeFiles/qwen_aoti.dir/main.cpp.o
+[3/13] Building CUDA object runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o
+[4/13] Building CXX object runtime/CMakeFiles/qwen_validate.dir/tests/validate_native.cpp.o
+[5/13] Building CXX object runtime/CMakeFiles/qwen_benchmark.dir/benchmark.cpp.o
+[6/13] Building CXX object runtime/CMakeFiles/qwen_profile.dir/__/tools/profiling/profile.cpp.o
+[7/13] Linking CXX shared library libxinfer_attention_ops.so
+[8/13] Linking CXX executable qwen_aoti
+[9/13] Linking CXX executable qwen_validate
+[10/13] Linking CXX executable qwen_benchmark
+[11/13] Linking CXX executable qwen_profile
+[12/13] Building CXX object runtime/CMakeFiles/qwen_graph_probe.dir/__/experiments/cuda_graph_probe.cpp.o
+[13/13] Linking CXX executable qwen_graph_probe

@@ -1,0 +1,1 @@
+error: FlashInfer packages require a runtime built with -DQWEN_ENABLE_FLASHINFER=ON

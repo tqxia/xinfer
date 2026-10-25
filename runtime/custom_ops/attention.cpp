@@ -10,6 +10,13 @@
 namespace xinfer {
 
 int attention_ops_abi_version() { return 1; }
+const char* flashinfer_revision() {
+#ifdef XINFER_FLASHINFER_REVISION
+  return XINFER_FLASHINFER_REVISION;
+#else
+  return "";
+#endif
+}
 
 // Inference-only, batch-one Qwen3-0.6B contract. No input is mutated or returned.
 at::Tensor flash_attention(const at::Tensor& q, const at::Tensor& k,
@@ -52,6 +59,7 @@ at::Tensor flash_attention(const at::Tensor& q, const at::Tensor& k,
 }  // namespace xinfer
 
 TORCH_LIBRARY(xinfer, m) {
+  m.def("flashinfer_revision() -> str", []() { return std::string(xinfer::flashinfer_revision()); });
   // Without this tag Inductor repacks the padded full caches at every call.
   m.def("flash_attention(Tensor q, Tensor k, Tensor v, Tensor kv_extent, float scale) -> Tensor",
         {at::Tag::flexible_layout});

@@ -108,7 +108,7 @@ from custom_ops.attention import load_package_attention_ops
 
 spec = json.loads((packages/'decode.json').read_text())
 load_package_attention_ops(spec)
-if spec.get('attention_backend') in ('flash', 'flash-custom'):
+if spec.get('attention_backend') in ('flash', 'flash-custom', 'flashinfer-decode'):
     # Old direct-ATen packages reused the flash label but have no custom-op ABI.
     # Reject them before touching CUDA or attempting to load package weights.
     message = 're-export with --attention-backend flash'
@@ -153,6 +153,27 @@ if spec.get('attention_backend') in ('flash', 'flash-custom'):
             elif kind == 'prefill':
                 metadata['export_options']['backed_size_oblivious'] = not metadata['export_options']['backed_size_oblivious']
             (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+        result = subprocess.run([str(binary),str(mixed),'artifacts/reference/capital/prompt.ids',str(out/'mixed.ids')],
+                                env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+        assert result.returncode != 0 and message in result.stderr, (name,result.stderr)
+        report['rejections'].append(name)
+if spec.get('attention_backend') == 'flashinfer-decode':
+    for name, message in (('wrong_prefill_operator', 'Unsupported custom attention contract'),
+                          ('wrong_flashinfer_revision', 'Unsupported FlashInfer source contract')):
+        for kind in ('prefill', 'decode'):
+            metadata = json.loads((packages/(kind+'.json')).read_text())
+            if name == 'wrong_prefill_operator' and kind == 'prefill':
+                metadata['custom_attention']['name'] = 'xinfer::flashinfer_decode'
+            elif name == 'wrong_flashinfer_revision':
+                metadata['flashinfer_source']['revision'] = 'unrecognized'
+            (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+            if kind == 'prefill':
+                try:
+                    load_package_attention_ops(metadata)
+                except ValueError as error:
+                    assert message in str(error), str(error)
+                else:
+                    raise AssertionError(name)
         result = subprocess.run([str(binary),str(mixed),'artifacts/reference/capital/prompt.ids',str(out/'mixed.ids')],
                                 env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
         assert result.returncode != 0 and message in result.stderr, (name,result.stderr)

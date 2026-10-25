@@ -8,6 +8,7 @@ validation remain in `compiler/`.
 |---|---|---|
 | [setup/download_model.py](setup/download_model.py) | Download the pinned Qwen3 checkpoint and verify its hashes; verify an existing manifest without downloading again | New environments or checkpoint verification |
 | [setup/fix_cusparselt_metadata.py](setup/fix_cusparselt_metadata.py) | Repair the cuSPARSELt 0.8.1 ARM64 wheel's platform metadata; never change library bytes | Called by `scripts/setup-gb10.sh`; remove when the pinned dependency no longer needs it |
+| [setup/fetch_flashinfer.sh](setup/fetch_flashinfer.sh) | Fetch pinned FlashInfer and CCCL headers without installing Python packages | Optional native FlashInfer decode builds; see the [guide](../docs/gb10-flashinfer-decode.md) |
 | [profiling/profile.cpp](profiling/profile.cpp) | Add NVTX stages around the shared inference runtime | Profile new packages or investigate performance changes |
 | [profiling/analyze_profile.py](profiling/analyze_profile.py) | Attribute CUDA work to those stages and summarize kernel/API time | Analyze a new Nsight Systems SQLite export |
 

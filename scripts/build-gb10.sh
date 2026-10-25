@@ -10,5 +10,5 @@ cmake -S . -B build -G Ninja \
     -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" \
     -DTORCH_CUDA_ARCH_LIST="$torch_arch" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
+    -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON "$@"
 cmake --build build -j2

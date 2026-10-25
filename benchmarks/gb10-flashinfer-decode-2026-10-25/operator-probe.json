@@ -1,0 +1,638 @@
+{
+  "source": {
+    "version": "0.7.2.post1",
+    "revision": "beabf5004585b03da60e927bbb803acbaa62fe36",
+    "implementation": "single_decode_cuda_core"
+  },
+  "torch_version": "2.13.0+cu130",
+  "gpu": "NVIDIA GB10",
+  "repeats": 200,
+  "rounds": 7,
+  "cuda_graphs": false,
+  "cases": [
+    {
+      "length": 25,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 9.66309497016482,
+          "event_us": 9.458240270614624
+        },
+        {
+          "wall_us": 9.42237995332107,
+          "event_us": 9.384160041809082
+        },
+        {
+          "wall_us": 9.13413503440097,
+          "event_us": 9.094079732894897
+        },
+        {
+          "wall_us": 9.364055003970861,
+          "event_us": 9.326080083847046
+        },
+        {
+          "wall_us": 9.223340020980686,
+          "event_us": 9.185600280761719
+        },
+        {
+          "wall_us": 9.13901996682398,
+          "event_us": 9.101439714431763
+        },
+        {
+          "wall_us": 9.132379927905276,
+          "event_us": 9.091839790344238
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, false, false, false, false, true, false, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 47.584
+        }
+      },
+      "wall_us_median": 9.223340020980686,
+      "event_us_median": 9.185600280761719
+    },
+    {
+      "length": 25,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 4.84855001559481,
+          "event_us": 4.801279902458191
+        },
+        {
+          "wall_us": 4.812944971490651,
+          "event_us": 4.772160053253174
+        },
+        {
+          "wall_us": 4.586629947880283,
+          "event_us": 4.54800009727478
+        },
+        {
+          "wall_us": 4.57558999187313,
+          "event_us": 4.5371198654174805
+        },
+        {
+          "wall_us": 4.605430003721267,
+          "event_us": 4.546720087528229
+        },
+        {
+          "wall_us": 4.586625000229105,
+          "event_us": 4.548799991607666
+        },
+        {
+          "wall_us": 4.568224976537749,
+          "event_us": 4.529600143432617
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 20.448
+        }
+      },
+      "wall_us_median": 4.586629947880283,
+      "event_us_median": 4.54800009727478
+    },
+    {
+      "length": 128,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 14.989085029810667,
+          "event_us": 14.849120378494263
+        },
+        {
+          "wall_us": 14.907879958627746,
+          "event_us": 14.862240552902222
+        },
+        {
+          "wall_us": 14.750845002708957,
+          "event_us": 14.70687985420227
+        },
+        {
+          "wall_us": 14.712285046698526,
+          "event_us": 14.6670401096344
+        },
+        {
+          "wall_us": 14.711164985783398,
+          "event_us": 14.666399955749512
+        },
+        {
+          "wall_us": 14.641644957009703,
+          "event_us": 14.595999717712402
+        },
+        {
+          "wall_us": 14.671885001007468,
+          "event_us": 14.628000259399414
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, false, false, false, false, true, false, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 69.534
+        }
+      },
+      "wall_us_median": 14.712285046698526,
+      "event_us_median": 14.6670401096344
+    },
+    {
+      "length": 128,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 6.632864970015362,
+          "event_us": 6.584159731864929
+        },
+        {
+          "wall_us": 6.6523850546218455,
+          "event_us": 6.606079936027527
+        },
+        {
+          "wall_us": 6.437184929382056,
+          "event_us": 6.39087975025177
+        },
+        {
+          "wall_us": 6.423425074899569,
+          "event_us": 6.377760171890259
+        },
+        {
+          "wall_us": 6.420940044336021,
+          "event_us": 6.377440094947815
+        },
+        {
+          "wall_us": 6.391264905687422,
+          "event_us": 6.345440149307251
+        },
+        {
+          "wall_us": 7.02958510373719,
+          "event_us": 6.984959840774536
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 48.095
+        }
+      },
+      "wall_us_median": 6.437184929382056,
+      "event_us_median": 6.39087975025177
+    },
+    {
+      "length": 256,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 20.24115005042404,
+          "event_us": 20.086560249328613
+        },
+        {
+          "wall_us": 19.975074974354357,
+          "event_us": 19.93008017539978
+        },
+        {
+          "wall_us": 19.907234964193776,
+          "event_us": 19.86240029335022
+        },
+        {
+          "wall_us": 19.669549947138876,
+          "event_us": 19.623680114746094
+        },
+        {
+          "wall_us": 19.59315501153469,
+          "event_us": 19.548319578170776
+        },
+        {
+          "wall_us": 19.47826996911317,
+          "event_us": 19.434080123901367
+        },
+        {
+          "wall_us": 19.541794899851084,
+          "event_us": 19.50144052505493
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, false, false, false, false, true, false, true, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 47.775999999999996
+        },
+        "void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 1, true>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 23.807999999999996
+        }
+      },
+      "wall_us_median": 19.669549947138876,
+      "event_us_median": 19.623680114746094
+    },
+    {
+      "length": 256,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 10.20125491777435,
+          "event_us": 10.148320198059082
+        },
+        {
+          "wall_us": 10.153655020985752,
+          "event_us": 10.106879472732544
+        },
+        {
+          "wall_us": 10.14557492453605,
+          "event_us": 10.098079442977905
+        },
+        {
+          "wall_us": 10.165334970224649,
+          "event_us": 10.125600099563599
+        },
+        {
+          "wall_us": 10.202135017607361,
+          "event_us": 10.15712022781372
+        },
+        {
+          "wall_us": 10.165815037908033,
+          "event_us": 10.12112021446228
+        },
+        {
+          "wall_us": 11.543970031198114,
+          "event_us": 11.498880386352539
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 80.162
+        }
+      },
+      "wall_us_median": 10.165815037908033,
+      "event_us_median": 10.125600099563599
+    },
+    {
+      "length": 257,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 19.94842998101376,
+          "event_us": 19.824639558792114
+        },
+        {
+          "wall_us": 19.864350033458322,
+          "event_us": 19.820480346679688
+        },
+        {
+          "wall_us": 19.68219003174454,
+          "event_us": 19.63711977005005
+        },
+        {
+          "wall_us": 19.600594969233498,
+          "event_us": 19.557119607925415
+        },
+        {
+          "wall_us": 19.58314998773858,
+          "event_us": 19.53935980796814
+        },
+        {
+          "wall_us": 19.716995011549443,
+          "event_us": 19.6724796295166
+        },
+        {
+          "wall_us": 19.72867001313716,
+          "event_us": 19.684319496154785
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, false, false, false, false, true, false, true, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 49.373
+        },
+        "void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 2, true>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 25.982999999999997
+        }
+      },
+      "wall_us_median": 19.716995011549443,
+      "event_us_median": 19.6724796295166
+    },
+    {
+      "length": 257,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 11.6698099009227,
+          "event_us": 11.622560024261475
+        },
+        {
+          "wall_us": 11.658934963634238,
+          "event_us": 11.61120057106018
+        },
+        {
+          "wall_us": 11.418615031288937,
+          "event_us": 11.374560594558716
+        },
+        {
+          "wall_us": 11.339170014252886,
+          "event_us": 11.294879913330078
+        },
+        {
+          "wall_us": 11.309174878988415,
+          "event_us": 11.26528024673462
+        },
+        {
+          "wall_us": 11.266210058238357,
+          "event_us": 11.2227201461792
+        },
+        {
+          "wall_us": 11.328135005896911,
+          "event_us": 11.28335952758789
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 80.12499999999999
+        },
+        "void flashinfer::MergeStatesLargeNumIndexSetsKernel<8u, 16u, 8u, 4u, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16*, float*, __nv_bfloat16*, float*, unsigned int, unsigned int)": {
+          "count": 10,
+          "total_us": 14.014999999999997
+        }
+      },
+      "wall_us_median": 11.339170014252886,
+      "event_us_median": 11.294879913330078
+    },
+    {
+      "length": 512,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 19.94930993532762,
+          "event_us": 19.82591986656189
+        },
+        {
+          "wall_us": 19.800910085905343,
+          "event_us": 19.754559993743896
+        },
+        {
+          "wall_us": 19.63971502846107,
+          "event_us": 19.59264039993286
+        },
+        {
+          "wall_us": 19.53818995389156,
+          "event_us": 19.494400024414062
+        },
+        {
+          "wall_us": 19.6042750030756,
+          "event_us": 19.4923198223114
+        },
+        {
+          "wall_us": 19.817794964183122,
+          "event_us": 19.776639938354492
+        },
+        {
+          "wall_us": 19.54402992851101,
+          "event_us": 19.49663996696472
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, false, false, false, false, true, false, true, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 49.888
+        },
+        "void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 2, true>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 27.775999999999993
+        }
+      },
+      "wall_us_median": 19.63971502846107,
+      "event_us_median": 19.59264039993286
+    },
+    {
+      "length": 512,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 11.678934970404953,
+          "event_us": 11.626240015029907
+        },
+        {
+          "wall_us": 11.6023700684309,
+          "event_us": 11.556639671325684
+        },
+        {
+          "wall_us": 11.461009999038652,
+          "event_us": 11.416959762573242
+        },
+        {
+          "wall_us": 11.497095110826194,
+          "event_us": 11.452319622039795
+        },
+        {
+          "wall_us": 11.935895017813891,
+          "event_us": 11.890239715576172
+        },
+        {
+          "wall_us": 11.403809912735596,
+          "event_us": 11.359360218048096
+        },
+        {
+          "wall_us": 11.421969975344837,
+          "event_us": 11.378560066223145
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 80.575
+        },
+        "void flashinfer::MergeStatesLargeNumIndexSetsKernel<8u, 16u, 8u, 4u, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16*, float*, __nv_bfloat16*, float*, unsigned int, unsigned int)": {
+          "count": 10,
+          "total_us": 14.207999999999997
+        }
+      },
+      "wall_us_median": 11.497095110826194,
+      "event_us_median": 11.452319622039795
+    },
+    {
+      "length": 576,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 19.946435058955103,
+          "event_us": 19.818079471588135
+        },
+        {
+          "wall_us": 20.049629965797067,
+          "event_us": 20.006239414215088
+        },
+        {
+          "wall_us": 19.60235502338037,
+          "event_us": 19.556959867477417
+        },
+        {
+          "wall_us": 19.655789947137237,
+          "event_us": 19.612959623336792
+        },
+        {
+          "wall_us": 19.600829982664436,
+          "event_us": 19.55631971359253
+        },
+        {
+          "wall_us": 19.586035050451756,
+          "event_us": 19.543360471725464
+        },
+        {
+          "wall_us": 19.64266994036734,
+          "event_us": 19.59936022758484
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, false, false, false, false, true, false, true, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 50.4
+        },
+        "void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 3, true>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 29.375999999999994
+        }
+      },
+      "wall_us_median": 19.64266994036734,
+      "event_us_median": 19.59936022758484
+    },
+    {
+      "length": 576,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 11.674374982248992,
+          "event_us": 11.625440120697021
+        },
+        {
+          "wall_us": 11.635410046437755,
+          "event_us": 11.58992052078247
+        },
+        {
+          "wall_us": 11.485249997349456,
+          "event_us": 11.440960168838501
+        },
+        {
+          "wall_us": 11.445254931459203,
+          "event_us": 11.401920318603516
+        },
+        {
+          "wall_us": 11.457814980531111,
+          "event_us": 11.41055941581726
+        },
+        {
+          "wall_us": 11.41660992288962,
+          "event_us": 11.372319459915161
+        },
+        {
+          "wall_us": 11.468375014374033,
+          "event_us": 11.424479484558105
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 80.73
+        },
+        "void flashinfer::MergeStatesLargeNumIndexSetsKernel<8u, 16u, 8u, 4u, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16*, float*, __nv_bfloat16*, float*, unsigned int, unsigned int)": {
+          "count": 10,
+          "total_us": 14.079999999999997
+        }
+      },
+      "wall_us_median": 11.468375014374033,
+      "event_us_median": 11.424479484558105
+    },
+    {
+      "length": 1024,
+      "operator": "flash",
+      "rounds": [
+        {
+          "wall_us": 19.823229959001765,
+          "event_us": 19.691040515899658
+        },
+        {
+          "wall_us": 19.697550014825538,
+          "event_us": 19.652639627456665
+        },
+        {
+          "wall_us": 19.461234915070236,
+          "event_us": 19.416639804840088
+        },
+        {
+          "wall_us": 19.44795498275198,
+          "event_us": 19.40384030342102
+        },
+        {
+          "wall_us": 19.363869942026213,
+          "event_us": 19.317760467529297
+        },
+        {
+          "wall_us": 19.405310013098642,
+          "event_us": 19.3612802028656
+        },
+        {
+          "wall_us": 19.36747503350489,
+          "event_us": 19.323359727859497
+        }
+      ],
+      "kernels": {
+        "void pytorch_flash::flash_fwd_splitkv_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, false, false, false, false, true, false, true, false>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 120.512
+        },
+        "void pytorch_flash::flash_fwd_splitkv_combine_kernel<Flash_fwd_kernel_traits<128, 64, 128, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 128, 4, cutlass::bfloat16_t> >, 4, 3, true>(pytorch_flash::Flash_fwd_params)": {
+          "count": 10,
+          "total_us": 79.068
+        }
+      },
+      "wall_us_median": 19.44795498275198,
+      "event_us_median": 19.40384030342102
+    },
+    {
+      "length": 1024,
+      "operator": "flashinfer",
+      "rounds": [
+        {
+          "wall_us": 11.766690004151314,
+          "event_us": 11.721440553665161
+        },
+        {
+          "wall_us": 15.70900494698435,
+          "event_us": 15.663520097732544
+        },
+        {
+          "wall_us": 12.62389007024467,
+          "event_us": 12.580480575561523
+        },
+        {
+          "wall_us": 12.985170033061877,
+          "event_us": 12.941440343856812
+        },
+        {
+          "wall_us": 13.059090124443173,
+          "event_us": 13.014559745788574
+        },
+        {
+          "wall_us": 12.961010070284829,
+          "event_us": 12.917280197143555
+        },
+        {
+          "wall_us": 12.944524933118373,
+          "event_us": 12.898080348968506
+        }
+      ],
+      "kernels": {
+        "void flashinfer::SingleDecodeWithKVCacheKernel<(flashinfer::PosEncodingMode)0, 2u, 1u, 8u, 16u, 2u, 4u, flashinfer::DefaultAttention<false, false, false, false>, flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16> >(flashinfer::SingleDecodeParams<__nv_bfloat16, __nv_bfloat16, __nv_bfloat16>)": {
+          "count": 10,
+          "total_us": 80.95100000000001
+        },
+        "void flashinfer::MergeStatesLargeNumIndexSetsKernel<8u, 16u, 8u, 4u, __nv_bfloat16, __nv_bfloat16>(__nv_bfloat16*, float*, __nv_bfloat16*, float*, unsigned int, unsigned int)": {
+          "count": 10,
+          "total_us": 14.142999999999997
+        }
+      },
+      "wall_us_median": 12.961010070284829,
+      "event_us_median": 12.917280197143555
+    }
+  ]
+}

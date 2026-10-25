@@ -1,0 +1,5 @@
+{
+  "pass": "qwen_sdpa_to_custom_flash_v1",
+  "replacements": 28,
+  "cache_updates_preserved": 56
+}

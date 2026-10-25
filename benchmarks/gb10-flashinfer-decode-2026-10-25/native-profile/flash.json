@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "name": "length_25",
+      "samples": [
+        {
+          "decode_ms_per_token": 8.350552,
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 8.291198,
+          "request_ms": 75.943548,
+          "reset_ms": 0.847934
+        }
+      ]
+    },
+    {
+      "name": "length_512",
+      "samples": [
+        {
+          "decode_ms_per_token": 8.5569595,
+          "prediction_ids": [
+            825,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 11.95223,
+          "request_ms": 81.115136,
+          "reset_ms": 0.70723
+        }
+      ]
+    }
+  ],
+  "cpu_threads": 1,
+  "repeats": 1,
+  "torch_version": "2.13.0",
+  "warmup": 3
+}

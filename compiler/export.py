@@ -17,8 +17,8 @@ def main():
     parser.add_argument("kind", choices=("decode", "prefill"))
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
-    parser.add_argument("--attention-backend", choices=("efficient", "flash"), default="efficient",
-                        help="flash rewrites exported SDPA to the native read-only attention operator")
+    parser.add_argument("--attention-backend", choices=("efficient", "flash", "flashinfer-decode"), default="efficient",
+                        help="Native graph rewrite: flash, or experimental FlashInfer decode + Flash prefill")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Use native mean reductions and disable FP contraction for eager BF16 parity")
     args = parser.parse_args()
@@ -35,7 +35,11 @@ def main():
         make_fallback(torch.ops.aten.mean.dim, warn=False)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    prefix_attention = args.attention_backend == "flash"
+    prefix_attention = args.attention_backend in ("flash", "flashinfer-decode")
+    rewrite_backend = "flashinfer-decode" if args.attention_backend == "flashinfer-decode" and args.kind == "decode" else "flash"
+    if args.attention_backend == "flashinfer-decode":
+        from custom_ops.flashinfer_decode import load_flashinfer_ops
+        load_flashinfer_ops()
     export_options = {}
     if prefix_attention:
         from torch.fx.experimental import _config as symbolic_config
@@ -69,7 +73,7 @@ def main():
         if prefix_attention:
             from passes.attention import rewrite_attention
             (args.output / f"{args.kind}.before-rewrite.graph.txt").write_text(exported.graph_module.code)
-            rewritten, rewrite_report = rewrite_attention(exported, model.config.num_hidden_layers)
+            rewritten, rewrite_report = rewrite_attention(exported, model.config.num_hidden_layers, rewrite_backend)
             exported = torch.export.export(rewritten, inputs, dynamic_shapes=shapes, strict=False)
             exported.validate()
             (args.output / f"{args.kind}.rewrite.json").write_text(json.dumps(rewrite_report, indent=2) + "\n")
@@ -120,7 +124,12 @@ def main():
         }
         if rewrite_report is not None:
             from custom_ops.attention import OPERATOR_CONTRACT
+            if rewrite_backend == "flashinfer-decode":
+                from custom_ops.flashinfer_decode import OPERATOR_CONTRACT
             metadata.update(custom_attention=OPERATOR_CONTRACT, graph_rewrite=rewrite_report)
+        if args.attention_backend == "flashinfer-decode":
+            from custom_ops.flashinfer_decode import SOURCE
+            metadata["flashinfer_source"] = SOURCE
         (args.output / f"{args.kind}.json").write_text(json.dumps(metadata, indent=2) + "\n")
         print(f"Saved {package} ({package.stat().st_size} bytes)", flush=True)
 

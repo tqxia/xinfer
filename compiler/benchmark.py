@@ -202,6 +202,7 @@ def run(args):
     for name in ('compiler/benchmark.py', 'runtime/benchmark.cpp', 'runtime/runtime.h', 'compiler/model.py',
                  'compiler/export.py', 'compiler/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
                  'runtime/custom_ops/attention.cpp', 'runtime/custom_ops/attention.h',
+                 'runtime/custom_ops/flashinfer_decode.cu', 'compiler/custom_ops/flashinfer_decode.py',
                  'compiler/custom_ops/__init__.py', 'compiler/custom_ops/attention.py',
                  'compiler/passes/__init__.py', 'compiler/passes/attention.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
@@ -228,7 +229,7 @@ def run(args):
             assert entry['metadata'].get('eager_numerics', False) == (label == 'aoti_eager'), 'Wrong compilation profile'
             if paired:
                 assert entry['metadata'].get('attention_backend', 'efficient') in (
-                    'efficient', 'flash', 'flash-custom'), 'Unsupported attention backend'
+                    'efficient', 'flash', 'flash-custom', 'flashinfer-decode'), 'Unsupported attention backend'
     if paired:
         for kind in ('prefill', 'decode'):
             baseline = environment['packages'][args.baseline_label][kind]['metadata']

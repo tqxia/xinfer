@@ -1,0 +1,61 @@
+-- Found CUDAToolkit: /usr/local/cuda/include (found version "13.0.88")
+-- PyTorch: CUDA detected: 13.0
+-- PyTorch: CUDA nvcc is: /usr/local/cuda/bin/nvcc
+-- PyTorch: CUDA toolkit directory: /usr/local/cuda
+-- PyTorch: Header version is: 13.0
+-- /usr/local/cuda/lib64/libnvrtc.so shorthash is 64db9c3f
+-- USE_CUDNN is set to 0. Compiling without cuDNN support
+-- USE_CUSPARSELT is set to 0. Compiling without cuSPARSELt support
+-- USE_CUDSS is set to 0. Compiling without cuDSS support
+-- USE_CUFILE is set to 0. Compiling without cuFile support
+CMake Warning at .venv/lib/python3.12/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:332 (message):
+  pytorch is not compatible with `CMAKE_CUDA_ARCHITECTURES` and will ignore
+  its value.  Please configure `TORCH_CUDA_ARCH_LIST` instead.
+Call Stack (most recent call first):
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:62 (find_package)
+  runtime/CMakeLists.txt:1 (find_package)
+
+
+-- Added CUDA NVCC flags for: -gencode;arch=compute_121,code=sm_121
+CMake Warning at .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:22 (message):
+  library kineto not found.
+Call Stack (most recent call first):
+  .venv/lib/python3.12/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:119 (append_torchlib_if_found)
+  runtime/CMakeLists.txt:1 (find_package)
+
+
+-- Using the multi-header code from /home/tqxia/workspace/xinfer/build/_deps/nlohmann_json-src/include/
+-- Found CUDAToolkit: /usr/local/cuda/targets/sbsa-linux/include (found version "13.0.88")
+-- Found Git: /usr/bin/git (found version "2.43.0")
+-- Found CUDAToolkit: /usr/local/cuda/targets/sbsa-linux/include (found suitable version "13.0.88", minimum required is "13.0")
+-- Configuring done (0.4s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/tqxia/workspace/xinfer/build
+[1/13] Building CXX object runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/attention.cpp.o
+[2/13] Building CUDA object runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o
+FAILED: [code=2] runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o
+/usr/local/cuda/bin/nvcc -forward-unknown-to-host-compiler -DUSE_C10D_GLOO -DUSE_C10D_NCCL -DUSE_DISTRIBUTED -DUSE_NVSHMEM -DUSE_RPC -DUSE_TENSORPIPE -DXINFER_FLASHINFER_REVISION=\"beabf5004585b03da60e927bbb803acbaa62fe36\" -Dxinfer_attention_ops_EXPORTS -isystem /home/tqxia/workspace/xinfer/work/deps/flashinfer/include -isystem /home/tqxia/workspace/xinfer/.venv/lib/python3.12/site-packages/torch/include -isystem /home/tqxia/workspace/xinfer/.venv/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /usr/local/cuda/include -DONNX_NAMESPACE=onnx_c2 -gencode arch=compute_121,code=sm_121 -Xcudafe --diag_suppress=cc_clobber_ignored,--diag_suppress=field_without_dll_interface,--diag_suppress=base_class_has_different_dll_interface,--diag_suppress=dll_interface_conflict_none_assumed,--diag_suppress=dll_interface_conflict_dllexport_assumed,--diag_suppress=bad_friend_decl --expt-relaxed-constexpr --expt-extended-lambda -O3 -DNDEBUG -std=c++20 "--generate-code=arch=compute_121,code=[compute_121,sm_121]" -Xcompiler=-fPIC --expt-relaxed-constexpr -MD -MT runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o -MF runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o.d -x cu -c /home/tqxia/workspace/xinfer/runtime/custom_ops/flashinfer_decode.cu -o runtime/CMakeFiles/xinfer_attention_ops.dir/custom_ops/flashinfer_decode.cu.o
+/home/tqxia/workspace/xinfer/work/deps/flashinfer/include/flashinfer/fastdiv.cuh(39): error: qualified name is not allowed
+    cuda::fast_mod_div<uint32_t> impl_;
+    ^
+
+/home/tqxia/workspace/xinfer/work/deps/flashinfer/include/flashinfer/fastdiv.cuh(39): error: expected a ";"
+    cuda::fast_mod_div<uint32_t> impl_;
+                      ^
+
+/home/tqxia/workspace/xinfer/work/deps/flashinfer/include/flashinfer/fastdiv.cuh(27): error: "impl_" is not a nonstatic data member or base class of class "flashinfer::uint_fastdiv"
+    __attribute__((host)) __attribute__((device)) uint_fastdiv() : impl_(1), d_(0) {}
+                                                                   ^
+
+/home/tqxia/workspace/xinfer/work/deps/flashinfer/include/flashinfer/fastdiv.cuh(29): error: "impl_" is not a nonstatic data member or base class of class "flashinfer::uint_fastdiv"
+    __attribute__((host)) uint_fastdiv(uint32_t d) : impl_(d ? d : 1), d_(d) {}
+                                                     ^
+
+/home/tqxia/workspace/xinfer/work/deps/flashinfer/include/flashinfer/fastdiv.cuh(34): error: identifier "impl_" is undefined
+      q = n / impl_;
+              ^
+
+5 errors detected in the compilation of "/home/tqxia/workspace/xinfer/runtime/custom_ops/flashinfer_decode.cu".
+[3/13] Building CXX object runtime/CMakeFiles/qwen_aoti.dir/main.cpp.o
+ninja: build stopped: subcommand failed.
