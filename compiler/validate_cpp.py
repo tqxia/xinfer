@@ -59,7 +59,7 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     spec = json.loads((args.packages/'decode.json').read_text())
-    from attention_ops import load_package_attention_ops
+    from custom_ops.attention import load_package_attention_ops
     load_package_attention_ops(spec)
     prefix_attention = spec.get('cache_input') == 'full_capacity_with_extent'
     model = load_model(args.model_dir)

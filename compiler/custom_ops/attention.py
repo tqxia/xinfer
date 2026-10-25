@@ -13,7 +13,7 @@ def load_attention_ops():
     global _loaded
     if _loaded:
         return
-    library = Path(__file__).resolve().parents[1] / "build/libxinfer_attention_ops.so"
+    library = Path(__file__).resolve().parents[2] / "build/libxinfer_attention_ops.so"
     if not library.is_file():
         raise FileNotFoundError(f"Build scripts/build-gb10.sh first: {library}")
     torch.ops.load_library(str(library))

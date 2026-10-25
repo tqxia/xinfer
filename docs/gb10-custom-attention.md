@@ -32,15 +32,15 @@ within 0.14% for decode and 0.36% for prefill.
 - [Export integration](../compiler/export.py): export the efficient-attention
   wrapper, run the replacement pass, re-export, validate the resulting
   `ExportedProgram`, then compile it. Save before/after graphs and rewrite counts.
-- [Graph pass](../compiler/attention_rewrite.py): require the known causal-mask,
+- [Graph pass](../compiler/passes/attention.py): require the known causal-mask,
   GQA expansion and absolute-position cache-update patterns. Replace 28 SDPA
   calls, bypass the 8-to-16-head expansion, and preserve all 56 cache writes.
   Reject unknown masks and unexpected attention patterns. Dead-code elimination
   preserves mutation and other side-effect nodes.
-- [Operator registration and fake kernel](../compiler/attention_ops.py): load
+- [Operator registration and fake kernel](../compiler/custom_ops/attention.py): load
   the C++ library and describe a fresh, contiguous BF16 output with Q's shape.
   The fake implementation does not construct prefix views or call Flash.
-- [Native implementation](../runtime/attention_ops.cpp): read `L` from
+- [Native implementation](../runtime/custom_ops/attention.cpp): read `L` from
   `kv_extent.size(0) - 1`, create K/V prefix views, call native ATen Flash with
   lower-right causality, and return an output with normalized contiguous strides.
   The CPU extent's contents are never read. No input is mutated or returned as
@@ -154,7 +154,7 @@ ensuring the linker retains registration before AOTI package loading.
 Python consumers must register the operator before loading a custom package:
 
 ```python
-from attention_ops import load_package_attention_ops
+from custom_ops.attention import load_package_attention_ops
 
 load_package_attention_ops(metadata)  # decode.json, using compiler/ on sys.path
 model = torch._inductor.aoti_load_package("artifacts/aoti-flash/decode.pt2")

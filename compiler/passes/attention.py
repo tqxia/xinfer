@@ -7,7 +7,7 @@ The runtime guarantees contiguous absolute positions and a populated prefix.
 import torch
 from torch.fx import Node
 
-from attention_ops import load_attention_ops
+from custom_ops.attention import load_attention_ops
 
 
 def _call(node, target):

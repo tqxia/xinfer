@@ -30,25 +30,39 @@ text decoding; the C++ executable handles all model inference and generation.
 ## Repository layout
 
 ```text
-compiler/                 Export/compilation, offline helpers and Python validation
-  export.py, model.py   AOTI compilation and the thin Hugging Face model adapter
-  prepare.py            Offline tokenization and decoding
-  validate*.py, tests/  Eager/AOTI/native comparisons and numerical probes
-  benchmark.py          Eager benchmark and native-worker orchestration
-  requirements.*        Python dependency pins
-  prompts.json          Reference prompt fixtures
-runtime/                    Native runtime and its build configuration
-  runtime.h, main.cpp   Shared runtime and token-ID CLI
-  benchmark.cpp         Native benchmark driver
-  tests/                Native validation driver
-  CMakeLists.txt        LibTorch dependencies and native targets
-CMakeLists.txt          Root build entry point
+compiler/                 Export/compilation and model validation
+  export.py, model.py     AOTI compilation and the Hugging Face model adapter
+  custom_ops/            Python operator registration and fake kernels
+  passes/                Post-export graph transformations
+  prepare.py             Offline tokenization and decoding
+  validate*.py, tests/    Eager/AOTI/native comparisons and numerical reproducers
+  benchmark.py           Eager benchmark and native-worker orchestration
+runtime/                  Native inference and validation
+  custom_ops/            C++ custom-operator implementations and ABI headers
+  runtime.h, main.cpp    Shared runtime and token-ID CLI
+  benchmark.cpp          Native benchmark driver
+  tests/                 Native validation driver
+  CMakeLists.txt         LibTorch dependencies and native targets
+scripts/                  Setup, build and chat entry points
+  setup-gb10.sh           Calls tools/setup/ helpers
+  build-gb10.sh           Builds the runtime and validation/benchmark drivers
+tools/                    Maintained development utilities
+  setup/                 Checkpoint download and dependency metadata repair
+  profiling/             NVTX driver and Nsight SQLite analyzer
+experiments/              Historical attention and CUDA Graph probes
+benchmarks/               Recorded results, workloads and provenance
+docs/                     Implementation and usage notes
+CMakeLists.txt            Root build entry point
 ```
 
 Run the commands below from the repository root. `.venv/`, `build/`, `artifacts/`
 and `work/` remain there; executable paths stay `build/qwen_aoti`,
-`build/qwen_validate` and `build/qwen_benchmark`. The Python scripts use sibling
-imports and need no package installation or `PYTHONPATH` override.
+`build/qwen_validate` and `build/qwen_benchmark`. The documented Python script
+entry points need no package installation or `PYTHONPATH` override.
+See [maintained tools](tools/README.md) and
+[experimental probes](experiments/README.md) for their intended use. Custom
+operators are split between Python registration in `compiler/custom_ops/` and
+native kernels in `runtime/custom_ops/`; graph passes live in `compiler/passes/`.
 
 ## Environment
 

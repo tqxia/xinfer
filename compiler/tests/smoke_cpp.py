@@ -104,7 +104,7 @@ assert (out/'limit.ids').read_text().split() == ['785']
 import torch
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from attention_ops import load_package_attention_ops
+from custom_ops.attention import load_package_attention_ops
 
 spec = json.loads((packages/'decode.json').read_text())
 load_package_attention_ops(spec)

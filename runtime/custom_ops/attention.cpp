@@ -1,4 +1,4 @@
-#include "attention_ops.h"
+#include "attention.h"
 
 #include <ATen/ATen.h>
 #include <ATen/ops/_scaled_dot_product_flash_attention.h>

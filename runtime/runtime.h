@@ -1,6 +1,6 @@
 #pragma once
 
-#include "attention_ops.h"
+#include "custom_ops/attention.h"
 
 #include <ATen/ATen.h>
 #include <c10/core/InferenceMode.h>

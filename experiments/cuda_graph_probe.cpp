@@ -1,4 +1,4 @@
-// Diagnostic ablation only: persistent inputs, direct dispatch versus CUDA Graph.
+// Historical efficient-attention experiment: direct dispatch versus CUDA Graph.
 #include "runtime.h"
 #include <ATen/Parallel.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -13,6 +13,8 @@ int main(int argc, char** argv) {
     require(argc == 4, "Usage: qwen_graph_probe PACKAGE_DIR WORKLOAD_JSON OUTPUT_JSON");
     require(!fs::exists(argv[3]), "Output already exists");
     const Spec spec(argv[1]);
+    require(!spec.prefix_attention,
+            "CUDA Graph experiment supports efficient packages only; Flash requires extent-aware capture");
     const auto workload = read_json(argv[2]);
     c10::InferenceMode inference;
     at::set_num_threads(1);

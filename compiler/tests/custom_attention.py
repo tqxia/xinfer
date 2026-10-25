@@ -12,8 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from attention_ops import load_attention_ops
-from attention_rewrite import rewrite_attention
+from custom_ops.attention import load_attention_ops
+from passes.attention import rewrite_attention
 from model import cache_extent
 from validate_aoti import compare
 

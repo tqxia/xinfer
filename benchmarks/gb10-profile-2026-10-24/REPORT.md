@@ -108,10 +108,13 @@ RMSNorm, SiLU and standalone argmax are small fractions of the current budget. C
 
 ## Reproduce
 
-From `/home/tqxia/workspace/xinfer`, using fresh output paths:
+From `/home/tqxia/workspace/xinfer`, using fresh output paths. Tool paths and
+build flags below follow the current layout; saved measurements and source
+hashes retain the original revision. The graph probe targets efficient packages
+only. See [tools](../../tools/README.md) and [experiments](../../experiments/README.md):
 
 ```bash
-cmake -S . -B build -DQWEN_BUILD_PROFILE=ON
+cmake -S . -B build -DQWEN_BUILD_PROFILE=ON -DQWEN_BUILD_EXPERIMENTS=ON
 cmake --build build --target qwen_profile qwen_graph_probe -j2
 mkdir -p artifacts/profile-fused-new
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -123,12 +126,12 @@ nsys profile --trace=cuda,nvtx,osrt --sample=none --cpuctxsw=none \
   artifacts/profile-fused-new/profiled.json
 nsys export --type=sqlite --output=artifacts/profile-fused-new/fused.sqlite \
   artifacts/profile-fused-new/fused.nsys-rep
-.venv/bin/python compiler/analyze_profile.py \
+.venv/bin/python tools/profiling/analyze_profile.py \
   artifacts/profile-fused-new/fused.sqlite artifacts/profile-fused-new/analysis.json
 ./build/qwen_graph_probe artifacts/aoti \
   benchmarks/gb10-2026-10-23-rerun/workload.json \
   artifacts/profile-fused-new/graph-probe.json
-.venv/bin/python compiler/profile_attention_probe.py \
+.venv/bin/python experiments/attention_probe.py \
   artifacts/profile-fused-new/attention-probe.json
 ```
 

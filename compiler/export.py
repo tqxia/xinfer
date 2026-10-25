@@ -67,7 +67,7 @@ def main():
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
         rewrite_report = None
         if prefix_attention:
-            from attention_rewrite import rewrite_attention
+            from passes.attention import rewrite_attention
             (args.output / f"{args.kind}.before-rewrite.graph.txt").write_text(exported.graph_module.code)
             rewritten, rewrite_report = rewrite_attention(exported, model.config.num_hidden_layers)
             exported = torch.export.export(rewritten, inputs, dynamic_shapes=shapes, strict=False)
@@ -119,7 +119,7 @@ def main():
             "export_and_compile_seconds": time.perf_counter() - start,
         }
         if rewrite_report is not None:
-            from attention_ops import OPERATOR_CONTRACT
+            from custom_ops.attention import OPERATOR_CONTRACT
             metadata.update(custom_attention=OPERATOR_CONTRACT, graph_rewrite=rewrite_report)
         (args.output / f"{args.kind}.json").write_text(json.dumps(metadata, indent=2) + "\n")
         print(f"Saved {package} ({package.stat().st_size} bytes)", flush=True)

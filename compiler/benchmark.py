@@ -167,7 +167,7 @@ def summarize(records, workload, reference='eager'):
 
 
 def run(args):
-    from attention_ops import load_package_attention_ops
+    from custom_ops.attention import load_package_attention_ops
 
     if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
         raise ValueError('Counts must be positive')
@@ -201,8 +201,9 @@ def run(args):
     source.mkdir()
     for name in ('compiler/benchmark.py', 'runtime/benchmark.cpp', 'runtime/runtime.h', 'compiler/model.py',
                  'compiler/export.py', 'compiler/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
-                 'runtime/attention_ops.cpp', 'runtime/attention_ops.h',
-                 'compiler/attention_ops.py', 'compiler/attention_rewrite.py'):
+                 'runtime/custom_ops/attention.cpp', 'runtime/custom_ops/attention.h',
+                 'compiler/custom_ops/__init__.py', 'compiler/custom_ops/attention.py',
+                 'compiler/passes/__init__.py', 'compiler/passes/attention.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),

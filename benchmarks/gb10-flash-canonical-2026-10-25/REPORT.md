@@ -18,7 +18,7 @@ packages.
 - [Model wrapper](../../compiler/model.py): remove the HF Flash adapter,
   attention registration, mask monkeypatch, dynamic prefix slicing, and padded
   cache allocator branch. Cache updates remain fixed-size in the exported graph.
-- [Python registration](../../compiler/attention_ops.py) and [native runtime](../../runtime/runtime.h):
+- [Python registration](../../compiler/custom_ops/attention.py) and [native runtime](../../runtime/runtime.h):
   require the custom-op contract for Flash. Old direct packages fail with a
   clear `re-export with --attention-backend flash` instruction. The legacy
   `flash-custom` package label remains accepted for already compiled custom-op

@@ -1,4 +1,4 @@
-"""Synthetic attention-only opportunity probe; not an end-to-end model benchmark."""
+"""Historical SDPA opportunity probe; see experiments/README.md for its limits."""
 import argparse
 import json
 import statistics

@@ -3,10 +3,12 @@
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from huggingface_hub import HfApi, snapshot_download
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "compiler"))
 from prepare import DEFAULT_MODEL, verify_model
 
 
