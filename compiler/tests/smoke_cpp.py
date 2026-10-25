@@ -80,6 +80,18 @@ result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/p
 assert result.returncode != 0 and 'Package numerical settings differ' in result.stderr, result.stderr
 report['rejections'].append('mixed_numerical_settings')
 
+# Attention/cache contracts must also agree before CUDA initialization.
+for kind in ('prefill', 'decode'):
+    metadata = json.loads((packages/(kind+'.json')).read_text())
+    if kind == 'prefill':
+        metadata['attention_backend'] = ('efficient' if metadata.get('attention_backend') == 'flash' else 'flash')
+    (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/prompt.ids',
+                         str(out/'mixed.ids')], env=env | {'CUDA_VISIBLE_DEVICES':''},
+                        capture_output=True, text=True, timeout=20)
+assert result.returncode != 0 and 'Package attention/cache settings differ' in result.stderr, result.stderr
+report['rejections'].append('mixed_attention_settings')
+
 # A real generation-limit stop must produce exactly one prediction, even before EOS.
 result = subprocess.run([str(binary), str(packages), 'artifacts/reference/capital/prompt.ids',
                          str(out/'limit.ids'), '--max-new-tokens','1'], env=env,
@@ -90,8 +102,61 @@ assert (out/'limit.ids').read_text().split() == ['785']
 # Exercise native T=1 routing and the endpoints of dynamic prefill, comparing
 # against Python AOTI under exactly the same fed tokens. Python is only the oracle.
 import torch
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from attention_ops import load_package_attention_ops
 
 spec = json.loads((packages/'decode.json').read_text())
+load_package_attention_ops(spec)
+if spec.get('attention_backend') in ('flash', 'flash-custom'):
+    # Old direct-ATen packages reused the flash label but have no custom-op ABI.
+    # Reject them before touching CUDA or attempting to load package weights.
+    message = 're-export with --attention-backend flash'
+    for kind in ('prefill', 'decode'):
+        metadata = json.loads((packages/(kind+'.json')).read_text())
+        metadata['attention_backend'] = 'flash'
+        del metadata['custom_attention']
+        (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+        try:
+            load_package_attention_ops(metadata)
+        except ValueError as error:
+            assert message in str(error), str(error)
+        else:
+            raise AssertionError('Python accepted an obsolete direct-Flash package')
+    result = subprocess.run([str(binary),str(mixed),'artifacts/reference/capital/prompt.ids',str(out/'mixed.ids')],
+                            env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+    assert result.returncode != 0 and message in result.stderr, result.stderr
+    report['rejections'].append('obsolete_direct_flash_package')
+    report['python_direct_flash_rejection'] = True
+    for kind in ('prefill', 'decode'):
+        metadata = json.loads((packages/(kind+'.json')).read_text())
+        metadata['custom_attention']['abi_version'] = 2
+        (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+    result = subprocess.run([str(binary),str(mixed),'artifacts/reference/capital/prompt.ids',str(out/'mixed.ids')],
+                            env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+    assert result.returncode != 0 and 'Unsupported custom attention contract' in result.stderr, result.stderr
+    report['rejections'].append('unsupported_custom_attention_contract')
+    for name, message in (
+            ('mixed_cache_padding', 'Package cache padding settings differ'),
+            ('unsupported_cache_padding', 'Unsupported cache padding'),
+            ('invalid_cache_stride', 'Unexpected KV cache strides'),
+            ('mixed_export_settings', 'Package export settings differ')):
+        for kind in ('prefill', 'decode'):
+            metadata = json.loads((packages/(kind+'.json')).read_text())
+            if name == 'mixed_cache_padding':
+                padding = metadata.get('cache_padding', 1)
+                metadata['cache_padding'] = 1-padding if kind == 'prefill' else padding
+            elif name == 'unsupported_cache_padding':
+                metadata['cache_padding'] = 2
+            elif name == 'invalid_cache_stride':
+                metadata['cache_stride'][1] += 128
+            elif kind == 'prefill':
+                metadata['export_options']['backed_size_oblivious'] = not metadata['export_options']['backed_size_oblivious']
+            (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+        result = subprocess.run([str(binary),str(mixed),'artifacts/reference/capital/prompt.ids',str(out/'mixed.ids')],
+                                env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+        assert result.returncode != 0 and message in result.stderr, (name,result.stderr)
+        report['rejections'].append(name)
 prefill = torch._inductor.aoti_load_package(str(packages/'prefill.pt2'))
 decode = torch._inductor.aoti_load_package(str(packages/'decode.pt2'))
 seed = [int(x) for x in Path('artifacts/reference/capital/prompt.ids').read_text().split()]
@@ -108,13 +173,14 @@ with torch.inference_mode():
         generated = [int(x) for x in ids_path.read_text().split()]
         assert 1 <= len(generated) <= 3
         rows = np.fromfile(trace_path,dtype='<f4').reshape(len(generated),spec['vocab_size'])
-        cache = tuple(torch.zeros(spec['cache_shape'],dtype=torch.bfloat16,device='cuda')
+        cache = tuple(torch.empty_strided(spec['cache_shape'],spec['cache_stride'],dtype=torch.bfloat16,device='cuda').zero_()
                       for _ in range(2*spec['layers']))
         tokens, position = prompt, 0
         for token, row in zip(generated,rows):
             ids = torch.tensor([tokens],dtype=torch.int64,device='cuda')
             positions = torch.arange(position,position+len(tokens),device='cuda')
-            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache)
+            extra = (torch.empty(position+len(tokens)+1,dtype=torch.uint8),) if spec.get('cache_input') == 'full_capacity_with_extent' else ()
+            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache,*extra)
             assert scores.argmax(-1).item() == token
             assert np.array_equal(scores.float().cpu().numpy()[0],row)
             position += len(tokens)

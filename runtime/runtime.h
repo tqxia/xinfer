@@ -1,5 +1,7 @@
 #pragma once
 
+#include "attention_ops.h"
+
 #include <ATen/ATen.h>
 #include <c10/core/InferenceMode.h>
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
@@ -42,11 +44,37 @@ inline Json read_json(const fs::path& path) {
 
 struct Spec {
   int64_t layers, cache_length, max_prompt, vocab;
-  std::vector<int64_t> cache_shape, eos;
+  std::vector<int64_t> cache_shape, cache_stride, eos;
+  bool prefix_attention = false;
 
   explicit Spec(const fs::path& directory) {
     const auto prefill = read_json(directory / "prefill.json");
     const auto decode = read_json(directory / "decode.json");
+    const auto backend = decode.value("attention_backend", std::string("efficient"));
+    const auto cache_input = decode.value("cache_input", std::string("full_capacity"));
+    require(prefill.value("attention_backend", std::string("efficient")) == backend &&
+            prefill.value("cache_input", std::string("full_capacity")) == cache_input,
+            "Package attention/cache settings differ");
+    require((backend == "efficient" && cache_input == "full_capacity") ||
+            ((backend == "flash" || backend == "flash-custom") && cache_input == "full_capacity_with_extent"),
+            "Unsupported attention/cache settings");
+    prefix_attention = cache_input == "full_capacity_with_extent";
+    if (prefix_attention) {
+      require(prefill.contains("custom_attention") && decode.contains("custom_attention"),
+              "Flash packages require the custom-op graph rewrite; re-export with --attention-backend flash");
+      const Json contract = {{"name", "xinfer::flash_attention"}, {"abi_version", 1}, {"read_only", true}};
+      require(prefill.at("custom_attention") == contract && decode.at("custom_attention") == contract &&
+              xinfer::attention_ops_abi_version() == 1, "Unsupported custom attention contract");
+    }
+    // flash-custom is a legacy package label for the same custom operator.
+    // Older custom packages predate cache_padding and used one spare slot.
+    const int64_t default_padding = int64_t(prefix_attention);
+    const int64_t cache_padding = decode.value("cache_padding", default_padding);
+    require(prefill.value("cache_padding", default_padding) == cache_padding,
+            "Package cache padding settings differ");
+    require(cache_padding >= 0 && cache_padding <= 1 &&
+            (prefix_attention || cache_padding == 0),
+            "Unsupported cache padding");
     require(prefill.value("eager_numerics", false) == decode.value("eager_numerics", false) &&
             prefill.value("triton_enable_fp_fusion", true) == decode.value("triton_enable_fp_fusion", true),
             "Package numerical settings differ");
@@ -69,15 +97,26 @@ struct Spec {
     max_prompt = prefill.at("token_length").at(1);
     vocab = decode.at("vocab_size");
     cache_shape = decode.at("cache_shape").get<std::vector<int64_t>>();
+    cache_stride = decode.at("cache_stride").get<std::vector<int64_t>>();
+    if (prefix_attention) {
+      require(prefill.at("export_options") == decode.at("export_options"), "Package export settings differ");
+      require(prefill.at("valid_cache_length") == decode.at("valid_cache_length") &&
+              decode.at("valid_cache_length") == Json::array({1, cache_length}),
+              "Unsupported valid-prefix length contract");
+      require(prefill.at("kv_extent") == decode.at("kv_extent") &&
+              decode.at("kv_extent") == Json({{"device", "cpu"}, {"dtype", "uint8"},
+                {"shape", "[valid_length + 1]"}, {"data_read", false}}), "Unsupported KV extent contract");
+    }
     eos = decode.at("eos_token_ids").get<std::vector<int64_t>>();
     const int64_t heads = decode.at("kv_heads"), dim = decode.at("head_dim");
     require(layers > 0 && cache_length > 0 && max_prompt >= 2 && max_prompt <= cache_length && vocab > 0,
             "Invalid model dimensions");
     require(cache_shape == std::vector<int64_t>{1, heads, cache_length, dim} && heads > 0 && dim > 0,
             "Invalid KV cache shape");
-    require(decode.at("cache_stride") == Json::array({heads * cache_length * dim, cache_length * dim, dim, 1}),
-            "Expected contiguous KV cache");
-    require(decode.at("flat_input_count") == 2 + 2 * layers, "Invalid native input count");
+    const auto storage_length = cache_length + cache_padding;
+    require(cache_stride == std::vector<int64_t>{heads * storage_length * dim, storage_length * dim, dim, 1},
+            "Unexpected KV cache strides");
+    require(decode.at("flat_input_count") == 2 + 2 * layers + int64_t(prefix_attention), "Invalid native input count");
     require(!eos.empty() && std::all_of(eos.begin(), eos.end(), [this](int64_t id) { return id >= 0 && id < vocab; }),
             "Invalid EOS token IDs");
   }
@@ -118,7 +157,10 @@ class Runtime {
         decode_((directory / "decode.pt2").string()) {
     // LibTorch allocations are aligned; keep these exact buffers for both loaders.
     for (int64_t i = 0; i < 2 * spec.layers; ++i)
-      cache_.push_back(at::zeros(spec.cache_shape, at::TensorOptions().device(device_).dtype(at::kBFloat16)));
+      cache_.push_back(at::empty_strided(spec.cache_shape, spec.cache_stride,
+          at::TensorOptions().device(device_).dtype(at::kBFloat16)).zero_());
+    if (spec_.prefix_attention)
+      extent_ = at::empty({spec.cache_length + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
   }
 
   void reset(double fill = 0) {
@@ -140,6 +182,10 @@ class Runtime {
         count == 1 ? at::full({1, 1}, tokens[0], options) : at::tensor(tokens, at::kLong).unsqueeze(0).to(device_),
         count == 1 ? at::full({1}, position_, options) : at::arange(position_, position_ + count, options)};
     inputs.insert(inputs.end(), cache_.begin(), cache_.end());
+    // Only shape metadata is consumed: no CPU data read and no CUDA scalar sync.
+    // +1 keeps the input extent >=2 even for a one-token initial prompt.
+    if (spec_.prefix_attention)
+      inputs.push_back(extent_.narrow(0, 0, position_ + count + 1));
     // T=1 also handles a one-token prompt at position zero.
     auto outputs = (count == 1 ? decode_ : prefill_).run(inputs);
     require(outputs.size() == 1 && outputs[0].sizes() == at::IntArrayRef({1, spec_.vocab}) &&
@@ -173,6 +219,7 @@ class Runtime {
   const c10::Device device_{c10::kCUDA, 0};
   Loader prefill_, decode_;
   std::vector<at::Tensor> cache_;
+  at::Tensor extent_;
   int64_t position_ = 0;
 };
 

@@ -1,0 +1,18 @@
+[
+  {
+    "packages": "artifacts/aoti-flash-custom",
+    "legacy_label": true,
+    "cache_padding": 1,
+    "python_registration": true,
+    "native_logits_exact": true,
+    "tokens": 8
+  },
+  {
+    "packages": "artifacts/aoti-flash-custom-unpadded",
+    "legacy_label": true,
+    "cache_padding": 0,
+    "python_registration": true,
+    "native_logits_exact": true,
+    "tokens": 8
+  }
+]

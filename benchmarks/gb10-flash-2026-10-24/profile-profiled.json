@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "name": "length_25",
+      "samples": [
+        {
+          "decode_ms_per_token": 8.248676375,
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 8.211606,
+          "request_ms": 74.999978,
+          "reset_ms": 0.798961
+        }
+      ]
+    },
+    {
+      "name": "length_128",
+      "samples": [
+        {
+          "decode_ms_per_token": 8.239450375,
+          "prediction_ids": [
+            3838,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 8.105078,
+          "request_ms": 74.755177,
+          "reset_ms": 0.734496
+        }
+      ]
+    },
+    {
+      "name": "length_512",
+      "samples": [
+        {
+          "decode_ms_per_token": 8.589570625,
+          "prediction_ids": [
+            825,
+            6722,
+            315,
+            9625,
+            374,
+            12095,
+            13,
+            151645,
+            198
+          ],
+          "prefill_ms": 11.833913,
+          "request_ms": 81.287886,
+          "reset_ms": 0.737408
+        }
+      ]
+    }
+  ],
+  "cpu_threads": 1,
+  "repeats": 1,
+  "torch_version": "2.13.0",
+  "warmup": 2
+}

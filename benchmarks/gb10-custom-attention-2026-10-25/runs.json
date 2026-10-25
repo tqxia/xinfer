@@ -1,0 +1,90 @@
+[
+  {
+    "round": 1,
+    "profile": "aoti_flash",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-1-aoti_flash.json",
+    "process_ms": 25082.89135499217,
+    "host_loadavg": [
+      1.1142578125,
+      0.931640625,
+      0.55810546875
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "aoti_flash_custom",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-1-aoti_flash_custom.json",
+    "process_ms": 25056.6818590014,
+    "host_loadavg": [
+      1.08349609375,
+      0.93994140625,
+      0.572265625
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_flash_custom",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-2-aoti_flash_custom.json",
+    "process_ms": 26098.076455004048,
+    "host_loadavg": [
+      0.94580078125,
+      0.9169921875,
+      0.57763671875
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "aoti_flash",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-2-aoti_flash.json",
+    "process_ms": 26081.23659300327,
+    "host_loadavg": [
+      1.0302734375,
+      0.943359375,
+      0.599609375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_flash",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-3-aoti_flash.json",
+    "process_ms": 25090.854109002976,
+    "host_loadavg": [
+      1.16552734375,
+      0.98291015625,
+      0.62646484375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "aoti_flash_custom",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-3-aoti_flash_custom.json",
+    "process_ms": 24083.33835200756,
+    "host_loadavg": [
+      1.595703125,
+      1.08642578125,
+      0.67236328125
+    ]
+  },
+  {
+    "round": 4,
+    "profile": "aoti_flash_custom",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-4-aoti_flash_custom.json",
+    "process_ms": 25070.142862998182,
+    "host_loadavg": [
+      1.3505859375,
+      1.07763671875,
+      0.68505859375
+    ]
+  },
+  {
+    "round": 4,
+    "profile": "aoti_flash",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-20261025/round-4-aoti_flash.json",
+    "process_ms": 24089.996504000737,
+    "host_loadavg": [
+      1.119140625,
+      1.0517578125,
+      0.6923828125
+    ]
+  }
+]

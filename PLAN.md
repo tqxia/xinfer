@@ -1,6 +1,6 @@
 # Qwen3-0.6B AOTInductor / C++ PoC
 
-Status: steps 1–5 complete for the Qwen3-0.6B GB10 baseline. The [full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records eager and both AOTI profiles with three process rounds and passing idle checks. Eager numerics retains bitwise parity; the GB10 fused profile fails the unchanged full-cache criterion on 9/56 tensors and is retained as an experimental performance comparison. Step 6 [profiling](benchmarks/gb10-profile-2026-10-24/REPORT.md) and isolated experiments are complete; production integration is next. The original L20 design and investigation are preserved below.
+Status: steps 1–5 complete for the Qwen3-0.6B GB10 baseline. The [full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records eager and both AOTI profiles with three process rounds and passing idle checks. Eager numerics retains bitwise parity; the GB10 fused profile fails the unchanged full-cache criterion on 9/56 tensors and is retained as an experimental performance comparison. Step 6 [profiling](benchmarks/gb10-profile-2026-10-24/REPORT.md) and isolated experiments are complete. The optional [FlashAttention integration](benchmarks/gb10-flash-2026-10-24/REPORT.md) is implemented and benchmarked: decode is 1.27–1.32× faster, with 185 matching top-1 predictions, but 17/56 full-cache tensors fail the unchanged 5% limits. It remains experimental; CUDA Graph integration is deferred. The original L20 design and investigation are preserved below.
 Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
@@ -305,8 +305,11 @@ remains Python-free. Metadata prevents mixing numerical modes in a package pair.
 This profile inherits eager BF16's FP32 errors and is not an accuracy improvement.
 Step 5's full baseline measurements are complete on GB10; see
 `benchmarks/gb10-2026-10-23-rerun/REPORT.md` for performance, numerical and clock context.
-Step 6 profiling and isolated graph/attention experiments are complete; production optimization is next. Keep both this correctness
-baseline and the original fused packages for comparison.
+Step 6 profiling and isolated graph/attention experiments are complete. The optional
+FlashAttention implementation and paired benchmark are recorded in
+`benchmarks/gb10-flash-2026-10-24/REPORT.md`; numerical acceptance is still incomplete.
+Linear projections now dominate GPU time, and CUDA Graph integration is deferred.
+Keep the accepted eager-numerics baseline and original fused packages for comparison.
 
 The initial technical risks were HF cache adaptation and mutation lowering in
 torch 2.7.0, followed by dynamic prefill export. Both passed in step 2. Any future

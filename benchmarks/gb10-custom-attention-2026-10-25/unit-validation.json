@@ -1,0 +1,290 @@
+{
+  "operator_cases": [
+    {
+      "tokens": 1,
+      "valid_keys": 1,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.0,
+      "max_relative_l2": 0.0,
+      "max_peak_relative": 0.0,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 2,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.0078067779541015625,
+      "max_relative_l2": 0.0017332209972664714,
+      "max_peak_relative": 0.003077259287238121,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 32,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.003082275390625,
+      "max_relative_l2": 0.0020921144168823957,
+      "max_peak_relative": 0.0031327453907579184,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 1,
+      "valid_keys": 1024,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.000504419207572937,
+      "max_relative_l2": 0.0021804191637784243,
+      "max_peak_relative": 0.0029683730099350214,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 2,
+      "valid_keys": 2,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.00782322883605957,
+      "max_relative_l2": 0.001041678129695356,
+      "max_peak_relative": 0.002430517692118883,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 2,
+      "valid_keys": 3,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.007341861724853516,
+      "max_relative_l2": 0.0017472358886152506,
+      "max_peak_relative": 0.0023862789385020733,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 16,
+      "valid_keys": 32,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.00413358211517334,
+      "max_relative_l2": 0.0020099563989788294,
+      "max_peak_relative": 0.002748441183939576,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 512,
+      "valid_keys": 512,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.008644342422485352,
+      "max_relative_l2": 0.001963157206773758,
+      "max_peak_relative": 0.002526200609281659,
+      "top1_agreement": 1,
+      "rows": 1
+    },
+    {
+      "tokens": 510,
+      "valid_keys": 1022,
+      "read_only": true,
+      "native_flash_exact": true,
+      "future_poison_exact": true,
+      "extent_data_ignored": true,
+      "opcheck": {
+        "test_schema": "SUCCESS",
+        "test_autograd_registration": "SUCCESS",
+        "test_faketensor": "SUCCESS",
+        "test_aot_dispatch_dynamic": "SUCCESS"
+      },
+      "max_abs": 0.001893162727355957,
+      "max_relative_l2": 0.002213382162153721,
+      "max_peak_relative": 0.0036384223494678736,
+      "top1_agreement": 1,
+      "rows": 1
+    }
+  ],
+  "compiled_cases": [
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 1,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 2,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "decode",
+      "tokens": 1,
+      "valid_keys": 1024,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "valid_keys": 2,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 2,
+      "valid_keys": 3,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 16,
+      "valid_keys": 32,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 510,
+      "valid_keys": 1022,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "valid_keys": 512,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    },
+    {
+      "kind": "prefill",
+      "tokens": 512,
+      "valid_keys": 1024,
+      "output_exact": true,
+      "full_cache_exact": true,
+      "stable_storage": true,
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 1,
+      "cache_updates_preserved": 2
+    }
+  ],
+  "rejections": [
+    "zero_length",
+    "shorter_than_queries",
+    "overflow",
+    "decode_unknown_mask",
+    "prefill_unknown_mask"
+  ],
+  "strict_runtime_checks": true,
+  "strided_inputs_opcheck": {
+    "test_schema": "SUCCESS",
+    "test_autograd_registration": "SUCCESS",
+    "test_faketensor": "SUCCESS",
+    "test_aot_dispatch_dynamic": "SUCCESS"
+  }
+}

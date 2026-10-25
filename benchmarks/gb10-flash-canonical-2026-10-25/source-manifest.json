@@ -1,0 +1,18 @@
+{
+  "base_commit": "3e5f5b75e0c463fbfb95deb5c4d3de600787107c",
+  "branch": "dev-gb10",
+  "source_sha256": {
+    "compiler/model.py": "2722c287d194b4f10ad1110464cbc2afab1f62b0ce4c1b54e14afb8db24c9bd4",
+    "compiler/export.py": "b2b497562091fd81bb117edaa08878e410902ee3b0586e72eca5fd0e24213b5d",
+    "compiler/attention_ops.py": "7eb282b72d51589bff253dccc47fbd4d30eaf8d40af2e729fbd3741f554f6bf8",
+    "compiler/attention_rewrite.py": "0008375623a0ae5dda87f93994809a4b4acd22cdad56ec5c64a3e7a251799d06",
+    "compiler/benchmark.py": "f0af534526e90df3bb4ce82938e4460b7132d705e50f3a0a01f7e3b52f1ec5a5",
+    "compiler/tests/smoke_cpp.py": "24737170548ad4499f5a5b59a4a7467fcca48b008e5da99859d61f12c02d1285",
+    "compiler/tests/custom_attention.py": "38708cb8ffe17a8f54dac2f285c37a9f4ba1cac8f766c04d8d5bc916ed0d4f81",
+    "compiler/validate_cpp.py": "6dee2cddcfd973ee6c3ef7b167018859209a6941b4bbf9ff4344db30349423be",
+    "runtime/runtime.h": "86407cbf26e6b0587b66baecacd770c3f0900d57050a057acc0f040fdefc3580",
+    "runtime/attention_ops.cpp": "068286e05c4501b7a6e8a3dfedd157f88bd02ad985f1c7494165338957970756",
+    "runtime/attention_ops.h": "1c8b4503e2f507ea6af74a333feba7537d4fa4d4bfa4f73c43840d4b4028e9c7"
+  },
+  "removed_source": "compiler/tests/flash_attention.py"
+}

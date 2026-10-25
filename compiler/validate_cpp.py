@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
-from model import CACHE_LENGTH, allocate_cache, load_model
+from model import CACHE_LENGTH, load_model, cache_extent
 from prepare import DEFAULT_MODEL
 from validate_aoti import MAX_RELATIVE_ERROR, compare, error_metrics, ids_from
 
@@ -59,6 +59,9 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     spec = json.loads((args.packages/'decode.json').read_text())
+    from attention_ops import load_package_attention_ops
+    load_package_attention_ops(spec)
+    prefix_attention = spec.get('cache_input') == 'full_capacity_with_extent'
     model = load_model(args.model_dir)
     hf_cache = StaticCache(model.config, 1, CACHE_LENGTH, device='cuda', dtype=torch.bfloat16)
     hf_tensors = tuple(t for pair in zip(hf_cache.key_cache, hf_cache.value_cache) for t in pair)
@@ -110,6 +113,20 @@ def main():
         greedy_case('limit_one', 'capital', 1),
         greedy_case('limit_three', 'capital', 3),
     ])
+    if prefix_attention:
+        # Exercise shape boundaries and rectangular causal alignment, including
+        # a multi-token append immediately after a one-token initial prompt.
+        sizes = (1, 2, 13, 16, 31, 1, 64, 128, 256, 511, 1)
+        chunks, offset = [], 0
+        for size in sizes:
+            chunks.append(full[offset:offset+size])
+            offset += size
+        assert offset == CACHE_LENGTH
+        cases.extend([
+            dict(name='prefix_boundaries', mode='trace', chunks=chunks, check_overflow=True),
+            dict(name='prefix_boundaries_poison', mode='trace', chunks=chunks, fill=3,
+                 same_as='prefix_boundaries', check_overflow=True),
+        ])
     manifest = args.output/'cases.json'
     manifest.write_text(json.dumps({'cases': cases}, indent=2)+'\n')
     env = {k: v for k, v in os.environ.items()
@@ -126,13 +143,17 @@ def main():
 
     prefill = torch._inductor.aoti_load_package(str(args.packages/'prefill.pt2'))
     decode = torch._inductor.aoti_load_package(str(args.packages/'decode.pt2'))
-    py_cache = allocate_cache(model.config)
+    # Allocate from the package contract, including older padded custom packages.
+    py_cache = tuple(torch.empty_strided(spec['cache_shape'], spec['cache_stride'],
+                                        dtype=torch.bfloat16, device='cuda').zero_()
+                     for _ in range(2 * spec['layers']))
     pointers = [t.data_ptr() for t in py_cache]
 
     def py_step(tokens, position):
         ids = torch.tensor([tokens], dtype=torch.int64, device='cuda')
         positions = torch.arange(position, position+len(tokens), device='cuda')
-        return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache).float()
+        extra = (cache_extent(position + len(tokens)),) if prefix_attention else ()
+        return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache, *extra).float()
 
     report = dict(cases=[], error_limit=MAX_RELATIVE_ERROR, native_loader_pairs=native['loader_pairs'],
                   numerical_failures=[])

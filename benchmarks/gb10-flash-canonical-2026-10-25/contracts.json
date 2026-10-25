@@ -1,0 +1,14 @@
+{
+  "python_direct_prefill": "Flash packages require the custom-op graph rewrite; re-export with --attention-backend flash",
+  "python_direct_decode": "Flash packages require the custom-op graph rewrite; re-export with --attention-backend flash",
+  "native_direct_rejection": {
+    "exit_code": 1,
+    "message": "error: Flash packages require the custom-op graph rewrite; re-export with --attention-backend flash",
+    "cuda_visible_devices": ""
+  },
+  "removed_exporter_choice_rejected": true,
+  "cli_choices": [
+    "efficient",
+    "flash"
+  ]
+}

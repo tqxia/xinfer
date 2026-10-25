@@ -1,0 +1,280 @@
+{
+  "cache_buffers": 56,
+  "cases": [
+    {
+      "ids": [
+        785,
+        6722,
+        315,
+        9625,
+        374,
+        12095,
+        13,
+        151645
+      ],
+      "name": "capital_initial",
+      "position": 32,
+      "rows": 8,
+      "stable_storage": true
+    },
+    {
+      "name": "capital_teacher",
+      "position": 32,
+      "reset_check": true,
+      "rows": 8,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "arithmetic_teacher",
+      "position": 38,
+      "reset_check": true,
+      "rows": 11,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "chinese_teacher",
+      "position": 47,
+      "reset_check": true,
+      "rows": 24,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_1",
+      "position": 4,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_1_poison",
+      "position": 4,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_2",
+      "position": 5,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_2_poison",
+      "position": 5,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_7",
+      "position": 10,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_7_poison",
+      "position": 10,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_128",
+      "position": 131,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_128_poison",
+      "position": 131,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_511",
+      "position": 514,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_511_poison",
+      "position": 514,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_512",
+      "position": 515,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "length_512_poison",
+      "position": 515,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "forced_tokens",
+      "position": 29,
+      "reset_check": true,
+      "rows": 5,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "context_end",
+      "overflow_rejected_without_mutation": true,
+      "position": 1024,
+      "reset_check": true,
+      "rows": 4,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "ids": [
+        785,
+        6722,
+        315,
+        9625,
+        374,
+        12095,
+        13,
+        151645
+      ],
+      "name": "capital_after_full",
+      "position": 32,
+      "rows": 8,
+      "stable_storage": true
+    },
+    {
+      "ids": [
+        16,
+        22,
+        488,
+        220,
+        17,
+        20,
+        284,
+        220,
+        19,
+        17,
+        151645
+      ],
+      "name": "arithmetic_after_capital",
+      "position": 38,
+      "rows": 11,
+      "stable_storage": true
+    },
+    {
+      "ids": [
+        102182,
+        100134,
+        101158,
+        67338,
+        20074,
+        104034,
+        104949,
+        3837,
+        32555,
+        72448,
+        100006,
+        100756,
+        100134,
+        62926,
+        104086,
+        104538,
+        57191,
+        102041,
+        9370,
+        104564,
+        99891,
+        99361,
+        1773,
+        151645
+      ],
+      "name": "chinese_after_arithmetic",
+      "position": 47,
+      "rows": 24,
+      "stable_storage": true
+    },
+    {
+      "ids": [
+        785,
+        6722,
+        315,
+        9625,
+        374,
+        12095,
+        13,
+        151645
+      ],
+      "name": "capital_repeat",
+      "position": 32,
+      "rows": 8,
+      "stable_storage": true
+    },
+    {
+      "ids": [
+        785
+      ],
+      "name": "limit_one",
+      "position": 25,
+      "rows": 1,
+      "stable_storage": true
+    },
+    {
+      "ids": [
+        785,
+        6722,
+        315
+      ],
+      "name": "limit_three",
+      "position": 27,
+      "rows": 3,
+      "stable_storage": true
+    },
+    {
+      "name": "prefix_boundaries",
+      "overflow_rejected_without_mutation": true,
+      "position": 1024,
+      "reset_check": true,
+      "rows": 11,
+      "stable_storage": true,
+      "write_region_checks": true
+    },
+    {
+      "name": "prefix_boundaries_poison",
+      "overflow_rejected_without_mutation": true,
+      "position": 1024,
+      "reset_check": true,
+      "rows": 11,
+      "stable_storage": true,
+      "write_region_checks": true
+    }
+  ],
+  "loader_pairs": 1
+}

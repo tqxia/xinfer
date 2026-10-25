@@ -1,0 +1,38 @@
+{
+  "decode": {
+    "rewrite": {
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 28,
+      "cache_updates_preserved": 56
+    },
+    "custom_graph_calls": 28,
+    "cache_update_nodes": 56,
+    "proxy_calls": 28,
+    "all_calls_receive_original_cache_inputs": true,
+    "first_call_inputs": [
+      "buf13",
+      "arg314_1",
+      "arg315_1",
+      "arg370_1",
+      "buf15"
+    ]
+  },
+  "prefill": {
+    "rewrite": {
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 28,
+      "cache_updates_preserved": 56
+    },
+    "custom_graph_calls": 28,
+    "cache_update_nodes": 56,
+    "proxy_calls": 28,
+    "all_calls_receive_original_cache_inputs": true,
+    "first_call_inputs": [
+      "buf13",
+      "arg314_1",
+      "arg315_1",
+      "arg370_1",
+      "buf15"
+    ]
+  }
+}

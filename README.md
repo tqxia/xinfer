@@ -6,6 +6,9 @@ For NVIDIA GB10 / ARM64 with PyTorch 2.13 and CUDA 13.0, see
 [GB10.md](GB10.md) for setup, architecture, validation and run commands.
 The [latest full GB10 benchmark](benchmarks/gb10-2026-10-23-rerun/REPORT.md) records the eager/AOTI comparison after GPU clock recovery.
 The [fused-AOTI profile](benchmarks/gb10-profile-2026-10-24/REPORT.md) identifies the measured bottlenecks and records isolated attention/graph experiments.
+The optional [FlashAttention path](docs/gb10-custom-attention.md), enabled with `--attention-backend flash`, rewrites exported SDPA to the read-only native custom operator. It is the only Flash exporter and uses unpadded caches without size-oblivious export. Its full-model numerical limitation remains; see the [consolidation validation](benchmarks/gb10-flash-canonical-2026-10-25/REPORT.md).
+The [historical direct-Flash benchmark](benchmarks/gb10-flash-2026-10-24/REPORT.md) records a 27–32% decode-throughput improvement over fused efficient AOTI, with full-cache numerical acceptance failures. The [unpadded custom-op comparison](benchmarks/gb10-custom-attention-unpadded-2026-10-25/REPORT.md) records the latest full benchmark of the current implementation.
+The [historical FlashAttention implementation notes](docs/gb10-flash-attention-implementation.md) explain causal alignment, the full-cache layout boundary, and AOTI's size-one mutation guard, with worked examples and links to the original source revision.
 The historical environment and validation sections below describe the original L20 run.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its

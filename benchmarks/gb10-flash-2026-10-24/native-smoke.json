@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "name": "arithmetic",
+      "tokens": 11,
+      "logits_bitwise_equal": true
+    },
+    {
+      "name": "capital",
+      "tokens": 8,
+      "logits_bitwise_equal": true
+    },
+    {
+      "name": "chinese",
+      "tokens": 24,
+      "logits_bitwise_equal": true
+    }
+  ],
+  "rejections": [
+    "empty",
+    "negative",
+    "vocab",
+    "fraction",
+    "overflow",
+    "long_prompt",
+    "zero_budget",
+    "negative_budget",
+    "context_budget",
+    "unknown_flag",
+    "missing_value",
+    "trace_collision",
+    "mixed_numerical_settings",
+    "mixed_attention_settings"
+  ],
+  "boundaries": [
+    {
+      "prompt_length": 1,
+      "tokens": 3,
+      "logits_bitwise_equal": true
+    },
+    {
+      "prompt_length": 2,
+      "tokens": 3,
+      "logits_bitwise_equal": true
+    },
+    {
+      "prompt_length": 512,
+      "tokens": 3,
+      "logits_bitwise_equal": true
+    }
+  ],
+  "generation_limit_pass": true,
+  "no_python_linkage": true,
+  "native_loader_no_python_library": true,
+  "sanitized_environment_pass": true
+}

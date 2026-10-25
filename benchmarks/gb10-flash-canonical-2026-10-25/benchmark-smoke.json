@@ -1,0 +1,141 @@
+{
+  "status": "idle_boundaries_checked",
+  "rounds": 1,
+  "warmup": 1,
+  "repeats": 1,
+  "decode_steps": 4,
+  "profiles": {
+    "aoti_fused": {
+      "load_ms": {
+        "n": 1,
+        "median": 11634.68754,
+        "mean": 11634.68754,
+        "min": 11634.68754,
+        "max": 11634.68754,
+        "p10": 11634.68754,
+        "p90": 11634.68754
+      },
+      "cases": {
+        "length_25": {
+          "reset_ms": {
+            "n": 1,
+            "median": 0.704644,
+            "mean": 0.704644,
+            "min": 0.704644,
+            "max": 0.704644,
+            "p10": 0.704644,
+            "p90": 0.704644
+          },
+          "prefill_ms": {
+            "n": 1,
+            "median": 10.473965,
+            "mean": 10.473965,
+            "min": 10.473965,
+            "max": 10.473965,
+            "p10": 10.473965,
+            "p90": 10.473965
+          },
+          "decode_ms_per_token": {
+            "n": 1,
+            "median": 10.53895,
+            "mean": 10.53895,
+            "min": 10.53895,
+            "max": 10.53895,
+            "p10": 10.53895,
+            "p90": 10.53895
+          },
+          "request_ms": {
+            "n": 1,
+            "median": 53.334409,
+            "mean": 53.334409,
+            "min": 53.334409,
+            "max": 53.334409,
+            "p10": 53.334409,
+            "p90": 53.334409
+          },
+          "decode_tokens_per_second": 94.88611294294024,
+          "memory": {
+            "peak_allocated_bytes": 159948288,
+            "peak_reserved_bytes": 161480704,
+            "sampled_peak_device_used_bytes": 75905396736,
+            "sampled_peak_device_delta_bytes": 5310738432
+          },
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374
+          ],
+          "prediction_agreement_with_aoti_fused": 5
+        }
+      }
+    },
+    "aoti_flash": {
+      "load_ms": {
+        "n": 1,
+        "median": 11536.309698,
+        "mean": 11536.309698,
+        "min": 11536.309698,
+        "max": 11536.309698,
+        "p10": 11536.309698,
+        "p90": 11536.309698
+      },
+      "cases": {
+        "length_25": {
+          "reset_ms": {
+            "n": 1,
+            "median": 0.703475,
+            "mean": 0.703475,
+            "min": 0.703475,
+            "max": 0.703475,
+            "p10": 0.703475,
+            "p90": 0.703475
+          },
+          "prefill_ms": {
+            "n": 1,
+            "median": 7.834073,
+            "mean": 7.834073,
+            "min": 7.834073,
+            "max": 7.834073,
+            "p10": 7.834073,
+            "p90": 7.834073
+          },
+          "decode_ms_per_token": {
+            "n": 1,
+            "median": 7.92420775,
+            "mean": 7.92420775,
+            "min": 7.92420775,
+            "max": 7.92420775,
+            "p10": 7.92420775,
+            "p90": 7.92420775
+          },
+          "request_ms": {
+            "n": 1,
+            "median": 40.234379,
+            "mean": 40.234379,
+            "min": 40.234379,
+            "max": 40.234379,
+            "p10": 40.234379,
+            "p90": 40.234379
+          },
+          "decode_tokens_per_second": 126.19558087683907,
+          "memory": {
+            "peak_allocated_bytes": 151507968,
+            "peak_reserved_bytes": 161480704,
+            "sampled_peak_device_used_bytes": 75800317952,
+            "sampled_peak_device_delta_bytes": 5273358336
+          },
+          "prediction_ids": [
+            785,
+            6722,
+            315,
+            9625,
+            374
+          ],
+          "prediction_agreement_with_aoti_fused": 5
+        }
+      }
+    }
+  }
+}

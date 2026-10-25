@@ -1,0 +1,90 @@
+[
+  {
+    "round": 1,
+    "profile": "custom_padded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-1-custom_padded.json",
+    "process_ms": 25093.20007500355,
+    "host_loadavg": [
+      0.8466796875,
+      0.56201171875,
+      0.30126953125
+    ]
+  },
+  {
+    "round": 1,
+    "profile": "custom_unpadded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-1-custom_unpadded.json",
+    "process_ms": 25090.86738800397,
+    "host_loadavg": [
+      0.91259765625,
+      0.60498046875,
+      0.32421875
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "custom_unpadded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-2-custom_unpadded.json",
+    "process_ms": 26066.919445001986,
+    "host_loadavg": [
+      0.908203125,
+      0.634765625,
+      0.34521484375
+    ]
+  },
+  {
+    "round": 2,
+    "profile": "custom_padded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-2-custom_padded.json",
+    "process_ms": 25049.88713399507,
+    "host_loadavg": [
+      0.8486328125,
+      0.6455078125,
+      0.36083984375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "custom_padded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-3-custom_padded.json",
+    "process_ms": 25067.40271099261,
+    "host_loadavg": [
+      0.81494140625,
+      0.6552734375,
+      0.375
+    ]
+  },
+  {
+    "round": 3,
+    "profile": "custom_unpadded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-3-custom_unpadded.json",
+    "process_ms": 25056.97865600814,
+    "host_loadavg": [
+      0.8359375,
+      0.673828125,
+      0.3896484375
+    ]
+  },
+  {
+    "round": 4,
+    "profile": "custom_unpadded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-4-custom_unpadded.json",
+    "process_ms": 26055.606175999856,
+    "host_loadavg": [
+      0.90478515625,
+      0.7109375,
+      0.4130859375
+    ]
+  },
+  {
+    "round": 4,
+    "profile": "custom_padded",
+    "result": "/home/tqxia/workspace/xinfer/artifacts/benchmark-flash-custom-unpadded-20261025/round-4-custom_padded.json",
+    "process_ms": 25101.71757399803,
+    "host_loadavg": [
+      0.84619140625,
+      0.71337890625,
+      0.42529296875
+    ]
+  }
+]

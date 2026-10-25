@@ -1,0 +1,58 @@
+{
+  "decode": {
+    "rewrite": {
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 28,
+      "cache_updates_preserved": 56
+    },
+    "cache_padding": 0,
+    "cache_stride": [
+      1048576,
+      131072,
+      128,
+      1
+    ],
+    "export_options": {
+      "backed_size_oblivious": false
+    },
+    "custom_graph_calls": 28,
+    "cache_update_nodes": 56,
+    "proxy_calls": 28,
+    "all_calls_receive_original_cache_inputs": true,
+    "first_call_inputs": [
+      "buf13",
+      "arg314_1",
+      "arg315_1",
+      "arg370_1",
+      "buf15"
+    ]
+  },
+  "prefill": {
+    "rewrite": {
+      "pass": "qwen_sdpa_to_custom_flash_v1",
+      "replacements": 28,
+      "cache_updates_preserved": 56
+    },
+    "cache_padding": 0,
+    "cache_stride": [
+      1048576,
+      131072,
+      128,
+      1
+    ],
+    "export_options": {
+      "backed_size_oblivious": false
+    },
+    "custom_graph_calls": 28,
+    "cache_update_nodes": 56,
+    "proxy_calls": 28,
+    "all_calls_receive_original_cache_inputs": true,
+    "first_call_inputs": [
+      "buf13",
+      "arg314_1",
+      "arg315_1",
+      "arg370_1",
+      "buf15"
+    ]
+  }
+}

@@ -9,6 +9,11 @@ CACHE_LENGTH = 1024
 MAX_PROMPT = 512
 
 
+def cache_extent(valid_length):
+    """Only this CPU tensor's shape is read; +1 avoids AOTI's size-one guards."""
+    return torch.empty(valid_length + 1, dtype=torch.uint8)
+
+
 class TensorCache(Cache):
     """Adapt caller-owned (K0, V0, K1, V1, ...) tensors to HF's cache API."""
 
@@ -36,8 +41,9 @@ class QwenStep(torch.nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, input_ids, cache_position, kv):
-        # Absolute positions handle both multi-token prefill and single-token decode.
+    def forward(self, input_ids, cache_position, kv, kv_extent=None):
+        # Export ordinary full-cache SDPA. The Flash pass consumes kv_extent and
+        # replaces attention after capture; no model-side backend hooks are needed.
         columns = torch.arange(kv[0].shape[2], device=input_ids.device)
         future = columns.unsqueeze(0) > cache_position.unsqueeze(1)
         mask = torch.zeros_like(future, dtype=kv[0].dtype)
