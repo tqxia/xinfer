@@ -323,6 +323,15 @@ impact of these tradeoffs; step 6 explores compiler, runtime, graph and kernel
 optimizations against that baseline. Keep export-time Torch and native LibTorch
 matched if an optimization experiment requires an isolated version change.
 
+## Deferred work
+
+- [ ] After Qwen3.5-4B text-only inference is fully functional (AOTI export/compile,
+  C++ prefill/decode generation and end-to-end validation), refactor the profiling
+  infrastructure for reuse across models. Separate shared NVTX capture and trace
+  analysis from model/runtime adapters and kernel classification. Use both
+  Qwen3-0.6B and Qwen3.5 to guide the abstractions; defer this refactor until that
+  milestone.
+
 ## References
 
 - Qwen model card:
