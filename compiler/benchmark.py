@@ -167,6 +167,8 @@ def summarize(records, workload, reference='eager'):
 
 
 def run(args):
+    from custom_ops.attention import native_attention_library
+
     if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
         raise ValueError('Counts must be positive')
     if not args.lengths or len(set(args.lengths)) != len(args.lengths):
@@ -198,7 +200,10 @@ def run(args):
     source = out/'source'
     source.mkdir()
     for name in ('compiler/benchmark.py', 'runtime/benchmark.cpp', 'runtime/runtime.h', 'compiler/model.py',
-                 'compiler/export.py', 'compiler/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt'):
+                 'compiler/export.py', 'compiler/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
+                 'runtime/custom_ops/attention.cpp', 'runtime/custom_ops/attention.h',
+                 'compiler/custom_ops/attention.py', 'compiler/custom_ops/__init__.py',
+                 'compiler/adapters/qwen3_flash.py', 'compiler/adapters/__init__.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),
@@ -209,6 +214,9 @@ def run(args):
                        binary_sha256=digest(binary), workload_sha256=digest(out/'workload.json'),
                        model_manifest=read_json(args.model_dir/'model_manifest.json'),
                        allow_busy=args.allow_busy, cpu_threads=1, packages={})
+    library = native_attention_library(binary)
+    if library is not None:
+        environment['attention_library'] = dict(path=str(library), sha256=digest(library))
     environment['gpu'] = subprocess.check_output([
         'nvidia-smi', '-i', '0', '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
         '--format=csv'], text=True)
@@ -218,12 +226,19 @@ def run(args):
                                                     sha256=digest(directory/(kind+'.pt2')))
                                            for kind in ('prefill', 'decode')}
         for entry in environment['packages'][label].values():
+            backend = entry['metadata'].get('attention_backend', 'efficient')
+            if backend not in ('efficient', 'flash'):
+                raise ValueError(f'Unsupported attention backend: {backend}')
+            if backend == 'flash' and library is None:
+                raise ValueError('Build the native benchmark with -DQWEN_ENABLE_FLASH_ATTENTION=ON')
             if not paired:
                 assert entry['metadata'].get('eager_numerics', False) == (label == 'aoti_eager'), 'Wrong compilation profile'
     if paired:
+        # Original fused packages predate these fields; match runtime defaults.
+        defaults = dict(eager_numerics=False, triton_enable_fp_fusion=True)
         for kind in ('prefill', 'decode'):
-            baseline = environment['packages'][args.baseline_label][kind]['metadata']
-            candidate = environment['packages'][args.candidate_label][kind]['metadata']
+            baseline = defaults | environment['packages'][args.baseline_label][kind]['metadata']
+            candidate = defaults | environment['packages'][args.candidate_label][kind]['metadata']
             for key in ('model_revision', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
                         'layers', 'kv_heads', 'head_dim', 'cache_length', 'token_length',
                         'vocab_size', 'cxx11_abi', 'cuda_compute_capability', 'eager_numerics',

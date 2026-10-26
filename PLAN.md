@@ -303,8 +303,14 @@ remains Python-free. Metadata prevents mixing numerical modes in a package pair.
 This profile inherits eager BF16's FP32 errors and is not an accuracy improvement.
 Step 5's benchmark is implemented; baseline measurements on a separate
 environment are pending.
-Step 6 performance optimization has not started. Keep both this correctness
-baseline and the original fused packages for comparison.
+Step 6 now includes paired native benchmarks, numerical-error collectors, an
+optional NVTX profiler and the experimental valid-prefix FlashAttention/native
+GQA path. See [development tools](docs/development-tools.md) and
+[FlashAttention](docs/flash-attention.md). Flash is disabled by default and its
+full-model numerical acceptance remains unresolved. CUDA Graph integration,
+FlashInfer and projection packing are not part of this main-branch change.
+Keep both the accepted correctness baseline and original fused packages for
+comparison; historical GB10 measurements remain on `dev-gb10`.
 
 The initial technical risks were HF cache adaptation and mutation lowering in
 torch 2.7.0, followed by dynamic prefill export. Both passed in step 2. Any future

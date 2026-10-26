@@ -7,11 +7,13 @@ import subprocess
 
 import numpy as np
 
-binary = Path('build/qwen_aoti').resolve()
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--native', type=Path, default=Path('build/qwen_aoti'))
+parser.add_argument('--reference', type=Path, default=Path('artifacts/reference'))
 parser.add_argument('--packages', type=Path, default=Path('artifacts/aoti'))
 parser.add_argument('--output', type=Path, default=Path('artifacts/native-smoke'))
 args = parser.parse_args()
+binary = args.native.resolve()
 packages, out = args.packages, args.output
 out.mkdir(exist_ok=True)
 env = dict(os.environ)
@@ -25,7 +27,7 @@ linked = subprocess.check_output(['ldd', str(binary)], text=True)
 assert 'not found' not in linked
 assert 'libpython' not in linked and 'libtorch_python' not in linked
 
-for case in sorted(Path('artifacts/reference').iterdir()):
+for case in sorted(args.reference.iterdir()):
     if not case.is_dir(): continue
     run_env = env | ({'LD_DEBUG': 'libs'} if case.name == 'capital' else {})
     ids = out/f'{case.name}.ids'
@@ -74,14 +76,26 @@ for kind in ('prefill', 'decode'):
     metadata = json.loads((packages/(kind+'.json')).read_text())
     metadata['eager_numerics'] = kind == 'prefill'
     (mixed/(kind+'.json')).write_text(json.dumps(metadata))
-result = subprocess.run([str(binary), str(mixed), 'artifacts/reference/capital/prompt.ids',
+result = subprocess.run([str(binary), str(mixed), str(args.reference/'capital/prompt.ids'),
                          str(out/'mixed.ids')], env=env | {'CUDA_VISIBLE_DEVICES':''},
                         capture_output=True, text=True, timeout=20)
 assert result.returncode != 0 and 'Package numerical settings differ' in result.stderr, result.stderr
 report['rejections'].append('mixed_numerical_settings')
 
+# Attention/cache contracts must also agree before CUDA initialization.
+for kind in ('prefill', 'decode'):
+    metadata = json.loads((packages/(kind+'.json')).read_text())
+    if kind == 'prefill':
+        metadata['attention_backend'] = ('efficient' if metadata.get('attention_backend') == 'flash' else 'flash')
+    (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+result = subprocess.run([str(binary), str(mixed), str(args.reference/'capital/prompt.ids'),
+                         str(out/'mixed.ids')], env=env | {'CUDA_VISIBLE_DEVICES':''},
+                        capture_output=True, text=True, timeout=20)
+assert result.returncode != 0 and 'Package attention/cache settings differ' in result.stderr, result.stderr
+report['rejections'].append('mixed_attention_settings')
+
 # A real generation-limit stop must produce exactly one prediction, even before EOS.
-result = subprocess.run([str(binary), str(packages), 'artifacts/reference/capital/prompt.ids',
+result = subprocess.run([str(binary), str(packages), str(args.reference/'capital/prompt.ids'),
                          str(out/'limit.ids'), '--max-new-tokens','1'], env=env,
                         capture_output=True, text=True, timeout=120)
 assert result.returncode == 0, result.stderr
@@ -90,11 +104,63 @@ assert (out/'limit.ids').read_text().split() == ['785']
 # Exercise native T=1 routing and the endpoints of dynamic prefill, comparing
 # against Python AOTI under exactly the same fed tokens. Python is only the oracle.
 import torch
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from custom_ops.attention import load_package_attention_ops
 
 spec = json.loads((packages/'decode.json').read_text())
+load_package_attention_ops(spec, native=binary)
+if spec.get('attention_backend') == 'flash':
+    # Require the custom-op ABI before CUDA or package loading.
+    message = 're-export with --attention-backend flash'
+    for kind in ('prefill', 'decode'):
+        metadata = json.loads((packages/(kind+'.json')).read_text())
+        metadata['attention_backend'] = 'flash'
+        del metadata['custom_attention']
+        (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+        try:
+            load_package_attention_ops(metadata)
+        except ValueError as error:
+            assert message in str(error), str(error)
+        else:
+            raise AssertionError('Python accepted a Flash package without its operator contract')
+    result = subprocess.run([str(binary),str(mixed),str(args.reference/'capital/prompt.ids'),str(out/'mixed.ids')],
+                            env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+    assert result.returncode != 0 and message in result.stderr, result.stderr
+    report['rejections'].append('missing_custom_attention_contract')
+    report['python_missing_contract_rejection'] = True
+    for kind in ('prefill', 'decode'):
+        metadata = json.loads((packages/(kind+'.json')).read_text())
+        metadata['custom_attention']['abi_version'] = 2
+        (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+    result = subprocess.run([str(binary),str(mixed),str(args.reference/'capital/prompt.ids'),str(out/'mixed.ids')],
+                            env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+    assert result.returncode != 0 and 'Unsupported custom attention contract' in result.stderr, result.stderr
+    report['rejections'].append('unsupported_custom_attention_contract')
+    for name, message in (
+            ('mixed_cache_padding', 'Package cache padding settings differ'),
+            ('unsupported_cache_padding', 'Unsupported cache padding'),
+            ('invalid_cache_stride', 'Unexpected KV cache strides'),
+            ('mixed_export_settings', 'Package export settings differ')):
+        for kind in ('prefill', 'decode'):
+            metadata = json.loads((packages/(kind+'.json')).read_text())
+            if name == 'mixed_cache_padding':
+                padding = metadata.get('cache_padding', 0)
+                metadata['cache_padding'] = 1-padding if kind == 'prefill' else padding
+            elif name == 'unsupported_cache_padding':
+                metadata['cache_padding'] = 2
+            elif name == 'invalid_cache_stride':
+                metadata['cache_stride'][1] += 128
+            elif kind == 'prefill':
+                metadata['export_options']['backed_size_oblivious'] = not metadata['export_options']['backed_size_oblivious']
+            (mixed/(kind+'.json')).write_text(json.dumps(metadata))
+        result = subprocess.run([str(binary),str(mixed),str(args.reference/'capital/prompt.ids'),str(out/'mixed.ids')],
+                                env=env | {'CUDA_VISIBLE_DEVICES':''},capture_output=True,text=True,timeout=20)
+        assert result.returncode != 0 and message in result.stderr, (name,result.stderr)
+        report['rejections'].append(name)
 prefill = torch._inductor.aoti_load_package(str(packages/'prefill.pt2'))
 decode = torch._inductor.aoti_load_package(str(packages/'decode.pt2'))
-seed = [int(x) for x in Path('artifacts/reference/capital/prompt.ids').read_text().split()]
+seed = [int(x) for x in (args.reference/'capital/prompt.ids').read_text().split()]
 report['boundaries'] = []
 with torch.inference_mode():
     for length in (1, 2, 512):
@@ -114,7 +180,8 @@ with torch.inference_mode():
         for token, row in zip(generated,rows):
             ids = torch.tensor([tokens],dtype=torch.int64,device='cuda')
             positions = torch.arange(position,position+len(tokens),device='cuda')
-            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache)
+            extra = (torch.empty(position+len(tokens)+1,dtype=torch.uint8),) if spec.get('cache_input') == 'full_capacity_with_extent' else ()
+            scores = (decode if len(tokens)==1 else prefill)(ids,positions,cache,*extra)
             assert scores.argmax(-1).item() == token
             assert np.array_equal(scores.float().cpu().numpy()[0],row)
             position += len(tokens)

@@ -5,6 +5,12 @@ Qwen3-0.6B AOTInductor / C++ PoC.
 The [development tools guide](docs/development-tools.md) covers paired native
 benchmark comparisons, numerical-error collection and optional NVTX profiling.
 
+[Valid-prefix FlashAttention with native GQA](docs/flash-attention.md) is available
+as an opt-in experiment. Its native library is disabled by default, and its known
+full-model numerical differences remain subject to the existing acceptance limits.
+Selecting `--attention-backend flash` replaces HF child modules before export
+and calls the custom op directly.
+
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
 first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
 Its compiler/runtime code, dependencies and artifacts are separate from the
@@ -26,6 +32,7 @@ text decoding; the C++ executable handles all model inference and generation.
 ```text
 compiler/                 Export/compilation, offline helpers and Python validation
   export.py, model.py   AOTI compilation and the thin Hugging Face model adapter
+  adapters/             Selected HF module replacements installed before export
   prepare.py            Offline tokenization and decoding
   validate*.py, tests/  Eager/AOTI/native comparisons and numerical probes
   benchmark.py          Eager benchmark and native-worker orchestration
@@ -776,7 +783,8 @@ GPU reported 99-100% utilization. Evidence is saved under
 
 The development host is fully loaded, so final performance measurements will
 run in a separate environment. Step 5's benchmark implementation is ready;
-its final measurements remain pending. Step 6 has not started.
+its final measurements on this host remain pending. The current step 6 tools
+and optional FlashAttention experiment are documented in the guides above.
 
 ## Planned optimization phase
 
