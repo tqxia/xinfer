@@ -3,7 +3,7 @@
 Qwen3-0.6B AOTInductor / C++ PoC.
 
 The [development tools guide](docs/development-tools.md) covers paired native
-benchmark comparisons and numerical-error collection for optimization work.
+benchmark comparisons, numerical-error collection and optional NVTX profiling.
 
 The [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed its
 first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
