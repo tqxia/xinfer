@@ -15,3 +15,20 @@ def row_errors(actual, expected):
 def bits_equal(actual, expected):
     return actual.dtype == expected.dtype and torch.equal(
         actual.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8))
+
+
+def cpu_copy(tensors):
+    assert all(torch.isfinite(t).all() for t in tensors)
+    return tuple(t.cpu().clone() for t in tensors)
+
+
+def raw_bytes(tensor):
+    return tensor.contiguous().view(torch.uint8).numpy().tobytes()
+
+
+def compare_file(path, tensors):
+    with path.open("rb") as stream:
+        for tensor in tensors:
+            data = raw_bytes(tensor)
+            assert stream.read(len(data)) == data, f"Native/Python bitwise mismatch: {path}"
+        assert not stream.read(1), f"Extra native output: {path}"

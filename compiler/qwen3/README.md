@@ -11,10 +11,8 @@ full-model numerical differences remain subject to the existing acceptance limit
 Selecting `--attention-backend flash` replaces HF child modules before export
 and calls the custom op directly.
 
-The [Qwen3.5-4B text-only extension](../qwen35/README.md) has completed its
-first milestone: single DeltaNet block export, AOTI compilation and C++ validation.
-Its compiler/runtime code, dependencies and artifacts are separate from the
-Qwen3-0.6B baseline described below.
+The [Qwen3.5 text-only extension](../qwen35/README.md) has its own model adapter,
+state runtime and pinned environment.
 
 Steps 1-4 are complete: eager references, AOTI packages, a minimal C++ executable,
 and three-path validation. The optional `--eager-numerics` compilation mode

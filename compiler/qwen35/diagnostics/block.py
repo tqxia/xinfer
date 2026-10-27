@@ -1,9 +1,6 @@
 """Layer-0 DeltaNet, with explicit state tensors around the unmodified HF module."""
 
 import argparse
-import hashlib
-import importlib.metadata
-import importlib.util
 import json
 from pathlib import Path
 
@@ -13,35 +10,31 @@ from safetensors.torch import load_file, save_file
 from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
-
-MODEL_ID = "Qwen/Qwen3.5-4B"
-REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
-MODEL_DIR = Path("work/qwen35/block")
-HIDDEN = 2560
-CONV_SHAPE = (1, 8192, 4)
-STATE_SHAPE = (1, 32, 128, 128)
-PREFILL = 64
+from compiler.common.artifacts import sha256
+from compiler.qwen35.config import MODEL_ID, REVISIONS, deltanet_state_shapes
 
 
-def sha256(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+MODEL_DIR = Path("work/qwen35/0.8b/block")
 
 
-def prepare(directory):
+def prepare(directory, model=MODEL_ID):
     """Download the pinned shard, then retain only this block's original weights."""
     from huggingface_hub import HfApi, hf_hub_download
 
+    revision = REVISIONS[model]
+
     def download(name):
-        return Path(hf_hub_download(MODEL_ID, name, revision=REVISION,
+        return Path(hf_hub_download(model, name, revision=revision,
                                    cache_dir="work/qwen35/hub"))
 
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=False)
     config = download("config.json")
     index = json.loads(download("model.safetensors.index.json").read_text())
     prefix = "model.language_model.layers.0.linear_attn."
     names = {k: v for k, v in index["weight_map"].items() if k.startswith(prefix)}
-    info = HfApi().model_info(MODEL_ID, revision=REVISION, files_metadata=True)
+    if not names:
+        raise ValueError(f"No layer-0 DeltaNet weights in {model}")
+    info = HfApi().model_info(model, revision=revision, files_metadata=True)
     expected = {s.rfilename: s.lfs.sha256 for s in info.siblings if s.lfs}
     weights, shards = {}, {}
     for shard in sorted(set(names.values())):
@@ -55,7 +48,7 @@ def prepare(directory):
                     weights[name.removeprefix(prefix)] = reader.get_tensor(name)
     save_file(weights, directory / "block.safetensors")
     (directory / "config.json").write_bytes(config.read_bytes())
-    manifest = dict(model=MODEL_ID, revision=REVISION, layer=0, source_shards=shards,
+    manifest = dict(model=model, revision=revision, layer=0, source_shards=shards,
                     files={n: sha256(directory / n) for n in ("config.json", "block.safetensors")})
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
@@ -104,30 +97,26 @@ def load_block(directory=MODEL_DIR, dtype=torch.bfloat16):
         if sha256(directory / name) != expected:
             raise ValueError(f"Checksum mismatch: {name}")
     config = Qwen3_5TextConfig(**json.loads((directory / "config.json").read_text())["text_config"])
-    assert (config.hidden_size, config.linear_num_value_heads, config.linear_key_head_dim,
-            config.linear_value_head_dim, config.linear_conv_kernel_dim) == (2560, 32, 128, 128, 4)
+    if config.layer_types[0] != "linear_attention":
+        raise ValueError("Layer 0 must be a DeltaNet block")
     block = Qwen3_5GatedDeltaNet(config, layer_idx=0)
     block.load_state_dict(load_file(directory / "block.safetensors"), strict=True)
     return block.eval().requires_grad_(False).to(device="cuda", dtype=dtype), config
 
 
-def zero_state(dtype=torch.bfloat16):
-    return (torch.zeros(CONV_SHAPE, device="cuda", dtype=dtype),
-            torch.zeros(STATE_SHAPE, device="cuda", dtype=torch.float32))
+def input_shapes(config, tokens):
+    return ((1, tokens, config.hidden_size), *deltanet_state_shapes(config))
 
-
-def configure():
-    if importlib.metadata.version("transformers") != "5.20.2":
-        raise RuntimeError("This adapter targets transformers==5.20.2")
-    for package in ("fla", "causal_conv1d"):
-        if importlib.util.find_spec(package) is not None:
-            raise RuntimeError(f"Use an environment without {package} for the PyTorch fallback baseline")
-    torch.set_num_threads(1)
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+def zero_state(config, dtype=torch.bfloat16):
+    _, conv, recurrent = input_shapes(config, 1)
+    return (torch.zeros(conv, device="cuda", dtype=dtype),
+            torch.zeros(recurrent, device="cuda", dtype=torch.float32))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=MODEL_DIR)
-    prepare(parser.parse_args().output)
+    parser.add_argument("--model", choices=REVISIONS, default=MODEL_ID)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    directory = args.output or Path("work/qwen35") / args.model.rsplit("-", 1)[1].lower() / "block"
+    prepare(directory, args.model)

@@ -21,6 +21,7 @@ separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 add_subdirectory(qwen3)
 
 option(QWEN_BUILD_DELTANET "Build the isolated Qwen3.5 DeltaNet probe" OFF)
-if(QWEN_BUILD_DELTANET)
+option(QWEN_BUILD_QWEN35 "Build the Qwen3.5 text generation runtime" OFF)
+if(QWEN_BUILD_DELTANET OR QWEN_BUILD_QWEN35)
   add_subdirectory(qwen35)
 endif()

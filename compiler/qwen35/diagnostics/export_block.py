@@ -10,24 +10,27 @@ from pathlib import Path
 import torch
 from transformers.models.qwen3_5 import modeling_qwen3_5
 
-from block import BlockStep, HIDDEN, MODEL_DIR, PREFILL, configure, load_block, sha256, zero_state
+from compiler.qwen35.config import ARTIFACT_DIR, PREFILL, configure
+from compiler.common.artifacts import sha256, ROOT
+from compiler.qwen35.diagnostics.block import BlockStep, MODEL_DIR, input_shapes, load_block, zero_state
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kind", choices=("prefill", "decode"))
     parser.add_argument("--model-dir", type=Path, default=MODEL_DIR)
-    parser.add_argument("--output", type=Path, default=Path("artifacts/qwen35/block"))
+    parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "block")
     args = parser.parse_args()
     configure()
     args.output.mkdir(parents=True, exist_ok=True)
     package = args.output / f"{args.kind}.pt2"
     if package.exists():
         parser.error(f"Refusing to overwrite {package}")
-    block, _ = load_block(args.model_dir)
+    block, config = load_block(args.model_dir)
     length = PREFILL if args.kind == "prefill" else 1
     torch.manual_seed(35)
-    inputs = (torch.randn(1, length, HIDDEN, device="cuda", dtype=torch.bfloat16), *zero_state())
+    inputs = (torch.randn(input_shapes(config, length)[0], device="cuda", dtype=torch.bfloat16),
+              *zero_state(config))
     with torch.inference_mode():
         start = time.perf_counter()
         exported = torch.export.export(BlockStep(block), inputs, strict=True)
@@ -48,8 +51,7 @@ def main():
         "versions": {n: importlib.metadata.version(n) for n in
                      ("transformers", "triton", "safetensors", "huggingface-hub", "tokenizers")},
         "hf_source_sha256": sha256(inspect.getfile(modeling_qwen3_5)),
-        "source_sha256": {name: sha256(Path(__file__).parent / name)
-                          for name in ("block.py", "export_block.py")},
+        "source_sha256": {name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/diagnostics/block.py', 'compiler/qwen35/diagnostics/export_block.py', 'compiler/common/artifacts.py')},
         "parameter_dtypes": {n: str(p.dtype) for n, p in block.named_parameters()},
         "checkpoint": json.loads((args.model_dir / "manifest.json").read_text()),
         "inputs": [dict(shape=list(t.shape), stride=list(t.stride()), dtype=str(t.dtype)) for t in inputs],

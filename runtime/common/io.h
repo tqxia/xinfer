@@ -23,9 +23,9 @@ inline int64_t integer(const std::string& text) {
   return value;
 }
 
-inline Json read_json(const fs::path& path) {
+inline Json read_json(const fs::path& path, const std::string& prefix = "Cannot open metadata: ") {
   std::ifstream file(path);
-  require(file.is_open(), "Cannot open metadata: " + path.string());
+  require(file.is_open(), prefix + path.string());
   return Json::parse(file);
 }
 

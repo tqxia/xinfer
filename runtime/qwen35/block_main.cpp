@@ -9,7 +9,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -26,8 +28,32 @@ Json read_json(const fs::path& path) {
   return Json::parse(file);
 }
 
-at::Tensor read_hidden(const fs::path& path, int64_t tokens) {
-  auto cpu = at::empty({1, tokens, 2560}, at::TensorOptions().dtype(at::kBFloat16));
+// Package inputs are contiguous: hidden BF16, convolution BF16, recurrent FP32.
+std::vector<std::vector<int64_t>> input_shapes(const Json& meta) {
+  const auto& inputs = meta.at("inputs");
+  require(inputs.is_array() && inputs.size() == 3, "Expected three input descriptions");
+  std::vector<std::vector<int64_t>> shapes;
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    auto shape = inputs[i].at("shape").get<std::vector<int64_t>>();
+    const auto stride = inputs[i].at("stride").get<std::vector<int64_t>>();
+    require(shape.size() == (i == 2 ? 4 : 3) && shape[0] == 1, "Unexpected input rank/batch");
+    require(stride.size() == shape.size(), "Unexpected input stride rank");
+    require(inputs[i].at("dtype") == (i == 2 ? "torch.float32" : "torch.bfloat16"),
+            "Unexpected input dtype");
+    int64_t contiguous = 1;
+    for (size_t d = shape.size(); d-- > 0;) {
+      require(shape[d] > 0 && stride[d] == contiguous, "Expected positive contiguous input shape");
+      require(shape[d] <= std::numeric_limits<int64_t>::max() / contiguous, "Input shape overflow");
+      contiguous *= shape[d];
+    }
+    shapes.push_back(std::move(shape));
+  }
+  require(meta.at("tokens") == shapes[0][1], "Input tokens disagree with metadata");
+  return shapes;
+}
+
+at::Tensor read_hidden(const fs::path& path, const std::vector<int64_t>& shape) {
+  auto cpu = at::empty(shape, at::TensorOptions().dtype(at::kBFloat16));
   require(fs::file_size(path) == cpu.nbytes(), "Incorrect fixture size: " + path.string());
   std::ifstream file(path, std::ios::binary);
   file.read(static_cast<char*>(cpu.mutable_data_ptr()), cpu.nbytes());
@@ -41,6 +67,23 @@ void write_tensor(const fs::path& path, const at::Tensor& tensor) {
   file.write(static_cast<const char*>(cpu.const_data_ptr()), cpu.nbytes());
   file.close();
   require(bool(file), "Failed to write " + path.string());
+}
+
+// Never pad hidden tokens: padding can change the convolution and recurrent state.
+std::vector<at::Tensor> run_sequence(Loader& prefill, Loader& decode, const at::Tensor& hidden,
+                                    at::Tensor conv, at::Tensor state) {
+  std::vector<at::Tensor> outputs;
+  for (int64_t offset = 0; offset < hidden.size(1);) {
+    const int64_t length = hidden.size(1) - offset >= 64 ? 64 : 1;
+    auto piece = hidden.narrow(1, offset, length).contiguous();
+    auto result = (length == 64 ? prefill : decode).run({piece, conv, state});
+    require(result.size() == 3, "Expected output, next_conv, next_recurrent");
+    outputs.push_back(result[0]);
+    conv = result[1];
+    state = result[2];
+    offset += length;
+  }
+  return {outputs.size() == 1 ? outputs[0] : at::cat(outputs, 1), conv, state};
 }
 
 int main(int argc, char** argv) {
@@ -61,6 +104,11 @@ int main(int argc, char** argv) {
       require(meta.at("kind") == kind && meta.at("tokens") == (std::string(kind) == "prefill" ? 64 : 1),
               "Unexpected entry point");
     }
+    const auto prefill_shapes = input_shapes(prefill_meta);
+    const auto decode_shapes = input_shapes(decode_meta);
+    require(prefill_shapes[0][2] == decode_shapes[0][2], "Package hidden dimensions differ");
+    require(prefill_shapes[1] == decode_shapes[1] && prefill_shapes[2] == decode_shapes[2],
+            "Package state shapes differ");
     c10::InferenceMode inference;
     at::set_num_threads(1);
     at::globalContext().setAllowTF32CuBLAS(false);
@@ -71,20 +119,27 @@ int main(int argc, char** argv) {
     const auto manifest = read_json(fixtures / "cases.json");
     const auto bf16 = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
     Json report = {{"torch", TORCH_VERSION}, {"cxx11_abi", bool(_GLIBCXX_USE_CXX11_ABI)},
+                   {"checkpoint", prefill_meta.at("checkpoint")},
+                   {"prefill_shapes", prefill_shapes}, {"decode_shapes", decode_shapes},
                    {"cases", Json::array()}};
     for (const auto& item : manifest.at("cases")) {
       const auto name = item.at("name").get<std::string>();
       require(!name.empty() && fs::path(name).filename() == name, "Invalid case name");
-      auto conv = at::zeros({1, 8192, 4}, bf16);
-      auto state = at::zeros({1, 32, 128, 128}, bf16.dtype(at::kFloat));
+      auto conv = at::zeros(prefill_shapes[1], bf16);
+      auto state = at::zeros(prefill_shapes[2], bf16.dtype(at::kFloat));
       size_t index = 0;
       for (const auto& step : item.at("steps")) {
         const auto kind = step.at("kind").get<std::string>();
         require(kind == "prefill" || kind == "decode", "Unknown entry point");
-        auto x = read_hidden(fixtures / step.at("file").get<std::string>(), kind == "prefill" ? 64 : 1);
+        const auto tokens = step.value("tokens", int64_t(kind == "prefill" ? 64 : 1));
+        require(tokens >= 1 && tokens <= 512, "Expected 1 <= tokens <= 512");
+        require(kind != "decode" || tokens == 1, "Decode requires one token");
+        auto shape = prefill_shapes[0];
+        shape[1] = tokens;
+        auto x = read_hidden(fixtures / step.at("file").get<std::string>(), shape);
         const std::vector<at::Tensor> inputs{x, conv, state};
         const std::vector<at::Tensor> before{x.clone(), conv.clone(), state.clone()};
-        auto result = (kind == "prefill" ? prefill : decode).run(inputs);
+        auto result = run_sequence(prefill, decode, x, conv, state);
         require(result.size() == 3, "Expected output, next_conv, next_recurrent");
         for (size_t i = 0; i < inputs.size(); ++i) {
           require(at::equal(inputs[i], before[i]), "Package mutated an input");
@@ -101,7 +156,8 @@ int main(int argc, char** argv) {
     }
     std::ifstream maps("/proc/self/maps");
     for (std::string line; std::getline(maps, line);)
-      require(line.find("libpython") == std::string::npos, "Python library loaded");
+      require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos,
+              "Python library loaded");
     report["no_python_library"] = true;
     std::ofstream file(output / "native.json");
     file << report.dump(2) << '\n';

@@ -5,10 +5,31 @@ Date: 2026-10-23.
 Remote host: root@kikoxia-any4.devcloud.woa.com:36000.
 Project: /data/workspace/develop/qwen3-aoti-poc.
 
-The separate [Qwen3.5-4B text-only extension](compiler/qwen35/README.md) has completed
-stage 1: a real DeltaNet block exports and compiles for T=64/T=1, with bitwise
-C++/Python AOTI parity and passing eager/FP32 diagnostics. Its remaining stages
-are recorded there; the plan below describes the original Qwen3-0.6B PoC.
+The separate [Qwen3.5 text-only extension](compiler/qwen35/README.md) now targets
+0.8B for the first complete generation pipeline, with 4B retained for later
+scaling checks. Stages 1-2 pass on 0.8B: a real DeltaNet block compiles for T=64/T=1
+and handles inputs of 1-512 tokens through chunk/remainder dispatch, with bitwise
+C++/Python AOTI parity and passing eager/FP32 diagnostics. Boundary, partition,
+reset and 512-step decode tests pass. Bounded dynamic prefill export fails shape
+constraints in the pinned toolchain. Shapes come from config/package metadata;
+the existing 4B packages also pass regression through the same probe. Step 3 now
+exports and compiles the full text model: the eager adapter matches HF bitwise,
+and 50/50 teacher-forced AOTI next-token predictions agree. Numerical acceptance
+is open for 850 conv and four recurrent-state tensors; the unchanged checks fail.
+Focused probes identify a lost BF16 rounding boundary before DeltaNet gated
+normalization, and the Qwen3 numerical controls do not resolve it. Issue
+Q35-NUM-001 now has a retained reproducer. Step 4's Python-free C++ generation
+runtime passes native/Python AOTI parity on 3,136 teacher-forced tensors, 28
+greedy logit rows and 288 final state tensors, plus reset/context/stopping and
+18 rejection checks. Step 5 now passes native/Python AOTI parity on 9,947
+teacher-forced tensors across 203 steps. All three greedy fixtures match HF
+with the same partitions; full-prompt HF differs on one tied punctuation
+decision (Q35-NUM-002). Conv/recurrent-state acceptance still fails under the
+unchanged limits. The three-profile benchmark is functionally checked, including
+fixed-token prediction differences; final timings will run in the user's
+separate environment. Native parity does not close numerical acceptance.
+Results and evidence are recorded in the extension guide; the plan below
+describes the original Qwen3-0.6B PoC. All 0.8B experiment steps are kept in one implementation commit.
 
 ## Goal and scope
 
