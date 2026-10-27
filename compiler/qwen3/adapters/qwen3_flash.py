@@ -8,8 +8,8 @@ Weights are loaded with HF first; wrappers reuse the original modules in place.
 import torch
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, apply_rotary_pos_emb
 
-from custom_ops.attention import load_attention_ops
-from model import TensorCache
+from compiler.qwen3.custom_ops.attention import load_attention_ops
+from compiler.qwen3.model import TensorCache
 
 
 class PrefixCache(TensorCache):

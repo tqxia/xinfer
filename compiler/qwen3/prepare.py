@@ -1,9 +1,11 @@
 """Offline checkpoint verification, chat tokenization, and output decoding."""
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
+
+
+from compiler.common.artifacts import sha256
 
 
 DEFAULT_MODEL = Path("/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b")
@@ -13,8 +15,7 @@ def verify_model(model_dir):
     manifest = json.loads((model_dir / "model_manifest.json").read_text())
     for name, expected in manifest["files"].items():
         path = model_dir / name
-        with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = sha256(path)
         if path.stat().st_size != expected["bytes"] or digest != expected["sha256"]:
             raise ValueError(f"Checkpoint checksum mismatch: {path}")
         print(f"verified {name}", flush=True)

@@ -107,21 +107,21 @@ README.md                     Setup/export/build/run/validate commands and resul
 PLAN.md                       Design and acceptance criteria
 CMakeLists.txt                Root entry point; build executables in build/
 compiler/requirements.*         Pinned Python dependencies
-compiler/prompts.json           Reference prompt fixtures
-compiler/model.py               Thin Qwen wrapper and explicit cache adapter
-compiler/export.py              Load weights, export/compile graphs, write metadata
-compiler/prepare.py             Offline tokenization and output-ID decoding
-compiler/validate.py            Eager reference generation and regression cases
-compiler/validate_aoti.py        Cache, compiled-package and FP32-control checks
-compiler/validate_cpp.py         Three-path comparisons and FP32 investigation
-compiler/benchmark.py           Eager worker, process orchestration and summary
-compiler/tests/smoke_cpp.py      Native parity, CLI and Python-free loading checks
-compiler/tests/rope_precision.py Minimal BF16 RoPE contraction reproducer
+compiler/qwen3/prompts.json           Reference prompt fixtures
+compiler/qwen3/model.py               Thin Qwen wrapper and explicit cache adapter
+compiler/qwen3/export.py              Load weights, export/compile graphs, write metadata
+compiler/qwen3/prepare.py             Offline tokenization and output-ID decoding
+compiler/qwen3/tests/validate.py            Eager reference generation and regression cases
+compiler/qwen3/tests/validate_aoti.py        Cache, compiled-package and FP32-control checks
+compiler/qwen3/tests/validate_cpp.py         Three-path comparisons and FP32 investigation
+compiler/qwen3/benchmark.py           Eager worker, process orchestration and summary
+compiler/qwen3/tests/smoke_cpp.py      Native parity, CLI and Python-free loading checks
+compiler/qwen3/tests/rope_precision.py Minimal BF16 RoPE contraction reproducer
 runtime/CMakeLists.txt            Native targets and matching LibTorch dependencies
-runtime/runtime.h                 Shared native loader, cache, step and generation
-runtime/main.cpp                  Native CLI, input/output and diagnostic timing
-runtime/benchmark.cpp             Fixed-token benchmark using the shared Runtime
-runtime/tests/validate_native.cpp Repeated-request and cache checks using that Runtime
+runtime/qwen3/runtime.h                 Shared native loader, cache, step and generation
+runtime/qwen3/main.cpp                  Native CLI, input/output and diagnostic timing
+runtime/qwen3/benchmark.cpp             Fixed-token benchmark using the shared Runtime
+runtime/qwen3/tests/validate_native.cpp Repeated-request and cache checks using that Runtime
 ```
 
 Run scripts and CMake from the repository root. Python code uses sibling imports;

@@ -105,8 +105,7 @@ assert (out/'limit.ids').read_text().split() == ['785']
 # against Python AOTI under exactly the same fed tokens. Python is only the oracle.
 import torch
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from custom_ops.attention import load_package_attention_ops
+from compiler.qwen3.custom_ops.attention import load_package_attention_ops
 
 spec = json.loads((packages/'decode.json').read_text())
 load_package_attention_ops(spec, native=binary)

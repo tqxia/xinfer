@@ -29,7 +29,7 @@ def load_attention_ops(library=None):
 
     global _loaded
     library = Path(library or os.environ.get('XINFER_ATTENTION_OPS_LIBRARY') or
-                   Path(__file__).resolve().parents[2] / 'build/libxinfer_attention_ops.so').resolve()
+                   Path(__file__).resolve().parents[3] / 'build/libxinfer_attention_ops.so').resolve()
     if _loaded is not None:
         if _loaded != library:
             raise ValueError('Cannot load two different attention libraries in one Python process')

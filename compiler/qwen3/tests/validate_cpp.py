@@ -11,9 +11,9 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
-from model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
-from prepare import DEFAULT_MODEL
-from validate_aoti import MAX_RELATIVE_ERROR, compare, error_metrics, ids_from
+from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
+from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.qwen3.tests.validate_aoti import MAX_RELATIVE_ERROR, compare, error_metrics, ids_from
 
 
 def trace(step, chunks):
@@ -63,7 +63,7 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     spec = json.loads((args.packages/'decode.json').read_text())
-    from custom_ops.attention import load_package_attention_ops
+    from compiler.qwen3.custom_ops.attention import load_package_attention_ops
     load_package_attention_ops(spec, native=args.native)
     prefix_attention = spec.get('cache_input') == 'full_capacity_with_extent'
     model = load_model(args.model_dir)

@@ -5,7 +5,7 @@ environment and previously exported packages. Use fresh output directories.
 
 ## Compare two compiled profiles
 
-`compiler/benchmark.py compare` runs two package directories through the same
+`compiler/qwen3/benchmark.py compare` runs two package directories through the same
 native benchmark executable. Each directory contains prefill and decode packages.
 Both profiles receive identical prompts and forced decode tokens. Four default
 process rounds alternate baseline/candidate order, with two warmups and five
@@ -13,7 +13,7 @@ measured requests per prompt length in each process. Loading and first use are
 reported separately from steady-state latency.
 
 ```bash
-.venv/bin/python compiler/benchmark.py compare \
+.venv/bin/python -m compiler.qwen3.benchmark compare \
   --baseline-packages artifacts/aoti-baseline \
   --candidate-packages artifacts/aoti-candidate \
   --baseline-label baseline --candidate-label candidate \
@@ -37,7 +37,7 @@ numerical acceptance. GPU-idle checks run before and after each worker. Use
 ## Collect numerical failures
 
 ```bash
-.venv/bin/python compiler/validate_cpp.py \
+.venv/bin/python -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/aoti-candidate \
   --collect-logit-errors --collect-top1-errors \
   --output artifacts/validation-candidate-new

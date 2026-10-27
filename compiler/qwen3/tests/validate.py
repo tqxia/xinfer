@@ -10,11 +10,13 @@ from pathlib import Path
 import torch
 from transformers import AutoModelForCausalLM, GenerationConfig
 
-from prepare import DEFAULT_MODEL, encode_prompt, load_tokenizer, verify_model, write_ids
+from compiler.common.artifacts import write_json as save_json
+
+from compiler.qwen3.prepare import DEFAULT_MODEL, encode_prompt, load_tokenizer, verify_model, write_ids
 
 
 def write_json(path, data):
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    save_json(path, data, ensure_ascii=False)
 
 
 @torch.inference_mode()
@@ -73,7 +75,7 @@ def environment(model, model_manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
-    parser.add_argument("--prompts", type=Path, default=Path(__file__).with_name("prompts.json"))
+    parser.add_argument("--prompts", type=Path, default=Path(__file__).resolve().parents[1] / "prompts.json")
     parser.add_argument("--output", type=Path, default=Path("artifacts/reference"))
     parser.add_argument("--max-new-tokens", type=int, default=64)
     args = parser.parse_args()

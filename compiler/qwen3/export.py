@@ -8,8 +8,8 @@ from pathlib import Path
 
 import torch
 
-from model import CACHE_LENGTH, MAX_PROMPT, QwenStep, allocate_cache, load_model, cache_extent
-from prepare import DEFAULT_MODEL
+from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, QwenStep, allocate_cache, load_model, cache_extent
+from compiler.qwen3.prepare import DEFAULT_MODEL
 
 
 def main():
@@ -44,7 +44,7 @@ def main():
         export_options["backed_size_oblivious"] = symbolic_config.backed_size_oblivious
     model = load_model(args.model_dir)
     if prefix_attention:
-        from adapters.qwen3_flash import FlashStep
+        from compiler.qwen3.adapters.qwen3_flash import FlashStep
         step = FlashStep(model)
     else:
         step = QwenStep(model)
@@ -122,7 +122,7 @@ def main():
             "export_and_compile_seconds": time.perf_counter() - start,
         }
         if prefix_attention:
-            from custom_ops.attention import OPERATOR_CONTRACT
+            from compiler.qwen3.custom_ops.attention import OPERATOR_CONTRACT
             metadata.update(custom_attention=OPERATOR_CONTRACT, flash_implementation="adapter",
                             model_adapter=adapter_report)
         (args.output / f"{args.kind}.json").write_text(json.dumps(metadata, indent=2) + "\n")

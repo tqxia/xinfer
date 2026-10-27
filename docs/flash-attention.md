@@ -13,7 +13,7 @@ remain the accepted correctness baseline.
    Each attention adapter calls `xinfer::flash_attention` directly. The exported
    graph contains 28 custom attention calls and all 56 cache mutations.
 3. Validate the exported graph, then compile it with AOTInductor.
-4. `runtime/custom_ops/attention.cpp` implements the read-only operator with
+4. `runtime/qwen3/custom_ops/attention.cpp` implements the read-only operator with
    PyTorch's native FlashAttention and lower-right causality. The same kernel
    handles initial prefill, appended chunks and single-token decode.
 
@@ -36,7 +36,7 @@ packages must be re-exported.
 Python, before export. The previous FX pass and implementation selector have
 been removed. This does not use HF's attention-backend registry or forward hooks.
 
-`compiler/adapters/qwen3_flash.py` contains three small pieces:
+`compiler/qwen3/adapters/qwen3_flash.py` contains three small pieces:
 
 - `PrefixCache` adds the extent tensor to the existing caller-owned cache adapter.
 - `FlashAttention` wraps a loaded HF attention module, reusing its projections,
@@ -61,12 +61,12 @@ records `flash_implementation: adapter` and `model_adapter`; no SDPA rewrite is
 performed.
 
 ```bash
-.venv/bin/python compiler/tests/attention_adapter.py --output artifacts/adapter-unit-new
-.venv/bin/python compiler/export.py decode --attention-backend flash \
+.venv/bin/python -m compiler.qwen3.tests.attention_adapter --output artifacts/adapter-unit-new
+.venv/bin/python -m compiler.qwen3.export decode --attention-backend flash \
   --output artifacts/aoti-flash-adapter-new
-.venv/bin/python compiler/export.py prefill --attention-backend flash \
+.venv/bin/python -m compiler.qwen3.export prefill --attention-backend flash \
   --output artifacts/aoti-flash-adapter-new
-AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python compiler/validate_cpp.py \
+AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/aoti-flash-adapter-new --native build/qwen_validate \
   --collect-logit-errors --collect-top1-errors --output artifacts/adapter-validation-new
 ```
@@ -151,10 +151,10 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export TORCHINDUCTOR_COMPILE_THREADS=2
 
-.venv/bin/python compiler/tests/custom_attention.py --output artifacts/attention-unit-new
-.venv/bin/python compiler/export.py decode --attention-backend flash --output artifacts/aoti-flash-new
-.venv/bin/python compiler/export.py prefill --attention-backend flash --output artifacts/aoti-flash-new
-AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python compiler/validate_cpp.py \
+.venv/bin/python -m compiler.qwen3.tests.custom_attention --output artifacts/attention-unit-new
+.venv/bin/python -m compiler.qwen3.export decode --attention-backend flash --output artifacts/aoti-flash-new
+.venv/bin/python -m compiler.qwen3.export prefill --attention-backend flash --output artifacts/aoti-flash-new
+AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/aoti-flash-new --native build/qwen_validate \
   --collect-logit-errors --collect-top1-errors --output artifacts/flash-validation-new
 ```
@@ -190,7 +190,7 @@ remains in `dev-gb10` under `benchmarks/gb10-flash-2026-10-24/`,
 `benchmarks/gb10-custom-attention-unpadded-2026-10-25/` and
 `benchmarks/gb10-flash-canonical-2026-10-25/`.
 
-Use `compiler/benchmark.py compare` after correctness validation to measure a new
+Use `compiler/qwen3/benchmark.py compare` after correctness validation to measure a new
 environment. CUDA Graphs, FlashInfer and projection packing are not part of this
 profile. See [development tools](development-tools.md) for comparison/profiling.
 

@@ -5,15 +5,14 @@ import json
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 
-from adapters.qwen3_flash import FlashAttention, FlashStep, PrefixCache
-from custom_ops.attention import load_attention_ops
-from model import CACHE_LENGTH, TensorCache, cache_extent, load_model
-from prepare import DEFAULT_MODEL
-from validate_aoti import compare
+from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, PrefixCache
+from compiler.qwen3.custom_ops.attention import load_attention_ops
+from compiler.qwen3.model import CACHE_LENGTH, TensorCache, cache_extent, load_model
+from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.qwen3.tests.validate_aoti import compare
 
 
 class AttentionProbe(torch.nn.Module):

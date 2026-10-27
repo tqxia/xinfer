@@ -7,14 +7,13 @@ from pathlib import Path
 import sys
 
 os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from custom_ops.attention import load_attention_ops
-from model import cache_extent
-from validate_aoti import compare
+from compiler.qwen3.custom_ops.attention import load_attention_ops
+from compiler.qwen3.model import cache_extent
+from compiler.qwen3.tests.validate_aoti import compare
 
 
 class AttentionStep(torch.nn.Module):

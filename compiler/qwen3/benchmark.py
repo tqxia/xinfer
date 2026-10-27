@@ -11,27 +11,15 @@ import subprocess
 import sys
 import time
 
-from prepare import DEFAULT_MODEL
+from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.common.artifacts import read_json, write_json, sha256 as digest
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def read_json(path):
-    return json.loads(Path(path).read_text())
-
-
-def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2)+'\n')
-
-
-def digest(path):
-    with Path(path).open('rb') as file:
-        return hashlib.file_digest(file, 'sha256').hexdigest()
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def eager_worker(args):
     import torch
-    from model import QwenStep, allocate_cache, load_model
+    from compiler.qwen3.model import QwenStep, allocate_cache, load_model
 
     workload = read_json(args.workload)
     if args.output.exists():
@@ -167,7 +155,7 @@ def summarize(records, workload, reference='eager'):
 
 
 def run(args):
-    from custom_ops.attention import native_attention_library
+    from compiler.qwen3.custom_ops.attention import native_attention_library
 
     if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
         raise ValueError('Counts must be positive')
@@ -199,11 +187,12 @@ def run(args):
     write_json(out/'workload.json', workload)
     source = out/'source'
     source.mkdir()
-    for name in ('compiler/benchmark.py', 'runtime/benchmark.cpp', 'runtime/runtime.h', 'compiler/model.py',
-                 'compiler/export.py', 'compiler/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
-                 'runtime/custom_ops/attention.cpp', 'runtime/custom_ops/attention.h',
-                 'compiler/custom_ops/attention.py', 'compiler/custom_ops/__init__.py',
-                 'compiler/adapters/qwen3_flash.py', 'compiler/adapters/__init__.py'):
+    for name in ('compiler/qwen3/benchmark.py', 'runtime/qwen3/benchmark.cpp', 'runtime/qwen3/runtime.h', 'compiler/qwen3/model.py',
+                 'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
+                 'runtime/qwen3/custom_ops/attention.cpp', 'runtime/qwen3/custom_ops/attention.h',
+                 'compiler/qwen3/custom_ops/attention.py', 'compiler/qwen3/custom_ops/__init__.py',
+                 'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
+                 'runtime/common/io.h', 'runtime/qwen3/CMakeLists.txt'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),
@@ -259,7 +248,7 @@ def run(args):
             write_json(out/(stem+'.idle.json'), idle)
             result = out/(stem+'.json')
             if label == 'eager':
-                command = [sys.executable, str(Path(__file__).resolve()), 'eager', '--model-dir', str(args.model_dir),
+                command = [sys.executable, '-m', 'compiler.qwen3.benchmark', 'eager', '--model-dir', str(args.model_dir),
                            '--workload', str(out/'workload.json'), '--output', str(result)]
                 child_env = env
             else:
