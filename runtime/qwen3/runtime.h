@@ -1,5 +1,6 @@
 #pragma once
 #include "../common/io.h"
+#include "../common/generation.h"
 
 #ifdef XINFER_ENABLE_FLASH_ATTENTION
 #include "custom_ops/attention.h"
@@ -180,18 +181,7 @@ class Runtime {
             "Prompt token count is outside the package range");
     require(limit > 0 && limit <= spec_.cache_length - static_cast<int64_t>(prompt.size()),
             "Generation budget exceeds KV cache capacity");
-    reset();
-    auto logits = step(prompt);
-    std::vector<int64_t> generated;
-    for (int64_t index = 0; index < limit; ++index) {
-      // Row i predicts generated[i]; same format in the CLI and validation driver.
-      if (trace) write_logits(*trace, logits);
-      const int64_t token = logits.argmax(-1).item<int64_t>();
-      generated.push_back(token);
-      if (std::find(spec_.eos.begin(), spec_.eos.end(), token) != spec_.eos.end() || index + 1 == limit) break;
-      logits = step({token});
-    }
-    return generated;
+    return xinfer::generate(*this, prompt, limit, spec_.eos, trace);
   }
 
  private:

@@ -200,7 +200,7 @@ def main():
     names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
-    names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h"]
+    names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h", "runtime/common/generation.h"]
     for name in names:
         target = args.output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)

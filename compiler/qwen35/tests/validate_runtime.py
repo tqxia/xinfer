@@ -185,7 +185,7 @@ def main():
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
                Path("runtime/qwen35/runtime.h"), Path("runtime/qwen35/main.cpp"),
                Path("runtime/qwen35/tests/text_validate.cpp")]
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h"]
     report["source_sha256"] = {str(p): sha256(root / p) for p in sources}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("native_runtime_passed", "teacher_tensors", "greedy_logit_rows",

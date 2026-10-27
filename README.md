@@ -8,9 +8,15 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns package contracts and state management. Small reusable
-file and validation utilities live in `compiler/common/` and `runtime/common/`.
-Tests and focused diagnostics live beside their model. Detailed results live in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
+`runtime/<model>/` owns package contracts and state management. Shared file,
+validation and benchmark helpers live in `compiler/common/`.
+`runtime/common/` provides file helpers, greedy generation and fixed-token
+benchmark loops. Each runtime exposes `reset()`, `step(tokens)` and `position()`;
+it retains its own state ownership and dispatch. Generation validates through
+the model runtime, then stops at EOS or the token budget. Benchmark requests
+consume all supplied tokens, including EOS, with argmax/host reads timed.
+Tests and focused diagnostics live beside their model. Detailed results live
+in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 environments, builds and scratch scripts belong in `work/`. Both are ignored.
 
 Run Python tools from the repository root as modules, for example:
@@ -23,3 +29,11 @@ Run Python tools from the repository root as modules, for example:
 
 Use each model's pinned Python environment. Native executable names and package
 formats remain unchanged; build from the repository root with CMake.
+
+Benchmark measurement boundaries are unchanged: reset, prefill, decode and
+whole request. Both model workers now also record reset-plus-prefill and consumed
+positions; report headers/profile comparisons remain model-specific. Warmup
+predictions are checked as well as measured repeats. Source snapshots include
+the shared implementation. No CUDA Graphs, compiler or arithmetic changes are
+part of this refactor. Profiling capture/classification refactoring remains
+deferred in PLAN.md.

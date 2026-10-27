@@ -787,3 +787,7 @@ GQA expansion and other bottlenecks before choosing changes. Each experiment
 must preserve the correctness checks and report latency, memory and compilation
 or capture costs against the reproducible baseline. Keep optimizations isolated
 and optional so the minimal runtime remains readable.
+
+Shared execution helpers are in `runtime/common/generation.h`,
+`runtime/common/benchmark.h` and `compiler/common/benchmark.py`. Model-specific
+state, package validation and benchmark profiles stay in their model directory.

@@ -1,33 +1,24 @@
 """Fixed-token HF/native benchmark. Busy-GPU runs validate the harness only."""
 
 import argparse
-import json
 import os
 from pathlib import Path
 import platform
 import shutil
-import statistics
 import subprocess
 import sys
 import time
 
+from compiler.common.benchmark import (
+    memory_stats as memory, measure_request, measure_cases, distribution,
+    wait_idle as check_idle, run_worker,
+)
 from compiler.common.artifacts import sha256, read_json, write_json
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 
 
 def wait_idle(path, device="0", allow_busy=False):
-    samples, quiet = [], 0
-    for _ in range(30):
-        output = subprocess.check_output(["nvidia-smi", "-i", device, "--query-gpu=utilization.gpu,utilization.memory",
-                                          "--format=csv,noheader,nounits"], text=True)
-        gpu, memory = (int(v.strip()) for v in output.strip().split(","))
-        samples.append(dict(time=time.time(), gpu_percent=gpu, memory_percent=memory))
-        quiet = quiet + 1 if max(gpu, memory) <= 10 else 0
-        write_json(path, dict(samples=samples, allow_busy=allow_busy, idle=quiet >= 5))
-        if allow_busy or quiet >= 5:
-            return
-        time.sleep(1)
-    raise RuntimeError(f"GPU is not idle; samples retained in {path}")
+    return check_idle(device=device, allow_busy=allow_busy, output=path)
 
 
 def worker(args):
@@ -39,12 +30,6 @@ def worker(args):
         raise ValueError("Output already exists")
     configure_text()
     workload = read_json(args.workload)
-
-    def memory():
-        free, total = torch.cuda.mem_get_info()
-        return dict(allocated_bytes=torch.cuda.memory_allocated(), reserved_bytes=torch.cuda.memory_reserved(),
-                    peak_allocated_bytes=torch.cuda.max_memory_allocated(), peak_reserved_bytes=torch.cuda.max_memory_reserved(),
-                    device_used_bytes=total - free, device_total_bytes=total)
 
     with torch.inference_mode():
         start = time.perf_counter()
@@ -62,53 +47,16 @@ def worker(args):
                       cuda_init_ms=init_ms, load_ms=(time.perf_counter() - start) * 1000,
                       initial_memory=initial_memory, load_memory=memory(), cases=[])
 
+        def predict(tokens, position):
+            return runtime.step(tokens).argmax(-1).item()
+
         def request(case):
-            predictions = []
-            torch.cuda.synchronize()
-            begin = time.perf_counter()
-            runtime.reset()
-            torch.cuda.synchronize()
-            prefill = time.perf_counter()
-            predictions.append(runtime.step(case["prompt"]).argmax(-1).item())
-            torch.cuda.synchronize()
-            decode = time.perf_counter()
-            for token in case["decode_tokens"]:
-                predictions.append(runtime.step([token]).argmax(-1).item())
-            torch.cuda.synchronize()
-            end = time.perf_counter()
-            assert runtime.position == len(case["prompt"]) + len(case["decode_tokens"])
-            return dict(reset_ms=(prefill - begin) * 1000, prefill_ms=(decode - prefill) * 1000,
-                        first_prediction_ms=(decode - begin) * 1000, decode_ms=(end - decode) * 1000,
-                        decode_ms_per_token=(end - decode) * 1000 / len(case["decode_tokens"]),
-                        request_ms=(end - begin) * 1000, prediction_ids=predictions, consumed_positions=runtime.position)
+            result = measure_request(runtime.reset, predict, case)
+            assert runtime.position == result["consumed_positions"]
+            return result
 
-        for case in workload["cases"]:
-            first = request(case)
-            samples, peak_device = [], memory()["device_used_bytes"]
-            for i in range(workload["warmup"] + workload["repeats"]):
-                if i == workload["warmup"]:
-                    torch.cuda.reset_peak_memory_stats()
-                sample = request(case)
-                assert sample["prediction_ids"] == first["prediction_ids"], "Repeated predictions differ"
-                peak_device = max(peak_device, memory()["device_used_bytes"])
-                if i >= workload["warmup"]:
-                    samples.append(sample)
-            report["cases"].append(dict(name=case["name"], first_request=first, samples=samples,
-                                        memory=memory() | dict(sampled_peak_device_used_bytes=peak_device)))
-            print(case["name"], "completed", flush=True)
+        report["cases"] = measure_cases(request, workload)
         write_json(args.output, report)
-
-
-def distribution(values):
-    values = sorted(values)
-
-    def percentile(p):
-        index = (len(values) - 1) * p
-        low = int(index)
-        return values[low] + (values[min(low + 1, len(values) - 1)] - values[low]) * (index - low)
-
-    return dict(n=len(values), median=statistics.median(values), mean=statistics.mean(values),
-                min=min(values), max=max(values), p10=percentile(.1), p90=percentile(.9))
 
 
 def summarize(records, workload):
@@ -164,7 +112,8 @@ def benchmark(args):
     root = Path(__file__).resolve().parents[2]
     sources = ["compiler/qwen35/" + n for n in ("benchmark.py", "reference.py", "model.py", "config.py", "prepare.py", "export.py", "requirements.txt")]
     sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "runtime/common/io.h",
+                "runtime/common/generation.h", "runtime/common/benchmark.h"]
     for name in sources:
         target = out / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -213,17 +162,8 @@ def benchmark(args):
                                "--model-dir", str(args.model_dir.resolve()), "--workload", str(out / "workload.json"), "--output", str(result)]
                     child_env = env
                 print(stem, "starting", flush=True)
-                with (out / f"{stem}.gpu.csv").open("w") as telemetry, (out / f"{stem}.log").open("w") as log:
-                    monitor = subprocess.Popen(["nvidia-smi", "-i", gpu,
-                        "--query-gpu=timestamp,utilization.gpu,utilization.memory,memory.used,power.draw,clocks.sm,clocks.mem",
-                        "--format=csv", "-l", "1"], stdout=telemetry, stderr=log)
-                    start = time.perf_counter()
-                    try:
-                        subprocess.run(command, env=child_env, stdout=log, stderr=subprocess.STDOUT, check=True, timeout=3600)
-                    finally:
-                        monitor.terminate()
-                        monitor.wait(timeout=10)
-                records.append(dict(round=round_index + 1, profile=label, result=str(result), process_ms=(time.perf_counter() - start) * 1000))
+                elapsed = run_worker(command, child_env, gpu, out / f"{stem}.gpu.csv", out / f"{stem}.log", 3600)
+                records.append(dict(round=round_index + 1, profile=label, result=str(result), process_ms=elapsed))
                 write_json(out / "runs.json", records)
                 wait_idle(out / f"{stem}.after-idle.json", gpu, args.allow_busy)
                 print(stem, "finished", flush=True)

@@ -107,6 +107,10 @@ the existing SM89 artifacts are not a portable deployment bundle.
 preserve all five steps and the earlier 4B result. Generated evidence remains in
 `artifacts/qwen35/`; scratch scripts, builds and caches remain ignored in `work/`.
 
+Shared execution helpers are in `runtime/common/generation.h`,
+`runtime/common/benchmark.h` and `compiler/common/benchmark.py`. Model-specific
+state, package validation and benchmark profiles stay in their model directory.
+
 The organization regression in `artifacts/qwen35/0.8b/reorg-step2-*` reproduces
 the retained block, native-runtime and end-to-end results, including every
 numerical comparison and known failure.

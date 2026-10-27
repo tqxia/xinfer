@@ -1,53 +1,12 @@
-// Fixed-token benchmark using the same checked Runtime as the production CLI.
+// Model setup stays here; timing and request loops are shared.
 #include "runtime.h"
+#include "../common/benchmark.h"
 #include <ATen/Parallel.h>
-#include <c10/cuda/CUDACachingAllocator.h>
-#include <chrono>
 
 using namespace qwen;
-using Clock = std::chrono::steady_clock;
-
-double milliseconds(Clock::time_point start, Clock::time_point end) {
-  return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-Json memory_stats() {
-  size_t free = 0, total = 0;
-  C10_CUDA_CHECK(cudaMemGetInfo(&free, &total));
-  const auto stats = c10::cuda::CUDACachingAllocator::getDeviceStats(0);
-  const auto all = static_cast<size_t>(c10::CachingAllocator::StatType::AGGREGATE);
-  return {{"allocated_bytes", stats.allocated_bytes[all].current},
-          {"reserved_bytes", stats.reserved_bytes[all].current},
-          {"peak_allocated_bytes", stats.allocated_bytes[all].peak},
-          {"peak_reserved_bytes", stats.reserved_bytes[all].peak},
-          {"device_used_bytes", total - free}, {"device_total_bytes", total}};
-}
-
-Json request(Runtime& runtime, const std::vector<int64_t>& prompt,
-             const std::vector<int64_t>& tokens) {
-  std::vector<int64_t> predictions;
-  predictions.reserve(tokens.size() + 1);
-  torch::cuda::synchronize();
-  const auto begin = Clock::now();
-  runtime.reset();
-  torch::cuda::synchronize();
-  const auto prefill_start = Clock::now();
-  predictions.push_back(runtime.step(prompt).argmax(-1).item<int64_t>());
-  torch::cuda::synchronize();
-  const auto decode_start = Clock::now();
-  // Teacher-forced tokens keep all profiles on identical inputs. EOS is data.
-  for (const auto token : tokens)
-    predictions.push_back(runtime.step({token}).argmax(-1).item<int64_t>());
-  torch::cuda::synchronize();
-  const auto end = Clock::now();
-  require(runtime.position() == static_cast<int64_t>(prompt.size()+tokens.size()),
-          "Benchmark did not consume the expected context");
-  const double decode_ms = milliseconds(decode_start, end);
-  return {{"reset_ms", milliseconds(begin, prefill_start)},
-          {"prefill_ms", milliseconds(prefill_start, decode_start)},
-          {"decode_ms", decode_ms}, {"decode_ms_per_token", decode_ms / tokens.size()},
-          {"request_ms", milliseconds(begin, end)}, {"prediction_ids", predictions}};
-}
+using xinfer::Clock;
+using xinfer::milliseconds;
+using xinfer::memory_stats;
 
 int main(int argc, char** argv) {
   try {
@@ -86,30 +45,7 @@ int main(int argc, char** argv) {
                    {"load_ms", milliseconds(load_start, load_end)},
                    {"initial_memory", initial_memory},
                    {"load_memory", memory_stats()}, {"cases", Json::array()}};
-    for (const auto& item : workload.at("cases")) {
-      const auto prompt = item.at("prompt").get<std::vector<int64_t>>();
-      const auto tokens = item.at("decode_tokens").get<std::vector<int64_t>>();
-      Json result = {{"name", item.at("name")}, {"prompt_tokens", prompt.size()},
-                     {"decode_steps", tokens.size()}, {"first_request", request(runtime, prompt, tokens)},
-                     {"samples", Json::array()}};
-      auto peak_device = memory_stats().at("device_used_bytes").get<size_t>();
-      const auto sample_memory = [&] {
-        peak_device = std::max(peak_device, memory_stats().at("device_used_bytes").get<size_t>());
-      };
-      for (int i = 0; i < warmup; ++i) { request(runtime, prompt, tokens); sample_memory(); }
-      c10::cuda::CUDACachingAllocator::resetPeakStats(0);
-      for (int i = 0; i < repeats; ++i) {
-        auto sample = request(runtime, prompt, tokens);
-        require(sample.at("prediction_ids") == result.at("first_request").at("prediction_ids"),
-                "Repeated request predictions differ");
-        result["samples"].push_back(std::move(sample));
-        sample_memory();
-      }
-      result["memory"] = memory_stats();
-      result["memory"]["sampled_peak_device_used_bytes"] = peak_device;
-      report["cases"].push_back(std::move(result));
-      std::cerr << item.at("name") << ": " << repeats << " measured requests\n";
-    }
+    report["cases"] = xinfer::measure_cases(runtime, workload);
     auto output = output_file(argv[3]);
     output << report.dump(2) << '\n';
     output.flush();

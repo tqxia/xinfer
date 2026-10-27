@@ -1,5 +1,6 @@
 #pragma once
 #include "../common/io.h"
+#include "../common/generation.h"
 
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
@@ -184,17 +185,7 @@ class Runtime {
 
   std::vector<int64_t> generate(const std::vector<int64_t>& prompt, int64_t limit, std::ostream* trace = nullptr) {
     spec_.check_request(prompt, limit);
-    reset();
-    auto logits = step(prompt);
-    std::vector<int64_t> generated;
-    for (int64_t i = 0; i < limit; ++i) {
-      if (trace) write_tensor(*trace, logits.to(at::kFloat));
-      const auto id = logits.argmax(-1).item<int64_t>();
-      generated.push_back(id);
-      if (std::find(spec_.eos.begin(), spec_.eos.end(), id) != spec_.eos.end() || i + 1 == limit) break;
-      logits = step({id});
-    }
-    return generated;
+    return xinfer::generate(*this, prompt, limit, spec_.eos, trace);
   }
 
   int64_t position() const { return position_; }
