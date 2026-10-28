@@ -1,6 +1,5 @@
 """Full-model fixtures and per-state acceptance policy shared by Qwen3.5 tests."""
 
-from compiler.qwen35.config import PREFILL
 from compiler.common.validation import bits_equal, row_errors
 
 LIMIT = 0.05
@@ -13,18 +12,13 @@ def metrics(actual, expected, index):
     return row_errors(a, b)
 
 
-def fixtures(tokenizer, dynamic=False):
+def fixtures(tokenizer):
     paragraph = tokenizer.encode("The capital of France is Paris. A small compiler can run a language model. ",
                                  add_special_tokens=False)
     stream = (paragraph * (1024 // len(paragraph) + 1))[:1024]
 
     def case(name, prefix, decode):
-        sizes, remaining = ([prefix], 0) if dynamic else ([], prefix)
-        while remaining:
-            length = PREFILL if remaining >= PREFILL else 1
-            sizes.append(length)
-            remaining -= length
-        sizes += [1] * decode
+        sizes = [prefix] + [1] * decode
         offset, steps = 0, []
         for length in sizes:
             steps.append(stream[offset:offset + length])
@@ -34,8 +28,7 @@ def fixtures(tokenizer, dynamic=False):
     cases = [case("decode_zero", 1, 3), case("prefill_decode", 64, 8),
              case("remainder_65", 65, 4), case("two_prefills", 128, 4),
              case("long_prefix", 512, 8), case("repeat", 64, 8)]
-    if dynamic:
-        cases += [case(f"dynamic_{length}", length, 2) for length in (2, 22, 31, 32, 33, 63, 127, 129, 511)]
+    cases += [case(f"dynamic_{length}", length, 2) for length in (2, 22, 31, 32, 33, 63, 127, 129, 511)]
     return cases
 
 

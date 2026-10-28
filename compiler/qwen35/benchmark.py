@@ -40,10 +40,10 @@ def worker(args):
         torch.cuda.reset_peak_memory_stats()
         start = time.perf_counter()
         model = load_model(args.model_dir)
-        runtime = HFRuntime(model, chunked=args.profile == "hf_chunked")
+        runtime = HFRuntime(model)
         runtime.reset()
         torch.cuda.synchronize()
-        report = dict(profile=args.profile, torch=torch.__version__, cpu_threads=torch.get_num_threads(),
+        report = dict(profile="hf", torch=torch.__version__, cpu_threads=torch.get_num_threads(),
                       cuda_init_ms=init_ms, load_ms=(time.perf_counter() - start) * 1000,
                       initial_memory=initial_memory, load_memory=memory(), cases=[])
 
@@ -61,7 +61,7 @@ def worker(args):
 
 def summarize(records, workload):
     profiles = {}
-    for label in ("hf", "hf_chunked", "cpp_aoti"):
+    for label in ("hf", "cpp_aoti"):
         reports = [read_json(r["result"]) for r in records if r["profile"] == label]
         assert reports and all(r["cpu_threads"] == 1 for r in reports)
         profile = dict(load_ms=distribution([r["load_ms"] for r in reports]), cases={})
@@ -83,8 +83,8 @@ def summarize(records, workload):
     for case in workload["cases"]:
         for profile in profiles.values():
             row = profile["cases"][case["name"]]
-            row["prediction_agreement"] = {label: sum(a == b for a, b in zip(row["prediction_ids"],
-                profiles[label]["cases"][case["name"]]["prediction_ids"])) for label in ("hf", "hf_chunked")}
+            row["prediction_agreement"] = {"hf": sum(a == b for a, b in zip(row["prediction_ids"],
+                profiles["hf"]["cases"][case["name"]]["prediction_ids"]))}
     return profiles
 
 
@@ -111,6 +111,7 @@ def benchmark(args):
     write_json(out / "workload.json", workload)
     root = Path(__file__).resolve().parents[2]
     sources = ["compiler/qwen35/" + n for n in ("benchmark.py", "reference.py", "model.py", "config.py", "prepare.py", "export.py", "requirements.txt")]
+    sources += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py"]
     sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "runtime/common/io.h",
                 "runtime/common/generation.h", "runtime/common/benchmark.h"]
@@ -148,8 +149,8 @@ def benchmark(args):
     records = []
     try:
         for round_index in range(args.rounds):
-            labels = ["hf", "hf_chunked", "cpp_aoti"]
-            labels = labels[round_index % 3:] + labels[:round_index % 3]
+            labels = ["hf", "cpp_aoti"]
+            labels = labels[round_index % 2:] + labels[:round_index % 2]
             for label in labels:
                 stem = f"round-{round_index + 1}-{label}"
                 wait_idle(out / f"{stem}.before-idle.json", gpu, args.allow_busy)
@@ -158,7 +159,7 @@ def benchmark(args):
                     command = [str(args.native.resolve()), str(args.packages.resolve()), str(out / "workload.json"), str(result)]
                     child_env = env | dict(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
                 else:
-                    command = [sys.executable, "-m", "compiler.qwen35.benchmark", "worker", "--profile", label,
+                    command = [sys.executable, "-m", "compiler.qwen35.benchmark", "worker",
                                "--model-dir", str(args.model_dir.resolve()), "--workload", str(out / "workload.json"), "--output", str(result)]
                     child_env = env
                 print(stem, "starting", flush=True)
@@ -181,7 +182,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     worker_parser = commands.add_parser("worker", help="Internal eager worker; normally use run")
-    worker_parser.add_argument("--profile", choices=("hf", "hf_chunked"), required=True)
     worker_parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     worker_parser.add_argument("--workload", type=Path, required=True)
     worker_parser.add_argument("--output", type=Path, required=True)
@@ -199,7 +199,7 @@ def main():
     runner.add_argument("--decode-steps", type=int, default=64)
     runner.add_argument("--warmup", type=int, default=2)
     runner.add_argument("--repeats", type=int, default=5)
-    runner.add_argument("--rounds", type=int, default=3)
+    runner.add_argument("--rounds", type=int, default=2)
     runner.add_argument("--allow-busy", action="store_true", help="Functional harness checks only; timings are provisional")
     args = parser.parse_args()
     if args.command == "check-idle":

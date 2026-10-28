@@ -76,8 +76,8 @@ int main(int argc, char** argv) {
     std::ifstream maps("/proc/self/maps");
     require(maps.is_open(), "Cannot inspect process mappings");
     for (std::string line; std::getline(maps, line);)
-      require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos,
-              "Python library loaded");
+      require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos &&
+              line.find("libxinfer_") == std::string::npos, "Python or custom-op library loaded");
     report["no_python_library"] = true;
     std::ofstream file(output / "native.json");
     file << report.dump(2) << '\n';

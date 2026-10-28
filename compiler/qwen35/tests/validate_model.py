@@ -1,4 +1,4 @@
-"""Compare full-text HF, the tensor adapter and Python-loaded AOTI packages."""
+"""Compare full-text HF, the eager Triton adapter and Python-loaded AOTI packages."""
 
 import argparse
 import json
@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
-from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, PREFILL, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
 from compiler.common.artifacts import sha256, ROOT
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.common.validation import bits_equal
@@ -112,8 +112,8 @@ def main():
         assert metadata["prefill"][field] == metadata["decode"][field], field
     assert metadata["prefill"].get("eager_numerics", False) == metadata["decode"].get("eager_numerics", False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    dynamic_prefill = metadata["prefill"].get("dynamic_prefill", False)
-    cases = fixtures(tokenizer, dynamic_prefill)
+    assert metadata["prefill"]["delta_backend"] == "triton_op"
+    cases = fixtures(tokenizer)
     (args.output / "cases.json").write_text(json.dumps(dict(cases=cases), indent=2) + "\n")
     model = load_model(args.model_dir)
     config, specs = model.config, state_specs(model.config)
@@ -130,11 +130,9 @@ def main():
             if spec["kind"] in ("key", "value"):
                 padded[i] = torch.nn.functional.pad(tensors[i], (0, 0, 0, CACHE_LENGTH - offset))
         dynamic[key] = tuple(padded)
-    print("Functional tensor adapter", flush=True)
-    if dynamic_prefill:
-        from compiler.qwen35.adapters.native_delta import install_native_delta, load_library
-        load_library(args.packages / "libxinfer_delta_ops.so")
-        install_native_delta(model)
+    print("Eager Triton adapter", flush=True)
+    from compiler.qwen35.adapters.delta import install_delta
+    install_delta(model)
     wrapper = TextStep(model)
     adapted = explicit_trace(dict(prefill=wrapper, decode=wrapper), config, cases)
     del wrapper, model
@@ -148,14 +146,14 @@ def main():
     functions = PythonRuntime(args.packages, specs).functions
     compiled = explicit_trace(functions, config, cases)
     report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
+                  delta_backend=metadata["prefill"]["delta_backend"],
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/kernels/recurrent.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
-    if dynamic_prefill:
-        seed = cases[1]["steps"][0] * 8
-        report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 511, 512]
-        for length in report["checks"]["dynamic_mask_lengths"]:
-            check_mask_and_writes(functions, config, seed[:length])
+    seed = cases[1]["steps"][0] * 8
+    report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 511, 512]
+    for length in report["checks"]["dynamic_mask_lengths"]:
+        check_mask_and_writes(functions, config, seed[:length])
     for name, actual, expected, enforce in (
         ("adapter_vs_hf", adapted, reference, True),
         ("aoti_vs_hf", compiled, reference, True),

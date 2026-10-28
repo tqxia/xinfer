@@ -1,16 +1,15 @@
-"""HF and Python AOTI runtimes with explicit state and package-driven dispatch."""
+"""HF and Python AOTI runtimes with explicit state and dynamic prefill."""
 
 import json
 import torch
 from transformers import StaticCache
 
-from compiler.qwen35.config import CACHE_LENGTH, PREFILL
+from compiler.qwen35.config import CACHE_LENGTH
 
 
 class HFRuntime:
-    def __init__(self, model, chunked=True):
+    def __init__(self, model):
         self.model = model
-        self.chunked = chunked
         self.dtype = next(model.parameters()).dtype
 
     def reset(self, poison=0):
@@ -36,33 +35,23 @@ class HFRuntime:
 
     def step(self, tokens):
         assert 1 <= len(tokens) <= 512 and self.position + len(tokens) <= CACHE_LENGTH
-        offset = 0
-        while offset < len(tokens):
-            remaining = len(tokens) - offset
-            length = (PREFILL if remaining >= PREFILL else 1) if self.chunked else remaining
-            ids = torch.tensor([tokens[offset:offset + length]], device="cuda")
-            positions = torch.arange(self.position, self.position + length, device="cuda")
-            mask = torch.full((1, 1, length, CACHE_LENGTH), torch.finfo(self.dtype).min,
-                              device="cuda", dtype=self.dtype).triu(self.position + 1)
-            logits = self.model(ids, position_ids=positions[None, :],
-                                attention_mask={"full_attention": mask, "linear_attention": None},
-                                past_key_values=self.cache, use_cache=True, logits_to_keep=1).logits[:, 0, :]
-            self.position += length
-            offset += length
+        length = len(tokens)
+        ids = torch.tensor([tokens], device="cuda")
+        positions = torch.arange(self.position, self.position + length, device="cuda")
+        mask = torch.full((1, 1, length, CACHE_LENGTH), torch.finfo(self.dtype).min,
+                          device="cuda", dtype=self.dtype).triu(self.position + 1)
+        logits = self.model(ids, position_ids=positions[None, :],
+                            attention_mask={"full_attention": mask, "linear_attention": None},
+                            past_key_values=self.cache, use_cache=True, logits_to_keep=1).logits[:, 0, :]
+        self.position += length
         return logits
 
 
 class PythonRuntime:
     def __init__(self, packages, specs):
         metadata = json.loads((packages / "prefill.json").read_text())
-        self.dynamic_prefill = metadata.get("dynamic_prefill", False)
-        if self.dynamic_prefill:
-            from compiler.common.artifacts import sha256
-            from compiler.qwen35.adapters.native_delta import load_library
-            library = packages / "libxinfer_delta_ops.so"
-            assert sha256(library) == metadata["delta_library"]["sha256"], "DeltaNet library checksum mismatch"
-            assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
-            load_library(library)
+        assert metadata["delta_backend"] == "triton_op", "Unsupported DeltaNet backend"
+        assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
         self.functions = {kind: torch._inductor.aoti_load_package(str(packages / f"{kind}.pt2"))
                           for kind in ("prefill", "decode")}
         self.specs = specs
@@ -73,14 +62,10 @@ class PythonRuntime:
 
     def step(self, tokens):
         assert 1 <= len(tokens) <= 512 and self.position + len(tokens) <= CACHE_LENGTH
-        offset = 0
-        while offset < len(tokens):
-            remaining = len(tokens) - offset
-            length = remaining if self.dynamic_prefill else (PREFILL if remaining >= PREFILL else 1)
-            ids = torch.tensor([tokens[offset:offset + length]], device="cuda")
-            positions = torch.arange(self.position, self.position + length, device="cuda")
-            result = self.functions["prefill" if length > 1 else "decode"](ids, positions, self.state)
-            self.state = list(result[1:])
-            self.position += length
-            offset += length
+        length = len(tokens)
+        ids = torch.tensor([tokens], device="cuda")
+        positions = torch.arange(self.position, self.position + length, device="cuda")
+        result = self.functions["prefill" if length > 1 else "decode"](ids, positions, self.state)
+        self.state = list(result[1:])
+        self.position += length
         return result[0]

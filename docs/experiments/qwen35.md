@@ -1,10 +1,15 @@
 # Qwen3.5 experiment record
 
-Historical results retain their original artifact hashes. Commands below use the current source layout.
+The current full-model path uses dynamic prefill and a packaged Triton operator
+exclusively. See [current commands](../../compiler/qwen35/README.md) and
+[the latest integration record](#dynamic-only-triton-operators-2026-10-28).
+Historical results retain their original artifact hashes. Historical commands
+may reference retired source files; use their recorded source snapshots to
+reproduce those experiments.
 
 # Qwen3.5: text-only AOTI / C++ experiment
 
-As of 2026-10-27, the primary target is **Qwen/Qwen3.5-0.8B**. Steps 1-2 pass:
+Original milestone summary (2026-10-27): the primary target is **Qwen/Qwen3.5-0.8B**. Steps 1-2 pass:
 single DeltaNet block export/compile, Python-free C++ execution and extended
 state/sequence tests. The existing T=64/T=1 packages handle inputs of 1-512 tokens
 through chunk/remainder dispatch. Shapes come from config/package metadata;
@@ -735,6 +740,319 @@ run, choose fresh `--output` paths and use the matching `--model-dir` and
 weights and defaults extraction to `work/qwen35/4b/block`; pass that path explicitly
 to export/validation and select separate package/result directories.
 
+## Dynamic-only Triton operators: 2026-10-28
+
+Dynamic prefill T=2..512 and decode T=1 are now the only full-model execution
+contract. Both entry points always install `adapters/delta.py`, and the exporter
+needs no dynamic flag, backend selection, native library or kernel-build path.
+The runtime executes each multi-token input in one prefill call. Fixed 64/1
+dispatch and old-package compatibility have been removed. HF eager references
+and the benchmark now use full-prompt calls; the benchmark compares HF and C++
+AOTI without the obsolete HF chunked profile.
+
+`kernels/recurrent.py` registers `xinfer::delta_recurrent` with
+`torch.library.triton_op` and launches the kernel via `wrap_triton`. Strict
+export keeps the high-level operator node; AOTInductor decomposes it, compiles
+the kernel, and bundles its cubin and generated native launcher inside `.pt2`.
+The C++ process loads the model package without registering a custom operator.
+The package still contains AOTI's generated model library; there is no separately
+built or maintained custom-op `.so`.
+
+Removed the ATen chunk-rule implementation, hand-written CUDA-driver launcher,
+external cubin/header builder and their diagnostic-only native-op export/test
+drivers. The older isolated HF block probe remains a diagnostic. Previous
+uncommitted native sources are retained in `work/before-triton-op-source.tar`.
+Older generated artifacts remain available as historical evidence, but the new
+runtime requires packages with `delta_backend=triton_op`.
+
+The Torch 2.7 probe established two details before the full-model change:
+
+1. A convolution-like transpose/split/reshape producer gets contiguous kernel
+   buffers `[2048*T,2048,128,1]` without private layout-registration hooks.
+2. Inductor reconstructs user-kernel metadata. The manual-AOT implementation's
+   no-specialization decorators and `enable_fp_fusion=False` launch option did
+   not survive that reconstruction, causing small eager/AOTI roundoff differences.
+   Plain `@triton.jit` and ordinary warp/stage options give bitwise eager/AOTI
+   agreement for BF16/FP32 and fixed T1/dynamic T2..512. This uses the compiler's
+   default contraction behavior; it does not claim that FP contraction is disabled.
+
+The isolated operator suite passes all 72 cases / 204 calls, including 15
+lengths, zero/nonzero state, whole-vs-partitioned state carry, repeats,
+noncontiguous inputs and a nondefault CUDA stream. It retains the previous
+1% BF16 / 0.01% FP32 normalized limits and the 1e-7 FP32 absolute floor.
+There are no numerical failures. Standalone C++ loads four core packages,
+runs 204 calls and matches all 408 output/state tensors bitwise. Process-map
+checks reject Python and custom-op libraries. No external kernel binary/header
+or library build is needed. Evidence: `artifacts/qwen35/0.8b/triton-op-core/summary.json`;
+the smaller API/layout probe is under `work/triton-op-probe/`.
+
+Both full-model entry points compile using the standard commands without
+backend/library/dynamic flags. The default directory is
+`artifacts/qwen35/0.8b/text`; its previous fixed packages were moved to
+`text-fixed-retired`. No custom-op library exists beside the new packages.
+
+| Entry point | Graph nodes | Triton operators | Token range | Compiled package |
+| --- | ---: | ---: | --- | ---: |
+| Prefill | 2,528 | 18 | 2..512, one symbol | 1,506,979,675 bytes |
+| Decode | 2,561 | 18 | 1 | 1,506,860,654 bytes |
+
+The archives contain 32 / 31 cubins respectively, including the user kernel.
+Their generated C++ has no proxy-executor custom-op calls. There is no separate
+kernel-build directory, embedded header or custom-op library in this deployment.
+The standard C++ executables were rebuilt under `work/qwen35/build`.
+
+Validation encountered a host storage problem: the first final export failed
+linking because `/tmp` was full. Export succeeded after setting `TMPDIR` and
+`TORCHINDUCTOR_CACHE_DIR` to project-owned directories on `/data`. Torch 2.7's
+C++ package loader nevertheless hard-codes `/tmp/XXXXXX` for extraction, ignores
+`TMPDIR`, and did not report the truncated extraction before a SIGBUS. The failed
+extraction and this run's failed linker cache were moved to
+`work/triton-op-disk-failure`, freeing about 4 GB on the system filesystem.
+The original linker log is `work/triton-op-first-link-failure.log`. Packages
+were intact; validation was restarted after freeing extraction space.
+
+The full-model native runtime suite passes 27 cases, comparing 4,018
+teacher-forced tensors, 30 greedy logit rows and 288 final-state tensors bitwise
+against Python AOTI. Dynamic call counts, context overflow, CLI output,
+reset/repeat and input preservation pass, along with all 22 input/package
+rejection checks. The native process rejects mapped Python and custom-op
+libraries. The canonical report is
+`artifacts/qwen35/0.8b/triton-op-runtime/summary.json`.
+
+The 68-step model suite passes all state-semantics checks, including poisoned
+future KV, write regions, repeat/reset, finite shapes/dtypes and input
+preservation. Numerical acceptance remains open under the original 5% limits:
+
+| Comparison | Maximum logits relative L2 / peak-relative | Failed tensor comparisons |
+| --- | --- | --- |
+| Eager Triton adapter vs HF BF16 | 1.439449% / 1.398601% | 956 conv |
+| AOTI vs HF BF16 | 1.754282% / 1.143791% | 1,034 conv |
+| AOTI vs eager adapter | 1.612021% / 1.071429% | 1,012 conv |
+
+Logits, recurrent state and KV comparisons pass the limits in this suite.
+AOTI/HF top-token differences occur at `dynamic_31` step 2 and `dynamic_33`
+step 0, both HF BF16 ties. Eager Triton also differs at `dynamic_32` step 1
+with HF margin 0.125, so adapter drift still exists before compilation.
+Maximum logit relative L2 against FP32 is 1.635470% for AOTI versus 1.304223%
+for HF BF16. The complete report is
+`artifacts/qwen35/0.8b/triton-op-model/summary.json`; its exit status is 1.
+
+The broader end-to-end suite also passes native parity: all 249 teacher-forced
+steps / 12,201 tensors, greedy token IDs, logit traces and final states match
+C++ versus Python AOTI bitwise. All three greedy chat outputs match HF,
+including ` Paris.\n`, `42\n` and the Chinese compiler explanation. The
+previous manually packaged baseline's missing-period case no longer occurs.
+Two teacher-forced top-token choices differ from HF at ties: `length_31`
+step 2 and `length_33` step 0.
+
+HF numerical acceptance remains a failure: 3,836 conv and nine recurrent
+tensor comparisons exceed 5%. Maximum logits relative L2 / peak-relative
+against HF BF16 are 2.684237% / 1.458333%. On the independent FP32 subset,
+maximum logits relative L2 is 2.139068% for AOTI and 2.346991% for HF BF16.
+Both BF16 paths differ from FP32 at `capital_teacher` step 1 (FP32 margin
+0.0928917). These controls do not override the failed state thresholds.
+The report is `artifacts/qwen35/0.8b/triton-op-end-to-end/summary.json` and exits 1.
+
+The simplified benchmark harness passes HF and C++ AOTI profiles for prompt
+lengths 1, 22 and 512 with two fixed decode tokens, one warmup, one repeat
+and one smoke-test round. It preserves numerical-acceptance failures in its
+report and marks shared-GPU timings provisional. The normal default is two
+rounds, alternating which of the two profiles runs first. Evidence is
+`artifacts/qwen35/0.8b/triton-op-benchmark-smoke/summary.json`.
+
+No acceptance threshold was relaxed. Export, core, native-runtime and benchmark
+functional checks pass; full-model numerical acceptance and idle performance
+measurements remain open. Chunked prefill remains a TODO.
+
+## Full-model recurrent Triton integration: 2026-10-28
+
+New dynamic exports use `xinfer::delta_recurrent` in all 18 DeltaNet layers
+for both prefill and decode. The adapter keeps the original projections,
+convolution, gated normalization and output projection. Decode clones its
+convolution state before calling HF's mutating update helper, preserving the
+functional package ABI. Full-attention layers, the 48 state tensors and shared
+generation/benchmark loops are unchanged.
+
+Strict export and AOTI compilation on L20 / SM89 succeed:
+
+| Entry point | Export | Recurrent custom ops | Compiled package |
+| --- | --- | ---: | ---: |
+| Prefill | 2,582 nodes, `{s0: VR[2,512]}` | 18 | 1,506,934,310 bytes |
+| Decode | 2,561 nodes, T=1 | 18 | 1,506,835,066 bytes |
+
+Neither exported graph contains the old `xinfer::delta_prefill` operator.
+The cubins are embedded in `libxinfer_recurrent_ops.so`; export copies it
+beside the packages under the established `libxinfer_delta_ops.so` sidecar
+name. Metadata records `delta_backend=triton_recurrent`, the library checksum,
+and the kernel build, including source/header/cubin checksums and SM. The native
+loader rejects mixed backends/builds. Old packages without a backend field
+retain the ATen chunk interpretation.
+
+The first full-model run exposed an Inductor layout issue. Although the
+adapter called `.contiguous()`, Torch 2.7 relaid out Q/K/V to strides
+`[2048*T,1,128*T,T]`. The native op's contiguous guard rejected these tensors
+before launching the cubin. `load_library` now declares an explicit
+`require_contiguous` layout constraint for the recurrent op. Recompiled
+wrappers pass `[2048*T,2048,128,1]` buffers. The kernel and its hard input
+checks remain unchanged. This is an operator layout contract, not a graph
+rewrite or a runtime copy workaround.
+
+The native-runtime validator passes 27 cases: 4,018 teacher-forced tensors,
+28 greedy logit rows and 288 final-state tensors agree bitwise with Python
+AOTI. It verifies dynamic call counts, context-end state carry, input
+preservation, repeat/reset behavior, CLI parity, and 26 rejection cases.
+The fresh C++ process maps neither `libpython` nor `libtorch_python`.
+
+The 68-step model validator keeps its original 5% row-relative policy:
+
+| Comparison | Maximum logits relative L2 / peak-relative | Failed tensor comparisons |
+| --- | --- | --- |
+| Eager Triton adapter vs HF BF16 | 1.662634% / 1.048951% | 959 conv |
+| AOTI vs HF BF16 | 1.720276% / 1.071429% | 1,032 conv |
+| AOTI vs eager Triton adapter | 2.220087% / 1.223776% | 1,011 conv |
+
+Logits, recurrent states and KV comparisons pass that policy in this suite.
+All input-preservation, masked-future, KV-write-region and reset/repeat checks
+pass, including mask lengths 2, 22, 65, 511 and 512. HF DynamicCache and
+StaticCache controls remain bitwise equal.
+
+Unlike the previous ATen adapter, the eager Triton adapter is not bitwise
+equal to HF. Both eager Triton and AOTI choose a different top token for
+`dynamic_32`, step 1, where HF's top-two margin is 0.125. AOTI also differs at
+`dynamic_33`, step 0, where HF has a tie. The FP32 comparisons are retained:
+maximum logit relative L2 is 1.659203% for AOTI and 1.304223% for HF BF16.
+These results do not close numerical acceptance. In particular, the new
+adapter differences already exist before Inductor, so they cannot all be
+attributed to the previously recorded lost BF16 rounding boundary.
+
+The broader end-to-end suite checks 15 prompt lengths from 1 to 512,
+64 decode steps after a 512-token prompt, the 1,024-token context boundary,
+masked future KV, repeats and three chat prompts. All 249 teacher-forced
+steps / 12,201 tensors match between C++ and Python AOTI bitwise; greedy
+token IDs, logits and final states also match across those two runtimes.
+The HF comparison remains a failure under the unchanged policy:
+
+- 3,830 conv and eight recurrent tensor comparisons exceed 5%.
+- Maximum logits relative L2 / peak-relative: 3.376350% / 1.875000%.
+- Three teacher-forced top-token differences: `length_32` step 1 (HF margin
+  0.125), `length_33` step 0 (tie), and `capital_teacher` step 1 (tie).
+- Arithmetic and Chinese greedy output match HF exactly. The capital prompt
+  produces ` Paris\n` instead of ` Paris.\n`: at the first difference, HF BF16
+  assigns equal scores to period (13) and end-of-turn (248046). AOTI chooses
+  end-of-turn; the independent FP32 teacher-forced control chooses the same
+  token, with a top-two margin of 0.0928917.
+- On the FP32 control subset, maximum logit relative L2 is 2.155917% for AOTI
+  and 2.346991% for HF BF16. These controls do not override the acceptance
+  failures or prove that every differing state is harmless.
+
+Both numerical validators therefore exit 1; the runtime validator exits 0.
+Canonical reports are `artifacts/qwen35/0.8b/recurrent-model-validation/summary.json`,
+`recurrent-runtime-validation/summary.json` and `recurrent-end-to-end/summary.json`
+under the same model artifact directory. The end-to-end report retains the
+actual recurrent kernel/launcher sources, rather than the older chunk-rule source.
+
+The C++ benchmark smoke passes prompt lengths 1, 22 and 512 with two decode
+tokens, one warmup and one measured repeat; repeated predictions and consumed
+positions agree. Timings are provisional on the busy GPU. The rebuilt CLI also
+loads the previous `text-dynamic` ATen packages and reproduces the earlier
+capital token IDs and full logit trace bitwise. Both checks are recorded in
+`artifacts/qwen35/0.8b/recurrent-integration-smoke/summary.json`.
+
+Initial artifacts and logs are retained under `work/recurrent-full-layout-initial`,
+`work/recurrent-full-runtime-initial`, `work/recurrent-layout-failure.log`
+and `work/recurrent-full-initial-sources.tar`. The corrected packages are in
+`artifacts/qwen35/0.8b/text-recurrent`; the native build is `work/recurrent-build`.
+Reproduction commands are in
+[the model README](../../compiler/qwen35/README.md#dynamic-full-model-prefill-and-triton-gdn).
+
+TODO: chunked prefill. This sequential recurrence establishes a working model
+integration; performance remains to be measured on an idle GPU.
+
+## Recurrent Triton baseline and native execution: 2026-10-28
+
+Implemented an isolated GDN core in `compiler/qwen35/kernels/recurrent.py`.
+It supports T=1..512, B=1, H=16, K=V=128, contiguous BF16/FP32 Q/K/V/beta,
+FP32 log decay and FP32 recurrent state. One Triton program owns a head and
+32 value columns; it keeps its state tile through the sequential token loop.
+Q/K normalization, decay, correction and output reduction are fused. Inputs
+are never mutated; both returned tensors have fresh storage. Projection,
+convolution and gated normalization remain outside this experiment.
+
+`diagnostics/build_recurrent.py` compiles two kernels with Triton 3.3.0,
+four warps, one stage and FP contraction disabled. Their cubins are embedded
+in a generated header. `runtime/qwen35/recurrent_ops.cpp` registers
+`xinfer::delta_recurrent` and launches them through the CUDA driver on
+LibTorch's current stream. The native library contains no Python callback or
+Triton JIT. This minimal launcher accepts only CUDA device 0 and the exact
+compiled SM; it deliberately pins the Triton 3.3 ABI, including the trailing
+scratch argument. The build rejects kernels requiring scratch storage.
+
+Validated on L20 / SM89, Torch 2.7.0+cu126 and Triton 3.3.0:
+
+- 72 cases, 204 calls per execution path, with lengths
+  1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511 and 512.
+- Unit-scale Gaussian Q/K/V, zero/nonzero state, small negative decay, and
+  beta=0/decay=0, strong forgetting and zero-Q/K edge cases.
+- Whole T512 versus `[129, 1 × 32, 351]` state carry; reset/repeat tests.
+  Outputs and final states are bitwise invariant to partitioning in the
+  recurrent implementation.
+- Schema, fake-tensor and dynamic-AOT opcheck all pass. Strict export and
+  AOTI compilation produce four small core packages: BF16/FP32 × fixed T1 /
+  dynamic T2..512. Each graph has one recurrent custom op.
+- Python Triton JIT, Python native-op and Python AOTI agree bitwise across
+  all 408 output/state tensors.
+- Standalone C++ passes directly and through AOTI: 204 calls and 408 bitwise
+  tensor comparisons in each mode. Both processes verify that neither
+  `libpython` nor `libtorch_python` is mapped. Direct mode loads no AOTI
+  package; AOTI mode loads four packages once.
+- Nondefault CUDA stream, input preservation, fresh output storage, finite
+  results, dtype/shape contracts and six invalid-input rejection checks pass.
+- All 2,112 recorded numerical/partition comparisons pass the policy below.
+
+Maximum errors against HF recurrent (BF16 fixtures) and the FP32 control:
+
+| Comparison | Output relative L2 | Output peak-relative | State relative L2 | State peak-relative |
+| --- | ---: | ---: | ---: | ---: |
+| BF16 kernel vs HF BF16 | 0.143764% | 0.492611% | 0.000219% | 0.000247% |
+| BF16 kernel vs FP32 | 0.264709% | 0.386952% | 0.000219% | 0.000247% |
+
+FP32 uses the same input values as the BF16 fixtures, converted to FP32, to
+isolate arithmetic error from input quantization. Native ATen chunk-rule
+comparisons also pass: maximum BF16 output relative L2 / peak-relative
+0.132540% / 0.632911%; state 0.000149% / 0.000169%. On FP32 fixtures, maximum
+absolute output/state error against HF recurrent is 5.22e-8 / 7.16e-7.
+These are core-operator results; they do not close the full-model numerical
+issues or establish an end-to-end speedup.
+
+Two validation details are retained rather than hidden:
+
+1. Initial Triton JIT calls inferred pointer alignment, while the AOT build
+   supplied no alignment attributes. The resulting PTX used different thread
+   layouts/reduction orders and produced small numerical differences. The
+   kernel now disables JIT pointer-alignment and token-count specialization
+   to match the AOT signature; all JIT/native comparisons are bitwise.
+2. The initial relative-only FP32 limit rejected one strong-forgetting case
+   against each of HF recurrent, native chunk and FP32. Nearly orthogonal
+   Q/K produce tiny output rows: absolute errors were at most 3.36e-8, while
+   peak-relative error reached 0.051724%. The final policy retains normalized
+   limits of 1% for BF16 and 0.01% for FP32 and additionally permits FP32
+   absolute errors <=1e-7. Every raw metric is still recorded. Exact-path
+   comparisons always require bitwise agreement, regardless of tolerances.
+
+Reproduction commands are in `compiler/qwen35/README.md`. Canonical evidence:
+`artifacts/qwen35/0.8b/recurrent-validation/summary.json`, its fixtures,
+four compiled packages and `cpp-direct` / `cpp-aoti` traces. The tested build
+is `work/recurrent-build`; embedded kernel inputs are in
+`work/qwen35/recurrent-kernels`. The initial failing report, kernel artifacts
+and source snapshot are retained under `work/recurrent-validation-initial`,
+`work/qwen35/recurrent-kernels-initial` and `work/recurrent-original-sources.tar`.
+Generated artifacts remain ignored by Git.
+
+TODO: implement chunked prefill and compare it with this sequential kernel
+and the native ATen baseline in an idle benchmark environment. This isolated
+baseline initially left the full-model backend unchanged; the subsequent
+integration is recorded above. No timing claim is made on the busy development GPU.
+
 ## Dynamic full-model prefill and C++ generation: 2026-10-27
 
 The native chunk-rule adapter now integrates with all 18 DeltaNet layers in
@@ -818,7 +1136,7 @@ remaining compiled error or close Q35-NUM-001/Q35-NUM-002.
 
 ### Reproduction and evidence
 
-See [dynamic full-model commands](../../compiler/qwen35/README.md#dynamic-full-model-prefill).
+See [dynamic full-model commands](../../compiler/qwen35/README.md#dynamic-full-model-prefill-and-triton-gdn).
 The following generated directories are ignored by Git:
 
 - `artifacts/qwen35/0.8b/text-dynamic/`: compiled packages, graph dumps, metadata
