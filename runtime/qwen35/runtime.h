@@ -3,6 +3,7 @@
 #include "../common/generation.h"
 
 #include <ATen/ATen.h>
+#include <ATen/DynamicLibrary.h>
 #include <ATen/Parallel.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/core/InferenceMode.h>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -46,6 +48,7 @@ struct TensorSpec {
 struct Spec {
   Json metadata;
   int64_t capacity, vocab;
+  bool dynamic_prefill = false;
   std::vector<int64_t> eos;
   std::vector<TensorSpec> state;
 
@@ -59,8 +62,19 @@ struct Spec {
       require(metadata.at(key) == prefill.at(key), std::string("Package metadata differs: ") + key);
     require(metadata.value("eager_numerics", false) == prefill.value("eager_numerics", false),
             "Package numerical settings differ");
-    require(metadata.at("kind") == "decode" && metadata.at("tokens") == 1 &&
-            prefill.at("kind") == "prefill" && prefill.at("tokens") == 64, "Expected T=64/T=1 packages");
+    dynamic_prefill = metadata.value("dynamic_prefill", false);
+    require(dynamic_prefill == prefill.value("dynamic_prefill", false), "Package prefill modes differ");
+    require(metadata.at("kind") == "decode" && metadata.at("tokens") == 1 && prefill.at("kind") == "prefill",
+            "Invalid package entry points");
+    if (dynamic_prefill) {
+      require(prefill.at("tokens").is_null() && prefill.at("token_range") == Json::array({2, max_prompt}) &&
+              metadata.at("token_range") == Json::array({1, 1}), "Expected dynamic T=2..512/T=1 packages");
+      require(metadata.at("delta_library") == prefill.at("delta_library"), "Package DeltaNet libraries differ");
+      require(fs::file_size(packages / "libxinfer_delta_ops.so") == metadata.at("delta_library").at("bytes").get<uintmax_t>(),
+              "DeltaNet library size mismatch");
+    } else {
+      require(prefill.at("tokens") == 64, "Expected T=64/T=1 packages");
+    }
     const auto version = metadata.at("torch").get<std::string>();
     require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
@@ -145,7 +159,10 @@ inline void configure(const Spec& spec) {
 class Runtime {
  public:
   Runtime(const fs::path& packages, const Spec& spec)
-      : spec_(spec), prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
+      : spec_(spec),
+        delta_ops_(spec.dynamic_prefill
+            ? std::make_unique<at::DynamicLibrary>((packages / "libxinfer_delta_ops.so").c_str()) : nullptr),
+        prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
     reset();
   }
 
@@ -154,6 +171,7 @@ class Runtime {
     for (const auto& item : spec_.state)
       state_.push_back(at::zeros(item.shape, at::TensorOptions().device(at::Device(at::kCUDA, 0)).dtype(item.dtype)));
     position_ = 0;
+    prefill_calls_ = decode_calls_ = 0;
   }
 
   at::Tensor step(const std::vector<int64_t>& tokens) {
@@ -161,13 +179,15 @@ class Runtime {
     require(static_cast<int64_t>(tokens.size()) <= spec_.capacity - position_, "Context capacity exceeded");
     at::Tensor logits;
     for (size_t offset = 0; offset < tokens.size();) {
-      const int64_t length = tokens.size() - offset >= 64 ? 64 : 1;
+      const int64_t remaining = tokens.size() - offset;
+      const int64_t length = spec_.dynamic_prefill ? remaining : (remaining >= 64 ? 64 : 1);
       const std::vector<int64_t> piece(tokens.begin() + offset, tokens.begin() + offset + length);
       const auto options = at::TensorOptions().device(at::Device(at::kCUDA, 0)).dtype(at::kLong);
       std::vector<at::Tensor> inputs{at::tensor(piece, at::kLong).view({1, length}).to(options),
                                      at::arange(position_, position_ + length, options)};
       inputs.insert(inputs.end(), state_.begin(), state_.end());
-      auto result = (length == 64 ? prefill_ : decode_).run(inputs);
+      auto result = (length > 1 ? prefill_ : decode_).run(inputs);
+      ++(length > 1 ? prefill_calls_ : decode_calls_);
       require(result.size() == 1 + state_.size(), "Incorrect package output count");
       require(result[0].sizes() == at::IntArrayRef({1, spec_.vocab}) && result[0].scalar_type() == at::kBFloat16,
               "Incorrect logits shape/dtype");
@@ -189,12 +209,17 @@ class Runtime {
   }
 
   int64_t position() const { return position_; }
+  int64_t prefill_calls() const { return prefill_calls_; }
+  int64_t decode_calls() const { return decode_calls_; }
   const std::vector<at::Tensor>& state() const { return state_; }
 
  private:
   const Spec& spec_;
+  // Keep registration alive until both package loaders have been destroyed.
+  std::unique_ptr<at::DynamicLibrary> delta_ops_;
   Loader prefill_, decode_;
   std::vector<at::Tensor> state_;
   int64_t position_ = 0;
+  int64_t prefill_calls_ = 0, decode_calls_ = 0;
 };
 }  // namespace qwen35

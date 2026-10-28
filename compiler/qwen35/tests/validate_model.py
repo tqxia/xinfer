@@ -12,6 +12,7 @@ from compiler.common.artifacts import sha256, ROOT
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.common.validation import bits_equal
 from compiler.qwen35.tests.common import fixtures, compare, LIMIT
+from compiler.qwen35.reference import PythonRuntime
 
 
 def cache_tensors(cache, config):
@@ -52,7 +53,7 @@ def explicit_trace(functions, config, cases):
             ids = torch.tensor([tokens], device="cuda")
             position = torch.arange(offset, offset + len(tokens), device="cuda")
             before = [t.clone() for t in (ids, position, *state)]
-            kind = "prefill" if len(tokens) == PREFILL else "decode"
+            kind = "prefill" if len(tokens) > 1 else "decode"
             output = functions[kind](ids, position, state)
             assert len(output) == 1 + len(specs)
             assert output[0].shape == (1, config.vocab_size) and output[0].dtype == torch.bfloat16
@@ -66,9 +67,10 @@ def explicit_trace(functions, config, cases):
 
 
 def check_mask_and_writes(functions, config, tokens):
+    length = len(tokens)
     specs = state_specs(config)
     ids = torch.tensor([tokens], device="cuda")
-    position = torch.arange(PREFILL, device="cuda")
+    position = torch.arange(length, device="cuda")
     state = zero_state(config)
     clean = functions["prefill"](ids, position, state)
     for tensor, spec in zip(state, specs):
@@ -79,16 +81,16 @@ def check_mask_and_writes(functions, config, tokens):
     for index, spec in enumerate(specs):
         a, b = clean[index + 1], poison[index + 1]
         if spec["kind"] in ("key", "value"):
-            assert bits_equal(a[:, :, :PREFILL], b[:, :, :PREFILL])
-            assert bits_equal(state[index][:, :, PREFILL:], b[:, :, PREFILL:]), "Future cache overwritten"
+            assert bits_equal(a[:, :, :length], b[:, :, :length])
+            assert bits_equal(state[index][:, :, length:], b[:, :, length:]), "Future cache overwritten"
         else:
             assert bits_equal(a, b)
     next_state = list(clean[1:])
-    decoded = functions["decode"](ids[:, :1].contiguous(), position.new_tensor([PREFILL]), next_state)
+    decoded = functions["decode"](ids[:, :1].contiguous(), position.new_tensor([length]), next_state)
     for index, spec in enumerate(specs):
         if spec["kind"] in ("key", "value"):
-            assert bits_equal(next_state[index][:, :, :PREFILL], decoded[index + 1][:, :, :PREFILL])
-            assert bits_equal(next_state[index][:, :, PREFILL + 1:], decoded[index + 1][:, :, PREFILL + 1:])
+            assert bits_equal(next_state[index][:, :, :length], decoded[index + 1][:, :, :length])
+            assert bits_equal(next_state[index][:, :, length + 1:], decoded[index + 1][:, :, length + 1:])
     return dict(poisoned_future_ignored=True, kv_write_regions_preserved=True)
 
 
@@ -110,16 +112,14 @@ def main():
         assert metadata["prefill"][field] == metadata["decode"][field], field
     assert metadata["prefill"].get("eager_numerics", False) == metadata["decode"].get("eager_numerics", False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    cases = fixtures(tokenizer)
+    dynamic_prefill = metadata["prefill"].get("dynamic_prefill", False)
+    cases = fixtures(tokenizer, dynamic_prefill)
     (args.output / "cases.json").write_text(json.dumps(dict(cases=cases), indent=2) + "\n")
     model = load_model(args.model_dir)
     config, specs = model.config, state_specs(model.config)
     assert metadata["prefill"]["state"] == specs
     print("HF StaticCache reference", flush=True)
     reference = hf_trace(model, cases)
-    print("Functional tensor adapter", flush=True)
-    wrapper = TextStep(model)
-    adapted = explicit_trace(dict(prefill=wrapper, decode=wrapper), config, cases)
     print("HF DynamicCache control", flush=True)
     dynamic = hf_trace(model, [cases[1]], dynamic=True)
     # DynamicCache has only the valid prefix; pad unused storage for comparison.
@@ -130,6 +130,13 @@ def main():
             if spec["kind"] in ("key", "value"):
                 padded[i] = torch.nn.functional.pad(tensors[i], (0, 0, 0, CACHE_LENGTH - offset))
         dynamic[key] = tuple(padded)
+    print("Functional tensor adapter", flush=True)
+    if dynamic_prefill:
+        from compiler.qwen35.adapters.native_delta import install_native_delta, load_library
+        load_library(args.packages / "libxinfer_delta_ops.so")
+        install_native_delta(model)
+    wrapper = TextStep(model)
+    adapted = explicit_trace(dict(prefill=wrapper, decode=wrapper), config, cases)
     del wrapper, model
     torch.cuda.empty_cache()
     print("Independent FP32 reference", flush=True)
@@ -138,13 +145,17 @@ def main():
     del fp32_model
     torch.cuda.empty_cache()
     print("Python AOTI", flush=True)
-    functions = {kind: torch._inductor.aoti_load_package(str(args.packages / f"{kind}.pt2"))
-                 for kind in ("prefill", "decode")}
+    functions = PythonRuntime(args.packages, specs).functions
     compiled = explicit_trace(functions, config, cases)
     report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
                   source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
+    if dynamic_prefill:
+        seed = cases[1]["steps"][0] * 8
+        report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 511, 512]
+        for length in report["checks"]["dynamic_mask_lengths"]:
+            check_mask_and_writes(functions, config, seed[:length])
     for name, actual, expected, enforce in (
         ("adapter_vs_hf", adapted, reference, True),
         ("aoti_vs_hf", compiled, reference, True),

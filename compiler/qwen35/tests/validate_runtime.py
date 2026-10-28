@@ -51,17 +51,27 @@ def reject_invalid(args, env, metadata):
         ("mixed_checkpoint", lambda m: m["prefill"]["checkpoint"].update(revision="different"), "Package metadata differs: checkpoint"),
         ("mixed_state", lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5), "Package metadata differs: state"),
         ("mixed_numerics", lambda m: m["prefill"].update(eager_numerics=not m["decode"].get("eager_numerics", False)), "Package numerical settings differ"),
-        ("entry_point", lambda m: m["prefill"].update(tokens=63), "Expected T=64/T=1"),
+        ("entry_point", lambda m: m["prefill"].update(tokens=63),
+         "Expected dynamic T=2..512/T=1" if metadata["prefill"].get("dynamic_prefill", False) else "Expected T=64/T=1"),
         ("torch_version", lambda m: [v.update(torch="0.0.0") for v in m.values()], "Torch version mismatch"),
         ("state_dtype", lambda m: [v["state"][0].update(dtype="float32") for v in m.values()], "Invalid state order or dtype"),
         ("abi_order", lambda m: [v["input_order"].reverse() for v in m.values()], "Invalid tensor ABI order"),
         ("gpu_arch", lambda m: [v.update(sm=[0, 0]) for v in m.values()], "GPU architecture mismatch"),
     ]
+    if metadata["prefill"].get("dynamic_prefill", False):
+        mutations += [
+            ("prefill_range", lambda m: m["prefill"].update(token_range=[2, 513]), "Expected dynamic T=2..512/T=1"),
+            ("mixed_mode", lambda m: m["prefill"].update(dynamic_prefill=False), "Package prefill modes differ"),
+            ("mixed_library", lambda m: m["prefill"]["delta_library"].update(sha256="different"), "Package DeltaNet libraries differ"),
+            ("library_size", lambda m: [v["delta_library"].update(bytes=0) for v in m.values()], "DeltaNet library size mismatch"),
+        ]
     for name, mutate, error in mutations:
         packages = directory / name
         packages.mkdir()
         modified = copy.deepcopy(metadata)
         mutate(modified)
+        if (args.packages / "libxinfer_delta_ops.so").exists():
+            (packages / "libxinfer_delta_ops.so").symlink_to((args.packages / "libxinfer_delta_ops.so").resolve())
         for kind, meta in modified.items():
             (packages / f"{kind}.json").write_text(json.dumps(meta))
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
@@ -88,7 +98,8 @@ def main():
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    cases = fixtures(tokenizer)
+    dynamic_prefill = metadata["prefill"].get("dynamic_prefill", False)
+    cases = fixtures(tokenizer, dynamic_prefill)
     seed = cases[1]["steps"][0]
     for length in (2, 63, 65, 129, 511):
         prompt = (seed * (length // len(seed) + 1))[:length]
@@ -149,6 +160,11 @@ def main():
         name = case["name"]
         ref = expected[name]
         assert actual["name"] == name and actual["position"] == ref["position"]
+        if dynamic_prefill:
+            lengths = ([len(case["prompt"])] + [1] * (len(ref["ids"]) - 1) if "prompt" in case
+                       else list(map(len, case["steps"])))
+            assert actual["prefill_calls"] == sum(n > 1 for n in lengths)
+            assert actual["decode_calls"] == lengths.count(1)
         if "prompt" in case:
             assert actual["ids"] == ref["ids"]
             compare_file(args.output / "native" / f"{name}.f32", ref["rows"])
@@ -180,7 +196,8 @@ def main():
         assert "libpython" not in linked and "libtorch_python" not in linked
     print("Input/package rejection checks", flush=True)
     report["rejections"] = reject_invalid(args, env, metadata)
-    report.update(native_runtime_passed=True, no_python_library=True, repeated_requests_bitwise=True, cli_bitwise=True)
+    report.update(native_runtime_passed=True, no_python_library=True, repeated_requests_bitwise=True, cli_bitwise=True,
+                  dynamic_prefill=dynamic_prefill, dispatch_counts_checked=dynamic_prefill)
     root = ROOT
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
                Path("runtime/qwen35/runtime.h"), Path("runtime/qwen35/main.cpp"),

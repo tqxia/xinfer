@@ -4,16 +4,19 @@ The primary target is **Qwen/Qwen3.5-0.8B**, pinned to
 `2fc06364715b967f1860aea9cf38778875588b17`. The earlier 4B single-block probe is
 retained for compatibility checks. Vision and MTP are outside this experiment.
 
-The full model exports, compiles and runs in C++. Native/Python AOTI outputs
-match bitwise across 203 teacher-forced steps / 9,947 tensors. Numerical
-acceptance against HF is **open**: conv/recurrent errors exceed the unchanged
-5% limits, and some token decisions differ. Benchmark execution is validated;
-final performance measurements require the user's separate idle environment.
+The full model exports, compiles and runs in C++, including dynamic prefill
+for T=2..512. Dynamic-package native/Python AOTI outputs match bitwise across
+249 teacher-forced steps / 12,201 tensors; three greedy chat tests also agree
+with HF. Numerical acceptance against HF is **open**: conv/recurrent errors
+exceed the unchanged 5% limits, and two teacher-forced top-token decisions differ
+at HF ties. The fixed-prefill baseline remains supported. Final performance
+measurements require the user's separate idle environment.
 
 ## Contract
 
 - One GPU, batch one, prompts of 1–512 tokens, total context capacity 1,024.
-- Prefill consumes fixed 64-token chunks; remaining tokens use the T=1 package.
+- Fixed packages consume 64-token chunks and T=1 remainders. Dynamic packages
+  consume the entire 2–512-token input in one prefill call; T=1 uses decode.
 - BF16 weights/activations, FP32 RoPE frequencies and DeltaNet recurrent state.
 - The 48 state tensors cover 18 conv/recurrent pairs and six KV pairs. Inputs
   remain unchanged; package outputs replace the previous states.
@@ -43,6 +46,8 @@ be absent for this baseline. The development host reuses Torch read-only from
 ABO; that host-specific setup is recorded in the experiment record below.
 
 Run all commands from the repository root. Output directories must be fresh.
+Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc` when
+configuring a new CMake build directory.
 
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -100,8 +105,10 @@ the existing SM89 artifacts are not a portable deployment bundle.
 - **Q35-NUM-002:** partition-sensitive greedy punctuation decision; HF itself
   differs between full-prompt and chunked execution. Another fixed-token case
   differs between AOTI and HF BF16; its precise cause remains unisolated.
-- Bounded dynamic block prefill fails shape guards in the pinned toolchain.
+- The original HF fallback fails bounded dynamic block prefill shape guards.
   `python -m compiler.qwen35.diagnostics.probe_dynamic` records that limitation.
+  The native-operator adapter exports T=2..512 for both the isolated block and
+  the full text model. Package metadata selects dynamic or legacy 64/1 dispatch.
 
 [Detailed experiments, metrics, setup and target-environment instructions](../../docs/experiments/qwen35.md)
 preserve all five steps and the earlier 4B result. Generated evidence remains in
@@ -114,3 +121,82 @@ state, package validation and benchmark profiles stay in their model directory.
 The organization regression in `artifacts/qwen35/0.8b/reorg-step2-*` reproduces
 the retained block, native-runtime and end-to-end results, including every
 numerical comparison and known failure.
+
+## Dynamic full-model prefill
+
+The native DeltaNet adapter replaces each of the 18 linear-attention modules.
+Prefill uses the native chunk rule; decode delegates to the original HF module.
+Weights, full-attention layers, cache tensor order and generation loop are reused.
+Select this path explicitly when exporting; existing fixed packages remain usable.
+
+Build the library using the same Torch environment as export, then compile both
+entry points with the same options. Output defaults to `artifacts/qwen35/0.8b/text-dynamic`.
+
+```bash
+cmake --build work/qwen35/build --target xinfer_delta_ops qwen35_aoti qwen35_validate -j2
+"$QWEN_PY" -m compiler.qwen35.export prefill --dynamic-prefill \
+  --library work/qwen35/build/libxinfer_delta_ops.so
+"$QWEN_PY" -m compiler.qwen35.export decode --dynamic-prefill \
+  --library work/qwen35/build/libxinfer_delta_ops.so
+
+"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+  --packages artifacts/qwen35/0.8b/text-dynamic \
+  --output artifacts/qwen35/0.8b/dynamic-runtime-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
+  --packages artifacts/qwen35/0.8b/text-dynamic \
+  --output artifacts/qwen35/0.8b/dynamic-model-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
+  --packages artifacts/qwen35/0.8b/text-dynamic \
+  --output artifacts/qwen35/0.8b/dynamic-end-to-end-new
+
+work/qwen35/build/qwen35_aoti artifacts/qwen35/0.8b/text-dynamic \
+  work/prompt.ids work/dynamic-generated.ids --max-new-tokens 64
+```
+
+Export copies `libxinfer_delta_ops.so` beside `prefill.pt2` and `decode.pt2`, and
+records its checksum in both metadata files. Keep these files together. C++ loads
+the library before the packages and retains it until both loaders are destroyed;
+the executable does not link Python. Rebuild and re-export for another toolchain.
+
+The native validator checks actual prefill/decode call counts as well as state
+and generation parity. For dynamic packages, HF and FP32 comparisons use the same
+full-prompt partitions. Numerical validators still return nonzero for acceptance
+failures; runtime parity alone does not close the existing numerical issues.
+
+## Dynamic single-block experiment
+
+`adapters/native_delta.py` reuses the HF block's weights and replaces only the
+chunk rule with `xinfer::delta_prefill`. Its implementation in
+`runtime/qwen35/delta_ops.cpp` uses ordinary ATen CUDA operations, including the
+same triangular solve as HF eager. Padding and the sequential chunk scan run
+inside that native call, so export only needs its symbolic output shapes.
+This is an inference-only experiment, not an optimized fused kernel.
+
+With the environment above, run from the repository root:
+
+```bash
+# Only needed if the isolated layer-0 checkpoint has not been prepared.
+"$QWEN_PY" -m compiler.qwen35.diagnostics.block
+cmake -S . -B work/qwen35/build -G Ninja \
+  -DCMAKE_PREFIX_PATH="$QWEN_CMAKE_PREFIX" -DTORCH_CUDA_ARCH_LIST="$QWEN_SM" \
+  -DCMAKE_BUILD_TYPE=Release -DQWEN_BUILD_DELTANET=ON
+cmake --build work/qwen35/build --target xinfer_delta_ops qwen35_dynamic_block -j2
+"$QWEN_PY" -m compiler.qwen35.diagnostics.export_dynamic_block \
+  --library work/qwen35/build/libxinfer_delta_ops.so
+"$QWEN_PY" -m compiler.qwen35.tests.validate_dynamic_block \
+  --library work/qwen35/build/libxinfer_delta_ops.so \
+  --binary work/qwen35/build/qwen35_dynamic_block
+```
+
+The exporter produces one compiled `prefill.pt2`, plus a separately named
+`prefill.exported.pt2` for graph inspection. The C++ runner links the native op
+library and loads the compiled package once for all token lengths; it does not
+load Python. Deploy the shared library alongside the executable and matched
+LibTorch dependencies. T=1 remains outside this prefill contract.
+
+Validation covers 14 lengths, zero/nonzero state, state carry, partitioning,
+reset/repeat, input preservation, FP32 controls and C++/Python AOTI bitwise parity.
+See the [experiment record](../../docs/experiments/qwen35.md#dynamic-single-block-native-operator-2026-10-27)
+for the measured errors and retained evidence. The full-model integration above
+builds on this block result; performance remains unmeasured, and the block result
+does not close the numerical issues above.

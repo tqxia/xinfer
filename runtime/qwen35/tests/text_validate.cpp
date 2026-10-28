@@ -69,6 +69,8 @@ int main(int argc, char** argv) {
       states.close();
       require(bool(states), "Failed to close state dump");
       row["position"] = runtime.position();
+      row["prefill_calls"] = runtime.prefill_calls();
+      row["decode_calls"] = runtime.decode_calls();
       report["cases"].push_back(row);
     }
     std::ifstream maps("/proc/self/maps");

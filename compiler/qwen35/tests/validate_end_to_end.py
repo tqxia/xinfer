@@ -96,6 +96,8 @@ def main():
         assert meta["torch"] == torch.__version__ and meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
     specs = metadata["decode"]["state"]
+    dynamic_prefill = metadata["prefill"].get("dynamic_prefill", False)
+    matched_label = "hf_full_prompt" if dynamic_prefill else "hf_chunked"
     eos = metadata["decode"]["generation_config"]["eos_token_id"]
     eos = eos if isinstance(eos, list) else [eos]
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
@@ -106,7 +108,9 @@ def main():
     paragraph = tokenizer.encode("The capital of France is Paris. A small compiler can run a language model. ")
     stream = (paragraph * (1024 // len(paragraph) + 1))[:1024]
     cases = []
-    for length in (1, 2, 63, 64, 65, 127, 128, 129, 511, 512):
+    lengths = (1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512) if dynamic_prefill else (
+        1, 2, 63, 64, 65, 127, 128, 129, 511, 512)
+    for length in lengths:
         decode = 64 if length == 512 else 8
         cases.append(dict(name=f"length_{length}", steps=[stream[:length]] + [[t] for t in stream[length:length + decode]]))
     cases.append(dict(name="context_end", steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
@@ -116,18 +120,20 @@ def main():
         cases.append(dict(clean, name=name + "_poison", same_as=name, poison_kv=3))
     cases.append(dict(next(c for c in cases if c["name"] == "length_65"), name="repeat_65"))
     model = load_model(args.model_dir)
-    matched = HFRuntime(model, chunked=True)
+    matched = HFRuntime(model, chunked=not dynamic_prefill)
     print("HF greedy reference with matched partitions", flush=True)
     greedy_hf = {c["name"]: greedy(matched, c, eos) for c in chats}
     for c in chats:
         cases.append(dict(name=c["name"] + "_teacher", steps=[c["prompt"]] + [[t] for t in greedy_hf[c["name"]]["ids"][:-1]]))
     print("HF teacher-forced, matched partitions", flush=True)
     reference = trace(matched, cases, specs)
-    whole = HFRuntime(model, chunked=False)
-    print("HF teacher-forced, full-prompt calls", flush=True)
-    unpartitioned = trace(whole, cases, specs)
-    greedy_whole = {c["name"]: greedy(whole, c, eos) for c in chats}
-    del matched, whole, model
+    if not dynamic_prefill:
+        whole = HFRuntime(model, chunked=False)
+        print("HF teacher-forced, full-prompt calls", flush=True)
+        unpartitioned = trace(whole, cases, specs)
+        greedy_whole = {c["name"]: greedy(whole, c, eos) for c in chats}
+        del whole
+    del matched, model
     gc.collect()
     torch.cuda.empty_cache()
     print("Python AOTI", flush=True)
@@ -140,7 +146,7 @@ def main():
     print("Independent FP32 controls", flush=True)
     fp32_cases = [c for c in cases if c["name"] in ("length_512", "context_end", "capital_teacher")]
     fp32_model = load_model(args.model_dir, dtype=torch.float32)
-    fp32_runner = HFRuntime(fp32_model, chunked=True)
+    fp32_runner = HFRuntime(fp32_model, chunked=not dynamic_prefill)
     fp32 = trace(fp32_runner, fp32_cases, specs)
     del fp32_runner, fp32_model
     gc.collect()
@@ -173,20 +179,26 @@ def main():
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
                   teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
-                  masked_future_checks=True, repeated_request_bitwise=True, context_overflow_rejected=True)
-    for name, actual, expected, enforce in (
-        ("aoti_vs_hf_chunked", aoti, reference, True),
-        ("aoti_vs_hf_full_prompt", aoti, unpartitioned, True),
-        ("hf_chunked_vs_full_prompt", reference, unpartitioned, False),
+                  masked_future_checks=True, repeated_request_bitwise=True, context_overflow_rejected=True,
+                  dynamic_prefill=dynamic_prefill, matched_hf=matched_label)
+    comparisons = [
+        ("aoti_vs_" + matched_label, aoti, reference, True),
         ("aoti_vs_fp32", {k: aoti[k] for k in fp32}, fp32, False),
         ("hf_vs_fp32", {k: reference[k] for k in fp32}, fp32, False),
-    ):
+    ]
+    if not dynamic_prefill:
+        comparisons += [("aoti_vs_hf_full_prompt", aoti, unpartitioned, True),
+                        ("hf_chunked_vs_full_prompt", reference, unpartitioned, False)]
+    for name, actual, expected, enforce in comparisons:
         compare(report, name, actual, expected, specs, enforce)
     for case in chats:
         name = case["name"]
         actual = greedy_aoti[name]
         row = dict(name=name, prompt=case["text"], aoti_ids=actual["ids"], aoti_text=tokenizer.decode(actual["ids"], skip_special_tokens=True))
-        for label, refs in (("hf_chunked", greedy_hf), ("hf_full_prompt", greedy_whole)):
+        references = [(matched_label, greedy_hf)]
+        if not dynamic_prefill:
+            references.append(("hf_full_prompt", greedy_whole))
+        for label, refs in references:
             expected = refs[name]
             row[label] = dict(ids=expected["ids"], text=tokenizer.decode(expected["ids"], skip_special_tokens=True),
                               equal=actual["ids"] == expected["ids"])
@@ -201,13 +213,18 @@ def main():
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
     names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h", "runtime/common/generation.h"]
+    if dynamic_prefill:
+        names += ["compiler/qwen35/adapters/native_delta.py", "runtime/qwen35/delta_ops.cpp"]
+        report["delta_library"] = metadata["prefill"]["delta_library"]
     for name in names:
         target = args.output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(root / name, target)
     report["source_sha256"] = {n: sha256(root / n) for n in names}
-    torch.save({label: values[("context_end", 3)] for label, values in
-                (("hf", reference), ("hf_full_prompt", unpartitioned), ("aoti", aoti), ("fp32", fp32))}, args.output / "context_end.pt")
+    final_states = {"hf": reference, "aoti": aoti, "fp32": fp32}
+    if not dynamic_prefill:
+        final_states["hf_full_prompt"] = unpartitioned
+    torch.save({label: values[("context_end", 3)] for label, values in final_states.items()}, args.output / "context_end.pt")
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("passed", "native_bitwise", "teacher_steps", "teacher_tensors",
                                            "failure_counts", "greedy_failures")}, indent=2))

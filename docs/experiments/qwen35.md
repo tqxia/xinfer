@@ -735,6 +735,193 @@ run, choose fresh `--output` paths and use the matching `--model-dir` and
 weights and defaults extraction to `work/qwen35/4b/block`; pass that path explicitly
 to export/validation and select separate package/result directories.
 
+## Dynamic full-model prefill and C++ generation: 2026-10-27
+
+The native chunk-rule adapter now integrates with all 18 DeltaNet layers in
+`TextStep`. `NativeDeltaNet` wraps each original module, reuses its parameters,
+and writes returned states into the existing explicit `TextCache`. For T=1 it
+delegates to the original HF decode implementation. Full-attention layers and
+the 48-tensor state ABI are unchanged.
+
+The exporter accepts `--dynamic-prefill --library PATH` for both entry points.
+It copies the native library into the package directory and records its checksum
+and size in both metadata files. The prefill contract is `tokens: null` with
+`token_range: [2,512]`; decode remains T=1. The two dynamic input dimensions
+(token IDs and cache positions) share one exported symbol. C++ loads the native
+library before loading either AOTI package and retains it through loader teardown.
+Python AOTI loads the same packaged library. Neither runtime pads prompt tokens.
+
+Package metadata selects dispatch: dynamic packages consume each 2–512-token
+input in one prefill call, while T=1 uses decode. Older fixed packages retain
+their 64/1 behavior. Thus 22, 511 and 512 input tokens each require one prefill
+call with these packages. Appended chunks use the current position and returned
+states. Generation still uses the shared greedy loop, context limit and EOS rules.
+
+On the source L20 / Torch 2.7.0+cu126 / Transformers 5.20.2 toolchain:
+
+| Entry point | Exported graph | Native DeltaNet calls | AOTI package |
+| --- | --- | ---: | ---: |
+| Dynamic prefill | 2,528 nodes, `{s0: VR[2,512]}` | 18 | 1,506,851,414 bytes |
+| Decode | 3,605 nodes, fixed T=1 | 0 | 1,506,844,698 bytes |
+
+Both strict exports and AOTI compilation passed, with no input/buffer mutations.
+Compilation uses `emulate_precision_casts=True`, TF32 disabled, and no
+`--eager-numerics` override. The native operation uses existing ATen kernels;
+no fused CUDA kernel or performance claim is introduced here.
+
+### Validation results
+
+The functional model check covers 68 steps / 3,332 tensors. The native adapter
+in eager mode is bitwise equal to original HF on all of them. HF DynamicCache
+and StaticCache also match on all 441 control tensors. Input preservation,
+finite values, shape/dtype checks and reset/repeat pass. Future KV poisoning and
+write-region checks pass at dynamic lengths 2, 22, 65, 511 and 512, including the
+subsequent decode write.
+
+The native runtime validator passes 27 cases: 4,018 teacher-forced tensors,
+30 greedy logit rows and 288 final-state tensors all match Python AOTI bitwise.
+Actual call counters confirm one prefill per multi-token input. The context-end
+case consumes `[512,448,63,1]`, makes three prefill calls plus one decode call,
+then rejects overflow without modifying state. EOS, one-token generation limits,
+repeat/reset, the production CLI, 22 input/package rejection cases and absence
+of Python libraries all pass.
+
+The broader end-to-end check covers prompt lengths
+`1,2,3,22,31,32,33,63,64,65,127,128,129,511,512`, continuation, appended chunks,
+poisoned future KV, reset/repeat and context capacity. Its 249 teacher-forced
+steps / 12,201 tensors match C++ and Python AOTI bitwise. HF and FP32 references
+use matching full-prompt partitions for dynamic packages. All three independent
+greedy chat cases agree with HF, including every emitted token:
+
+- Capital: `Paris.`
+- Arithmetic: `42`
+- Chinese: `编译器是将源代码翻译成机器码的自动化过程。`
+
+**Numerical acceptance remains open.** The unchanged 5% checks still fail:
+
+| Check | Result |
+| --- | --- |
+| Model AOTI vs HF (68 steps) | 1,126 conv + 2 recurrent tensor comparisons fail |
+| Model AOTI vs eager adapter | Same failures; adapter vs HF itself is bitwise |
+| End-to-end AOTI vs HF (249 steps) | 4,182 conv + 15 recurrent tensor comparisons fail |
+| Teacher-forced top-1 vs HF | Two differences: length 31 / step 2, length 33 / step 0 |
+| Independent greedy chat sequences vs HF | All three agree |
+
+Both top-1 differences occur at an HF top-two margin of zero; they remain
+recorded as differences. Worst end-to-end logit relative L2 is 3.9121%,
+peak-relative 2.2917%. FP32 controls are retained in both validation reports;
+they do not replace the BF16 parity requirements. The large relative conv errors
+use the same per-channel metric as earlier experiments. No tolerance was relaxed
+and neither numerical validator reports a pass. Eager adapter agreement excludes
+a porting mismatch for these fixtures, but does not establish the cause of every
+remaining compiled error or close Q35-NUM-001/Q35-NUM-002.
+
+### Reproduction and evidence
+
+See [dynamic full-model commands](../../compiler/qwen35/README.md#dynamic-full-model-prefill).
+The following generated directories are ignored by Git:
+
+- `artifacts/qwen35/0.8b/text-dynamic/`: compiled packages, graph dumps, metadata
+  and `libxinfer_delta_ops.so`.
+- `artifacts/qwen35/0.8b/dynamic-model-validation/`: HF/adapter/AOTI/FP32 metrics
+  and mask/state checks; exit status 1 records numerical failures.
+- `artifacts/qwen35/0.8b/dynamic-runtime-validation/`: passing native/CLI parity,
+  call counts, state traces, linkage, EOS and rejection checks.
+- `artifacts/qwen35/0.8b/dynamic-end-to-end/`: source snapshots, full-prompt
+  numerical comparisons, greedy results and native traces; exit status 1.
+
+The primary tests used `work/reorg-20261027/build/`. A fresh build at
+`work/dynamic-text-build/`, with only the full-model option enabled, produced
+identical library, runtime and validation binaries. The fresh configure required
+an explicit `-DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc` on this host.
+The rebuilt runtime also passed the original fixed-package validation:
+3,136 teacher tensors, 28 greedy logit rows, 288 final-state tensors and all
+18 rejection checks. Its report is under
+`artifacts/qwen35/0.8b/dynamic-fixed-compatibility/`.
+Logs and orchestration exit codes are under `work/dynamic-*.log` and
+`work/dynamic-text-validation-status.json`. The shared GPU remains unsuitable
+for performance conclusions.
+
+## Dynamic single-block native operator: 2026-10-27
+
+The original HF fallback's modulo padding, reshapes and Python chunk scan
+specialized export to the example token length. The new single-block adapter
+keeps the outer HF operations visible and moves only the chunk rule into
+`xinfer::delta_prefill`. It reuses the original parameters without changing HF
+globals, registering an attention backend, or rewriting the exported graph.
+
+The native implementation uses existing ATen CUDA operations and HF eager's
+unit-lower-triangular solve. Its internal zero padding uses beta=0 and log-decay=0,
+preserving recurrent state through padded positions. No fake tokens pass through
+the outer convolution. Inputs remain unchanged, the recurrent state stays FP32,
+and output is materialized in the query dtype before returning to the graph.
+This is a correctness implementation; the operator still launches many ATen
+kernels and is not a fused DeltaNet kernel.
+
+Source entry points:
+
+- `compiler/qwen35/adapters/native_delta.py`: original-weight prefill adapter,
+  native library loading and symbolic fake implementation.
+- `runtime/qwen35/delta_ops.cpp`: native chunk rule and dispatcher registration.
+- `compiler/qwen35/diagnostics/export_dynamic_block.py`: strict dynamic export
+  and AOTI package compilation.
+- `runtime/qwen35/tests/dynamic_block.cpp`: one package loader, varying-length
+  calls, explicit state, input checks, and Python-free process verification.
+- `compiler/qwen35/tests/validate_dynamic_block.py`: operator checks, HF/FP32
+  controls, stateful fixtures, partition comparisons and native bitwise checks.
+
+On the source L20 with Torch 2.7.0+cu126, Transformers 5.20.2, Triton 3.3.0 and
+C++11 ABI enabled, strict export succeeded with **69 nodes, one custom operator,
+and range `{s0: VR[2, 512]}`**, traced at T=32. AOTI compilation succeeded with
+`emulate_precision_casts=True` and TF32 disabled. Inspection of the generated
+C++ wrapper confirms a native proxy-executor call to the registered operator.
+`prefill.pt2` is the compiled package; `prefill.exported.pt2` is the separate
+saved export graph. This introduces no runtime compilation.
+
+The validator uses real layer-0 weights and seeded unit-scale Gaussian hidden
+inputs. The 14 tested lengths are 2, 3, 22, 31, 32, 33, 63, 64, 65, 127, 128,
+129, 511 and 512, each with zero and nonzero initial states. Additional cases
+process the same 129 tokens as `[129]`, `[64,65]` and `[2,63,64]`, then repeat
+the last case from its original state. There are 37 calls / 111 output and state
+tensors. The synthetic states use Gaussian scale 0.1.
+
+| Check | Result |
+| --- | --- |
+| Direct native op vs HF chunk rule, BF16 and FP32, T=2/65/129 | All 12 tensors bitwise equal |
+| `opcheck`: schema, fake tensor, dynamic AOT dispatch | Passed |
+| Adapter eager vs original HF block | All 111 tensors bitwise equal |
+| C++ vs Python AOTI | All 111 tensors bitwise equal |
+| AOTI vs HF, unchanged 5% limits | Passed |
+| Whole vs split sequences, unchanged 5% limits | Passed for all four engines |
+| Reset/repeat, input preservation, shape/dtype, finite values | Passed |
+| C++ loads one package; no Python libraries mapped | Passed |
+| C++ rejects lengths 1 and 513 before package invocation | Passed |
+
+Worst errors across calls, using the existing per-token/channel/head metrics:
+
+| Tensor | AOTI vs HF relative L2 | AOTI vs HF peak-relative | AOTI vs FP32 relative L2 | AOTI vs FP32 peak-relative |
+| --- | ---: | ---: | ---: | ---: |
+| Output | 0.2117% | 0.6211% | 1.2469% | 3.3774% |
+| Convolution state | 0% | 0% | 0.3821% | 0.3888% |
+| Recurrent state | 0.0002883% | 0.0004943% | 1.0461% | 1.7148% |
+
+HF BF16 has nearly identical aggregate errors against FP32. Partitioning still
+changes BF16 results: maximum relative L2 0.6370%, peak-relative 1.4151%; the FP32
+control differs by at most 0.0001781% / 0.0002122%, respectively. These checks do
+not close Q35-NUM-001 or Q35-NUM-002 and do not establish full-model acceptance.
+
+Final evidence is in `artifacts/qwen35/0.8b/dynamic-block/` and
+`artifacts/qwen35/0.8b/dynamic-block-validation/`. An earlier run used smaller
+hidden amplitudes and is retained under `work/delta-native-preliminary/`.
+Builds used `work/reorg-20261027/build/`;
+logs are `work/delta-native-*.log`. All generated data remains ignored by Git.
+The [compiler README](../../compiler/qwen35/README.md#dynamic-single-block-experiment)
+contains portable reproduction commands with fresh default output directories.
+
+This resolved the demonstrated export blocker for the isolated native-op block.
+The subsequent full-model integration is recorded above. No speedup is claimed
+on the busy development GPU.
+
 ## Completed 4B single-block probe
 
 The following contract, commands and results describe **4B only**. This probe

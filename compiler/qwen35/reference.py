@@ -1,5 +1,6 @@
-"""HF's original text model and StaticCache, with explicit positions and masks."""
+"""HF and Python AOTI runtimes with explicit state and package-driven dispatch."""
 
+import json
 import torch
 from transformers import StaticCache
 
@@ -53,6 +54,15 @@ class HFRuntime:
 
 class PythonRuntime:
     def __init__(self, packages, specs):
+        metadata = json.loads((packages / "prefill.json").read_text())
+        self.dynamic_prefill = metadata.get("dynamic_prefill", False)
+        if self.dynamic_prefill:
+            from compiler.common.artifacts import sha256
+            from compiler.qwen35.adapters.native_delta import load_library
+            library = packages / "libxinfer_delta_ops.so"
+            assert sha256(library) == metadata["delta_library"]["sha256"], "DeltaNet library checksum mismatch"
+            assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
+            load_library(library)
         self.functions = {kind: torch._inductor.aoti_load_package(str(packages / f"{kind}.pt2"))
                           for kind in ("prefill", "decode")}
         self.specs = specs
@@ -65,10 +75,11 @@ class PythonRuntime:
         assert 1 <= len(tokens) <= 512 and self.position + len(tokens) <= CACHE_LENGTH
         offset = 0
         while offset < len(tokens):
-            length = PREFILL if len(tokens) - offset >= PREFILL else 1
+            remaining = len(tokens) - offset
+            length = remaining if self.dynamic_prefill else (PREFILL if remaining >= PREFILL else 1)
             ids = torch.tensor([tokens[offset:offset + length]], device="cuda")
             positions = torch.arange(self.position, self.position + length, device="cuda")
-            result = self.functions["prefill" if length == PREFILL else "decode"](ids, positions, self.state)
+            result = self.functions["prefill" if length > 1 else "decode"](ids, positions, self.state)
             self.state = list(result[1:])
             self.position += length
             offset += length
