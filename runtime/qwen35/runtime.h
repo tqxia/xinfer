@@ -60,6 +60,8 @@ struct Spec {
       require(metadata.at(key) == prefill.at(key), std::string("Package metadata differs: ") + key);
     require(metadata.value("eager_numerics", false) == prefill.value("eager_numerics", false),
             "Package numerical settings differ");
+    require(metadata.value("linear_packing", Json()) == prefill.value("linear_packing", Json()),
+            "Package linear-packing settings differ");
     require(metadata.at("kind") == "decode" && metadata.at("tokens") == 1 && prefill.at("kind") == "prefill",
             "Invalid package entry points");
     require(metadata.at("delta_backend") == prefill.at("delta_backend"), "Package DeltaNet backends differ");

@@ -11,11 +11,12 @@ is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
 tensors cover 18 conv/recurrent pairs and six KV pairs. Recurrent states use
 FP32. Inputs remain unchanged; returned tensors replace the previous state.
 
-C++ and Python AOTI match bitwise across 12,201 teacher-forced tensors, and all
-three greedy chat tests match HF. HF numerical acceptance remains **open**:
-conv/recurrent errors exceed the unchanged 5% limits, and two teacher-forced
-top-token choices differ at HF ties. Final performance measurements require
-an idle GPU.
+With packed packages, C++ and Python AOTI match bitwise across 12,201
+teacher-forced tensors. Arithmetic and Chinese greedy output match HF; the
+capital answer omits a period at an HF tie. HF numerical acceptance remains
+**open**: conv/recurrent errors exceed the unchanged 5% limits, and
+teacher-forced top-token differences include a nonzero HF margin. Final
+performance measurements require an idle GPU.
 
 ## Source layout
 
@@ -121,6 +122,52 @@ mapped. Full-model checks retain all state tensors, HF/FP32 controls, dispatch
 counts, masked-future checks and CLI rejection cases. Numerical validators exit
 nonzero for acceptance failures and retain the reports.
 
+## Projection weight packing
+
+Qwen3.5 export always runs the generic pass in
+`compiler/common/passes/pack_linears.py` after strict export and before
+Inductor decomposition. It combines independent, bias-free linear
+projections sharing the same input. Weights must be frozen parameters with
+exclusive storage and no other graph consumers; shared/tied/trainable weights
+are skipped. Packed parameters are created once during export. Replaced
+parameters are removed, and there is no inference-time weight concatenation.
+
+For this model, 48 groups combine DeltaNet inputs, MLP gate/up and attention QKV,
+reducing 187 linear calls to 97. Split outputs retain the original BF16 dtype
+and contiguous layout for downstream views. Contiguous copies can cost time
+in prefill; packing reduces launches rather than the number of weight bytes.
+Packing is the default for both prefill and decode. No additional model
+adapters or native libraries are needed.
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.export prefill
+"$QWEN_PY" -m compiler.qwen35.export decode
+"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+  --packages artifacts/qwen35/0.8b/text \
+  --output artifacts/qwen35/0.8b/packing-runtime-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
+  --packages artifacts/qwen35/0.8b/text \
+  --output artifacts/qwen35/0.8b/packing-model-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
+  --packages artifacts/qwen35/0.8b/text \
+  --output artifacts/qwen35/0.8b/packing-end-to-end-new
+```
+
+Exports default to `artifacts/qwen35/0.8b/text`. Use a fresh `--output` directory
+if older unpacked packages already occupy that path. The metadata's
+`linear_packing` field records logical groups and policy version; C++ and Python
+reject mismatched pairs. The separate `prefill.packing.json` / `decode.packing.json`
+files also map FX outputs and source parameter names to each packed constant,
+which helps profiling attribution.
+
+The model validator adds `packing_vs_adapter` and `aoti_vs_packing` comparisons
+for packed packages, using eager exported graphs to distinguish packing effects
+from compilation. Changed matrix shapes can change floating-point reductions;
+all original HF/FP32 checks and limits remain in place. Unpacked eager graphs
+remain an internal numerical control; the export CLI has no packing switch.
+Hold packing constant across compiler-tuning arms. For a packing A/B experiment,
+use an unpacked control checkout with the same selected Inductor configuration.
+
 ## Benchmark
 
 ```bash
@@ -134,6 +181,10 @@ tokens. EOS is data during timing. Reports retain numerical acceptance,
 reset/prefill/decode timings, memory, workload, provenance and telemetry.
 `--allow-busy` is for functional checks and marks timings provisional. Final
 measurements require an idle environment.
+
+[The Inductor tuning guide](../../docs/experiments/qwen35-inductor-tuning.md)
+defines separate generated-GEMV and GEMM-autotuning experiments, package-pair
+requirements, validation and native A/B measurement.
 
 ## Numerical issues and historical evidence
 

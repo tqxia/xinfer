@@ -51,6 +51,7 @@ def reject_invalid(args, env, metadata):
         ("mixed_checkpoint", lambda m: m["prefill"]["checkpoint"].update(revision="different"), "Package metadata differs: checkpoint"),
         ("mixed_state", lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5), "Package metadata differs: state"),
         ("mixed_numerics", lambda m: m["prefill"].update(eager_numerics=not m["decode"].get("eager_numerics", False)), "Package numerical settings differ"),
+        ("mixed_packing", lambda m: m["prefill"].update(linear_packing={"enabled": "different"}), "Package linear-packing settings differ"),
         ("entry_point", lambda m: m["prefill"].update(tokens=63),
          "Expected dynamic T=2..512/T=1 packages"),
         ("torch_version", lambda m: [v.update(torch="0.0.0") for v in m.values()], "Torch version mismatch"),
@@ -151,6 +152,7 @@ def main():
     assert native["loader_pairs"] == 1 and native["no_python_library"] and len(native["cases"]) == len(cases)
     report = dict(comparison="C++ vs Python AOTI", hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  linear_packing=metadata["prefill"].get("linear_packing"),
                   cases=[], teacher_tensors=0, greedy_logit_rows=0, greedy_state_tensors=0,
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)})

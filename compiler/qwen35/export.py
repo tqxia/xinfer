@@ -13,19 +13,36 @@ from transformers.models.qwen3_5 import modeling_qwen3_5
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
 from compiler.common.artifacts import sha256, ROOT
+from compiler.common.passes.pack_linears import pack_linears
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
+
+
+def export_step(model, kind):
+    """Create the graph used by compilation and the packing-only eager control."""
+    dynamic = kind == "prefill"
+    length = 32 if dynamic else 1
+    torch.manual_seed(35)
+    inputs = (torch.randint(0, model.config.vocab_size, (1, length), device="cuda"),
+              torch.arange(length, device="cuda"), zero_state(model.config))
+    shapes = None
+    if dynamic:
+        tokens = torch.export.Dim("tokens", min=2, max=512)
+        shapes = ({1: tokens}, {0: tokens}, [None] * len(inputs[2]))
+    exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
+    exported.validate()
+    packing = pack_linears(exported)
+    return exported, packing
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("kind", choices=("prefill", "decode"))
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
-    parser.add_argument("--output", type=Path)
+    parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Keep native mean reductions and disable FP contraction")
     args = parser.parse_args()
-    args.output = args.output or ARTIFACT_DIR / "text"
     configure_text()
     args.output.mkdir(parents=True, exist_ok=True)
     package = args.output / f"{args.kind}.pt2"
@@ -42,17 +59,12 @@ def main():
     config = model.config
     dynamic = args.kind == "prefill"
     length = 32 if dynamic else 1
-    torch.manual_seed(35)
-    inputs = (torch.randint(0, config.vocab_size, (1, length), device="cuda"),
-              torch.arange(length, device="cuda"), zero_state(config))
     with torch.inference_mode():
         start = time.perf_counter()
-        shapes = None
-        if dynamic:
-            tokens = torch.export.Dim("tokens", min=2, max=512)
-            shapes = ({1: tokens}, {0: tokens}, [None] * len(inputs[2]))
-        exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
-        exported.validate()
+        exported, packing = export_step(model, args.kind)
+        (args.output / f"{args.kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
+        print(f"Packed {len(packing['groups'])} groups: "
+              f"{packing['linear_calls_before']} -> {packing['linear_calls_after']} linear calls", flush=True)
         export_seconds = time.perf_counter() - start
         assert not exported.graph_signature.buffers_to_mutate
         assert not exported.graph_signature.user_inputs_to_mutate
@@ -68,6 +80,10 @@ def main():
     metadata = dict(
         kind=args.kind, tokens=None if dynamic else length, token_range=[2, 512] if dynamic else [length, length],
         delta_backend="triton_op",
+        linear_packing=dict(enabled=True, version=1,
+                            groups=[{key: group[key] for key in
+                                     ("packed_parameter", "source_parameters", "output_widths")}
+                                    for group in packing["groups"]]),
         range_constraints=str(exported.range_constraints), triton_delta_ops=triton_ops,
         cache_length=CACHE_LENGTH, vocabulary=config.vocab_size,
         hidden_size=config.hidden_size, layer_types=config.layer_types,
@@ -85,7 +101,7 @@ def main():
         source_sha256={name: sha256(ROOT / name) for name in (
             'compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/export.py',
             'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py',
-            'compiler/qwen35/kernels/recurrent.py')},
+            'compiler/qwen35/kernels/recurrent.py', 'compiler/common/passes/pack_linears.py')},
         parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
         rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
         tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,

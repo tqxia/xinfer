@@ -50,6 +50,8 @@ class HFRuntime:
 class PythonRuntime:
     def __init__(self, packages, specs):
         metadata = json.loads((packages / "prefill.json").read_text())
+        decode = json.loads((packages / "decode.json").read_text())
+        assert metadata.get("linear_packing") == decode.get("linear_packing"), "Package linear-packing settings differ"
         assert metadata["delta_backend"] == "triton_op", "Unsupported DeltaNet backend"
         assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
         self.functions = {kind: torch._inductor.aoti_load_package(str(packages / f"{kind}.pt2"))

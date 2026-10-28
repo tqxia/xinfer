@@ -169,6 +169,7 @@ def main():
         assert all(bits_equal(a, b) for a, b in zip(aoti[("length_65", i)], aoti[("repeat_65", i)]))
     report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  linear_packing=metadata["prefill"].get("linear_packing"),
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
                   teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
@@ -200,7 +201,8 @@ def main():
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
     names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h", "runtime/common/generation.h"]
-    names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py"]
+    names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
+              "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]
     for name in names:
         target = args.output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -112,6 +112,7 @@ def benchmark(args):
     root = Path(__file__).resolve().parents[2]
     sources = ["compiler/qwen35/" + n for n in ("benchmark.py", "reference.py", "model.py", "config.py", "prepare.py", "export.py", "requirements.txt")]
     sources += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py"]
+    sources += ["compiler/common/passes/pack_linears.py"]
     sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "runtime/common/io.h",
                 "runtime/common/generation.h", "runtime/common/benchmark.h"]

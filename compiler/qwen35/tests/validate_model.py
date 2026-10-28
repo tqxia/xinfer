@@ -111,6 +111,7 @@ def main():
     for field in ("checkpoint", "state", "source_sha256", "inductor_configs", "attention_backend"):
         assert metadata["prefill"][field] == metadata["decode"][field], field
     assert metadata["prefill"].get("eager_numerics", False) == metadata["decode"].get("eager_numerics", False)
+    assert metadata["prefill"].get("linear_packing") == metadata["decode"].get("linear_packing")
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["delta_backend"] == "triton_op"
     cases = fixtures(tokenizer)
@@ -135,6 +136,14 @@ def main():
     install_delta(model)
     wrapper = TextStep(model)
     adapted = explicit_trace(dict(prefill=wrapper, decode=wrapper), config, cases)
+    packed = None
+    if metadata["prefill"].get("linear_packing", {}).get("enabled", False):
+        from compiler.qwen35.export import export_step
+        print("Eager packed graph: isolate packing from compilation", flush=True)
+        packed_functions = {kind: export_step(model, kind)[0].module()
+                            for kind in ("prefill", "decode")}
+        packed = explicit_trace(packed_functions, config, cases)
+        del packed_functions
     del wrapper, model
     torch.cuda.empty_cache()
     print("Independent FP32 reference", flush=True)
@@ -147,8 +156,9 @@ def main():
     compiled = explicit_trace(functions, config, cases)
     report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  linear_packing=metadata["prefill"].get("linear_packing"),
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/kernels/recurrent.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/kernels/recurrent.py', 'compiler/common/passes/pack_linears.py', 'compiler/qwen35/export.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
     seed = cases[1]["steps"][0] * 8
     report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 511, 512]
@@ -163,6 +173,9 @@ def main():
         ("hf_vs_fp32", reference, fp32, False),
     ):
         compare(report, name, actual, expected, specs, enforce)
+    if packed is not None:
+        compare(report, "packing_vs_adapter", packed, adapted, specs, True)
+        compare(report, "aoti_vs_packing", compiled, packed, specs, True)
     for i in range(len(cases[1]["steps"])):
         assert all(bits_equal(a, b) for a, b in zip(compiled[("prefill_decode", i)], compiled[("repeat", i)]))
     report["checks"].update(reset_repeat_bitwise=True, input_preservation=True, finite_shapes_dtypes=True)

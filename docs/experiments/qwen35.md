@@ -740,6 +740,97 @@ run, choose fresh `--output` paths and use the matching `--model-dir` and
 weights and defaults extraction to `work/qwen35/4b/block`; pass that path explicitly
 to export/validation and select separate package/result directories.
 
+## Frozen linear weight packing: 2026-10-28
+
+Implemented `compiler/common/passes/pack_linears.py` as a model-independent pass over
+`ExportedProgram`, before Inductor decomposition. It groups bias-free
+`aten.linear` calls sharing the exact input node and compatible frozen 2D
+weights. It skips trainable/shared/tied weights, tensor subclasses, buffers,
+and weights with other consumers. Real weights are concatenated once during
+export into lifted frozen parameters; replaced parameters/placeholders are
+removed. The original output node names, user/state ABI and range constraints
+are preserved. Split outputs restore contiguous layout for existing views.
+
+`compiler.qwen35.export` always applies the pass to both entry points and
+writes to `artifacts/qwen35/0.8b/text` by default, with no packing switch.
+The initial validation below used explicitly selected `text-packed` packages;
+those artifact paths remain unchanged. Metadata records versioned logical
+packing groups; separate
+`.packing.json` files include FX names for profiling. C++ and Python reject
+mixed packing settings. `export_step` shares graph creation with the eager
+packing-only numerical control; no new model adapters are needed.
+
+Both strict dynamic export and AOTI compilation pass on the development L20,
+Torch 2.7.0+cu126 / Triton 3.3.0. There are 48 groups: 18 DeltaNet input groups,
+24 MLP gate/up groups and six attention QKV groups. Linear calls decrease from
+187 to 97 in both graphs. Prefill has 2,672 nodes with T=2..512; decode has
+2,705 nodes at T=1. The extra split/layout nodes increase graph size despite
+reducing projection calls.
+
+The generated wrappers each contain exactly 97 `aoti_torch_cuda_mm_out` calls
+and 48 packed constants. None of the 138 replaced source weight constants
+remain. Their packed bytes are exactly 718,405,632, equal to the source weight
+bytes. Packing is absent from inference: weights are already materialized
+constants, not runtime concatenations. Package sizes are 1,506,707,734 bytes
+(prefill) and 1,506,617,488 bytes (decode), close to the unpacked pair rather
+than carrying another copy of the original weights. Evidence is
+`artifacts/qwen35/0.8b/packing-package-audit.json`.
+
+Six CPU tests cover dynamic shapes, uneven output widths, interface/state
+preservation, parameter pruning, contiguous view consumers, BF16 output rounding,
+independent input groups, serialization and idempotence. Exclusion subcases cover
+single projections, bias, trainable weights, different inputs/dtypes, repeated
+weights, distinct parameters sharing storage and other weight consumers. All pass.
+
+Native-runtime validation passes 27 cases: 4,018 teacher tensors, 28 greedy
+logit rows and 288 final-state tensors match Python AOTI bitwise. All 23
+rejection checks pass, including a mismatched-packing package pair. The broader
+suite matches all 249 teacher-forced steps / 12,201 tensors, plus greedy token
+IDs/logits/final states, across C++ and Python AOTI. Input preservation, masks,
+write regions, context overflow and reset/repeat checks pass.
+
+Packing is not numerically identical to separate BF16 projections. The 68-step
+model suite now includes an eager packed graph to distinguish that change from
+Inductor effects, with unchanged 5% limits:
+
+| Comparison | Maximum logits relative L2 / peak-relative | Failed tensor comparisons |
+| --- | --- | --- |
+| Packing eager vs unpacked adapter | 1.492277% / 1.313406% | 1,036 conv + 2 recurrent |
+| AOTI vs packing eager | 1.427014% / 1.127820% | 1,011 conv + 1 recurrent |
+| AOTI vs HF BF16 | 1.543383% / 1.086957% | 1,121 conv |
+
+The eager packed graph has the same top token as the unpacked adapter at all
+68 steps, despite the tensor differences. AOTI versus HF differs at
+`dynamic_31` step 2 (HF tie) and `dynamic_32` step 1 (HF margin 0.125).
+Do not attribute every difference to the previously recorded gated-norm issue:
+changed GEMM shapes already alter numerical results before compilation.
+
+Expanded HF acceptance remains open: 4,099 conv and 17 recurrent comparisons
+exceed 5%. Maximum logits relative L2 / peak-relative are 3.924062% / 1.979167%
+against HF, versus 2.684237% / 1.458333% in the earlier unpacked run with these
+fixtures/toolchain. On the FP32 subset, maximum logit relative L2 is 3.177323%
+for packed AOTI and 2.346991% for HF BF16. Arithmetic and Chinese greedy output
+match HF; the capital answer is ` Paris\n` rather than ` Paris.\n`, where HF
+has a tie between period and end-of-turn. Teacher-forced differences also
+include `length_32` step 1 with a nonzero HF margin, so not all differences
+are ties. Both numerical validators exit 1 and retain their full reports.
+
+The HF/native benchmark smoke passes lengths 1, 22 and 512 with two decode
+inputs, one warmup and one measured repeat; timings are provisional on the busy
+GPU. No performance improvement is claimed. Packing is now the default at the
+user's request; numerical acceptance and idle A/B measurements remain open.
+The tuning guide uses the earlier unpacked control checkout for its original
+compiler-option experiment. Keep packing fixed across tuning arms, then compare
+packed and unpacked checkouts with the selected configuration held fixed.
+
+Canonical evidence under `artifacts/qwen35/0.8b/`:
+`packing-runtime/summary.json`, `packing-model/summary.json`,
+`packing-end-to-end/summary.json`, `packing-benchmark-smoke/summary.json` and
+`packing-package-audit.json`. Build and export logs are in `work/packing-*`.
+The existing unpacked package pair is retained as the control. The rebuilt CLI
+reproduces its earlier capital token IDs and full logit trace bitwise; evidence
+is `packing-unpacked-compatibility/summary.json` under the same artifact root.
+
 ## Dynamic-only Triton operators: 2026-10-28
 
 Dynamic prefill T=2..512 and decode T=1 are now the only full-model execution
