@@ -94,6 +94,27 @@ and metadata together. The runtime rejects incompatible pairs.
 extracts directly into `/tmp`, ignoring `TMPDIR`.
 Leave room there for both model libraries: about 3 GB plus margin for this pair.
 
+### Optional compiler optimizations
+
+Pass `--enable-inductor-optimization` to enable the current Inductor optimization
+settings. This generic flag currently sets `combo_kernels=True` and
+`benchmark_combo_kernel=True`; future optimizations can extend the same flag.
+Export both entry points with matching settings into a fresh directory:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.export prefill --enable-inductor-optimization \
+  --output artifacts/qwen35/0.8b/text-optimized
+"$QWEN_PY" -m compiler.qwen35.export decode --enable-inductor-optimization \
+  --output artifacts/qwen35/0.8b/text-optimized
+```
+
+Metadata records the `enable_inductor_optimization` flag and resolved
+`inductor_configs`; the runtime rejects package pairs with different configs.
+The flag is off by default and
+requires no runtime switch. Rerun the model, runtime and end-to-end validators with
+`--packages artifacts/qwen35/0.8b/text-optimized`, since these optimizations can
+change floating-point results.
+
 ## Generate and validate
 
 ```bash

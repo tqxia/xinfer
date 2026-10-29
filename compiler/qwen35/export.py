@@ -40,6 +40,8 @@ def main():
     parser.add_argument("kind", choices=("prefill", "decode"))
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
+    parser.add_argument("--enable-inductor-optimization", action="store_true",
+                        help="Enable optional Inductor optimizations (currently combo kernels)")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Keep native mean reductions and disable FP contraction")
     args = parser.parse_args()
@@ -74,6 +76,8 @@ def main():
         print(f"Exported {args.kind}: {len(list(exported.graph.nodes))} nodes; "
               f"{triton_ops} Triton DeltaNet ops; ranges {exported.range_constraints}", flush=True)
         options = {"emulate_precision_casts": True}
+        if args.enable_inductor_optimization:
+            options.update(combo_kernels=True, benchmark_combo_kernel=True)
         start = time.perf_counter()
         torch._inductor.aoti_compile_and_package(exported, package_path=str(package), inductor_configs=options)
         compile_seconds = time.perf_counter() - start
@@ -107,6 +111,7 @@ def main():
         tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,
         strict_export=True, graph_nodes=len(list(exported.graph.nodes)), inductor_configs=options,
         eager_numerics=args.eager_numerics,
+        enable_inductor_optimization=args.enable_inductor_optimization,
         export_seconds=export_seconds, compile_seconds=compile_seconds,
         package_bytes=package.stat().st_size, package_sha256=sha256(package),
     )
