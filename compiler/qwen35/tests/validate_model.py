@@ -156,12 +156,14 @@ def main():
     compiled = explicit_trace(functions, config, cases)
     report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  delta_algorithm=metadata["prefill"].get("delta_algorithm"),
+                  delta_short_threshold=metadata["prefill"].get("delta_short_threshold"),
                   linear_packing=metadata["prefill"].get("linear_packing"),
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
                   source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/qwen35/export.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
     seed = cases[1]["steps"][0] * 8
-    report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 511, 512]
+    report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 96, 97, 98, 511, 512]
     for length in report["checks"]["dynamic_mask_lengths"]:
         check_mask_and_writes(functions, config, seed[:length])
     for name, actual, expected, enforce in (
@@ -178,6 +180,10 @@ def main():
         compare(report, "aoti_vs_packing", compiled, packed, specs, True)
     for i in range(len(cases[1]["steps"])):
         assert all(bits_equal(a, b) for a, b in zip(compiled[("prefill_decode", i)], compiled[("repeat", i)]))
+    mixed = next(c for c in cases if c["name"] == "mixed_dispatch")
+    for i in range(len(mixed["steps"])):
+        assert all(bits_equal(a, b) for a, b in zip(
+            compiled[("mixed_dispatch", i)], compiled[("mixed_dispatch_repeat", i)]))
     report["checks"].update(reset_repeat_bitwise=True, input_preservation=True, finite_shapes_dtypes=True)
     report["passed"] = not report["failures"]
     (args.output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")

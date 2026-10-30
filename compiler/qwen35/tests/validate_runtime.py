@@ -60,11 +60,20 @@ def reject_invalid(args, env, metadata):
         ("gpu_arch", lambda m: [v.update(sm=[0, 0]) for v in m.values()], "GPU architecture mismatch"),
     ]
     mutations += [
+        ("mixed_delta_threshold", lambda m: m["prefill"].update(delta_short_threshold=98),
+         "Package DeltaNet policy differs: delta_short_threshold"),
+        ("mixed_delta_algorithm", lambda m: m["prefill"].update(delta_algorithm={"prefill": "different"}),
+         "Package DeltaNet policy differs: delta_algorithm"),
+        ("mixed_delta_tile", lambda m: m["prefill"].update(delta_transform_tile=64),
+         "Package DeltaNet policy differs: delta_transform_tile"),
         ("prefill_range", lambda m: m["prefill"].update(token_range=[2, 513]), "Expected dynamic T=2..512/T=1 packages"),
         ("decode_range", lambda m: m["decode"].update(token_range=[1, 2]), "Expected dynamic T=2..512/T=1 packages"),
         ("mixed_backend", lambda m: m["prefill"].update(delta_backend="invalid"), "Package DeltaNet backends differ"),
         ("unknown_backend", lambda m: [v.update(delta_backend="invalid") for v in m.values()], "Unsupported DeltaNet backend"),
     ]
+    if "delta_short_threshold" in metadata["decode"]:
+        mutations.append(("missing_delta_threshold", lambda m: m["prefill"].pop("delta_short_threshold"),
+                          "Package DeltaNet policy differs: delta_short_threshold"))
     for name, mutate, error in mutations:
         packages = directory / name
         packages.mkdir()
@@ -99,7 +108,7 @@ def main():
     assert metadata["prefill"]["delta_backend"] == "triton_op"
     cases = fixtures(tokenizer)
     seed = cases[1]["steps"][0]
-    for length in (2, 63, 65, 129, 511):
+    for length in (2, 63, 65, 96, 97, 98, 129, 511):
         prompt = (seed * (length // len(seed) + 1))[:length]
         cases.append(dict(name=f"dispatch_{length}", steps=[prompt, [42]]))
     stream = seed * 16
@@ -181,7 +190,8 @@ def main():
                 assert actual["overflow_rejected"]
         report["cases"].append(dict(actual, bitwise_equal=True))
     for first, repeat, suffix in (("prefill_decode", "repeat", "states"), ("capital", "capital_repeat", "f32"),
-                                   ("capital", "capital_repeat", "states")):
+                                   ("capital", "capital_repeat", "states"),
+                                   ("mixed_dispatch", "mixed_dispatch_repeat", "states")):
         assert sha256(args.output / "native" / f"{first}.{suffix}") == sha256(args.output / "native" / f"{repeat}.{suffix}")
     prompt_path, ids_path, trace_path = [args.output / n for n in ("prompt.ids", "generated.ids", "cli.f32")]
     prompt_path.write_text(" ".join(map(str, capital["prompt"])) + "\n")

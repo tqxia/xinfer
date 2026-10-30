@@ -194,8 +194,12 @@ def main():
             for mode, tokens in (("decode", 1), ("prefill", 32)):
                 case = next(c for c in cases if c["name"] == f"{dtype}-t{tokens}-state")
                 sample = tuple(x.cuda().contiguous() for x in (*case["steps"][0], *(case[k] for k in ("conv", "state", "weight", "A_log", "dt_bias"))))
-                report.setdefault("opcheck", {})[f"{dtype}-{mode}"] = torch.library.opcheck(
-                    torch.ops.xinfer.delta_fused.default, sample, test_utils=("test_schema", "test_faketensor"))
+                ops = [torch.ops.xinfer.delta_cond_short.default]
+                if mode == "prefill":
+                    ops.append(torch.ops.xinfer.delta_cond_long.default)
+                for op in ops:
+                    report.setdefault("opcheck", {})[f"{dtype}-{mode}-{op}"] = torch.library.opcheck(
+                        op, sample, test_utils=("test_schema", "test_faketensor"))
                 dynamic = None
                 if mode == "prefill":
                     length = torch.export.Dim("tokens", min=2, max=512)
@@ -203,7 +207,11 @@ def main():
                 exported = torch.export.export(Fused(), sample, dynamic_shapes=dynamic, strict=True)
                 exported.validate()
                 assert not exported.graph_signature.user_inputs_to_mutate
-                assert sum(n.target == torch.ops.xinfer.delta_fused.default for n in exported.graph.nodes) == 1
+                nodes = [n for module in exported.graph_module.modules()
+                         if isinstance(module, torch.fx.GraphModule) for n in module.graph.nodes]
+                assert sum(n.target == torch.ops.higher_order.cond for n in nodes) == int(mode == "prefill")
+                assert sum(n.target == torch.ops.xinfer.delta_cond_short.default for n in nodes) == 1
+                assert sum(n.target == torch.ops.xinfer.delta_cond_long.default for n in nodes) == int(mode == "prefill")
                 path = destination / f"{dtype}-{mode}.pt2"
                 torch._inductor.aoti_compile_and_package(exported, package_path=str(path),
                                                         inductor_configs={"emulate_precision_casts": True})

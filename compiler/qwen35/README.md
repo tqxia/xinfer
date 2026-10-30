@@ -11,8 +11,8 @@ is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
 tensors cover 18 conv/recurrent pairs and six KV pairs. Recurrent states use
 FP32. Inputs remain unchanged; returned tensors replace the previous state.
 
-One functional operator dispatches to fused decode or chunked FP32 prefill.
-The chunked path is a forward-only PoC; no speedup is established. Focused
+One functional dispatcher selects fused recurrence for T<=97 and B3/C64
+chunked FP32 prefill for longer requests. The threshold is provisional. Focused
 validation compares it with HF recurrent/chunked operations and an independent
 FP32 control; full-model and native checks cover generation and carried state.
 HF/compiler numerical acceptance remains **open**. The experiment record retains
@@ -24,9 +24,9 @@ No timing result is claimed on the busy development GPU.
 - `model.py`: prepared text checkpoint, functional `TextStep` and state ABI.
 - `adapters/delta.py`: reuse HF weights, projections and gated norm; call unified
   Triton preparation/recurrence for prefill and decode.
-- `kernels/recurrent.py`: fused decode, parallel prefill preparation and the
-  shared `torch.library.triton_op` wrapper.
-- `kernels/chunked.py`: FP32 chunk transforms, state scan and output kernels.
+- `kernels/recurrent.py`: fused recurrence, parallel preparation, functional
+  branch operators and shape-based `torch.cond` dispatch.
+- `kernels/chunked.py`: C64 FP32 chunking with B3's 32-column U/W transform.
 - `export.py`: strict export and AOTInductor packaging.
 - `prepare.py`: offline token IDs; `reference.py`: HF/Python AOTI validation runners.
 - `tests/`: fused-operator, model, C++ and end-to-end checks.
@@ -35,10 +35,35 @@ No timing result is claimed on the busy development GPU.
 Native sources live in `runtime/qwen35/`; small shared helpers live in
 `compiler/common/` and `runtime/common/`.
 
+## Conditional GDN validation
+
+The standalone test exercises the production kernels directly. T<=97 uses the
+existing fused recurrence; longer inputs use C64 chunking with the measured B3
+32-column U/W transform. Threshold 97 comes from an isolated-kernel crossover
+and still needs full-model performance evaluation on an idle target.
+
+The condition uses `qkv.shape[1]` directly. Each branch owns fresh output/state
+tensors, and only the long branch allocates chunk workspaces. Strict export
+retains one dynamic prefill range, T=2..512. AOTI packages both branches and
+generates a native shape comparison; T=1 uses a separate decode package.
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.tests.validate_cond \
+  --binary work/qwen35/build/qwen35_fused \
+  --output artifacts/qwen35/0.8b/cond-validation-new
+```
+
+The output must be fresh. The validator retains exported/decomposed graphs,
+packaged C++ wrappers/cubin hashes, raw state fixtures and numerical reports.
+It reuses the existing Python-free C++ runner. `dispatch_passed` reports the
+dispatch/backend regression gate separately from the existing HF/FP32 numerical
+acceptance; inspect both. Noncontiguous inputs are checked through the Python
+dispatcher; exported package inputs retain the contiguous-layout ABI.
+
 ## Dynamic full-model prefill and Triton GDN
 
-`torch.library.triton_op` keeps the GDN operator visible in the exported graph.
-Its implementation uses `wrap_triton` so AOTInductor can compile the kernels and
+`torch.cond` retains both GDN branches in the exported graph. Each branch uses
+`torch.library.triton_op` and `wrap_triton` so AOTInductor can compile the kernels and
 include their cubins in each `.pt2` package. The C++ loader needs the two packages,
 their JSON metadata and matching LibTorch/CUDA dependencies. It needs no Python,
 Triton installation or separate custom-op library at inference time.
@@ -47,8 +72,7 @@ The separate cubin builder, CUDA-driver launcher and ATen chunk implementation
 have been removed. Export has no backend or dynamic-prefill switch. Older fixed
 or external-custom-op packages need to be re-exported for this runtime.
 
-Both the fixed-T=1 decode package and the dynamic-T=2..512 prefill package use
-`xinfer::delta_fused`, exposed as:
+The adapter retains the same functional tensor interface for both entry points:
 
 ```text
 fused(qkv, b, a, conv, state, weight, A_log, dt_bias)
@@ -67,11 +91,13 @@ beta/log-decay preparation, Q/K normalization, state update and output reduction
 Four value tiles share Q/K preparation; only tile zero writes their convolution
 history.
 
-Prefill prepares Q/K/V and gates in parallel across tokens and heads, then runs
+Short prefill reuses fused recurrence. Long prefill prepares Q/K/V and gates in
+parallel across tokens and heads, then runs
 four chunk kernels: cumulative decay and triangular solve, U/W transforms,
 state propagation between chunks, and parallel outputs. The fixed chunk size
 is 64. It is an internal compute tile; dynamic T=2..512 still uses one prefill
-package, with masked neutral tails rather than separate length buckets.
+package, with masked neutral tails rather than separate length buckets. The
+U/W output-feature tile is 32; the dot reduction still covers all 64 chunk rows.
 Workspaces, state arithmetic and matrix products use FP32 with explicit IEEE
 dot precision. Convolution/SiLU and beta retain their input-dtype rounding.
 
@@ -116,8 +142,9 @@ cmake --build work/qwen35/build \
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2` and their `.json` metadata under
 `artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`,
-`delta_algorithm={prefill: chunked_fp32, decode: fused_recurrent}`,
-`delta_chunk_size=64` and `delta_dot_precision=ieee`, plus token ranges, source
+the short/long branch operators and algorithms, `delta_short_threshold=97`,
+`delta_chunk_size=64`, `delta_transform_tile=32` and `delta_dot_precision=ieee`,
+plus per-entry conditional graph counts, token ranges, source
 checksums, toolchain and GPU architecture. Keep the package pair and metadata
 together. The runtime rejects incompatible pairs.
 

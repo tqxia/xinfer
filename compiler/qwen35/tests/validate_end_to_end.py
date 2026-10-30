@@ -4,6 +4,7 @@ import argparse
 from collections import Counter
 import gc
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -81,6 +82,28 @@ def token_difference(actual, expected):
     return result
 
 
+def mapped_native_trace(directory, cases, specs, vocabulary):
+    """Use verified native files as tensor views instead of a second CPU copy."""
+    layouts = [((1, vocabulary), torch.bfloat16)]
+    layouts += [(tuple(s["shape"]), getattr(torch, s["dtype"])) for s in specs]
+    widths = [math.prod(shape) * torch.empty((), dtype=dtype).element_size()
+              for shape, dtype in layouts]
+    result = {}
+    for case in cases:
+        path = directory / f"{case['name']}.states"
+        length = path.stat().st_size
+        assert length == sum(widths) * len(case["steps"]), f"Invalid native trace size: {path}"
+        storage = torch.from_file(str(path), shared=False, size=length, dtype=torch.uint8)
+        offset = 0
+        for step in range(len(case["steps"])):
+            tensors = []
+            for (shape, dtype), width in zip(layouts, widths):
+                tensors.append(storage[offset:offset + width].view(dtype).reshape(shape))
+                offset += width
+            result[case["name"], step] = tuple(tensors)
+    return result
+
+
 @torch.inference_mode()
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -107,13 +130,20 @@ def main():
     paragraph = tokenizer.encode("The capital of France is Paris. A small compiler can run a language model. ")
     stream = (paragraph * (1024 // len(paragraph) + 1))[:1024]
     cases = []
-    lengths = (1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
+    lengths = (1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 96, 97, 98, 127, 128, 129, 511, 512)
     for length in lengths:
         decode = 64 if length == 512 else 8
         cases.append(dict(name=f"length_{length}", steps=[stream[:length]] + [[t] for t in stream[length:length + decode]]))
     cases.append(dict(name="context_end", steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
                       check_overflow=True))
-    for name in ("length_2", "length_65", "context_end"):
+    sizes = (96, 98, 97, 99, 1)
+    offset, steps = 0, []
+    for length in sizes:
+        steps.append(stream[offset:offset + length])
+        offset += length
+    mixed = dict(name="mixed_dispatch", steps=steps)
+    cases.extend((mixed, dict(mixed, name="mixed_dispatch_repeat")))
+    for name in ("length_2", "length_65", "length_98", "context_end"):
         clean = next(c for c in cases if c["name"] == name)
         cases.append(dict(clean, name=name + "_poison", same_as=name, poison_kv=3))
     cases.append(dict(next(c for c in cases if c["name"] == "length_65"), name="repeat_65"))
@@ -123,8 +153,6 @@ def main():
     greedy_hf = {c["name"]: greedy(matched, c, eos) for c in chats}
     for c in chats:
         cases.append(dict(name=c["name"] + "_teacher", steps=[c["prompt"]] + [[t] for t in greedy_hf[c["name"]]["ids"][:-1]]))
-    print("HF teacher-forced, matched partitions", flush=True)
-    reference = trace(matched, cases, specs)
     del matched, model
     gc.collect()
     torch.cuda.empty_cache()
@@ -133,14 +161,6 @@ def main():
     aoti = trace(compiled, cases, specs)
     greedy_aoti = {c["name"]: greedy(compiled, c, eos) for c in chats}
     del compiled
-    gc.collect()
-    torch.cuda.empty_cache()
-    print("Independent FP32 controls", flush=True)
-    fp32_cases = [c for c in cases if c["name"] in ("length_512", "context_end", "capital_teacher")]
-    fp32_model = load_model(args.model_dir, dtype=torch.float32)
-    fp32_runner = HFRuntime(fp32_model)
-    fp32 = trace(fp32_runner, fp32_cases, specs)
-    del fp32_runner, fp32_model
     gc.collect()
     torch.cuda.empty_cache()
     manifest = args.output / "cases.json"
@@ -167,6 +187,29 @@ def main():
             compare_file(args.output / "native" / f"{name}.states", expected["state"])
     for i in range(9):
         assert all(bits_equal(a, b) for a, b in zip(aoti[("length_65", i)], aoti[("repeat_65", i)]))
+    for i in range(len(mixed["steps"])):
+        assert all(bits_equal(a, b) for a, b in zip(
+            aoti[("mixed_dispatch", i)], aoti[("mixed_dispatch_repeat", i)]))
+    # Native parity is established before releasing the Python trace. Mapping
+    # avoids retaining two full CPU traces while the native files occupy tmpfs.
+    aoti = mapped_native_trace(args.output / "native", cases, specs, metadata["decode"]["vocabulary"])
+    gc.collect()
+    print("HF teacher-forced, matched partitions", flush=True)
+    model = load_model(args.model_dir)
+    matched = HFRuntime(model)
+    reference = trace(matched, cases, specs)
+    del matched, model
+    gc.collect()
+    torch.cuda.empty_cache()
+    print("Independent FP32 controls", flush=True)
+    fp32_cases = [c for c in cases if c["name"] in
+                 ("length_96", "length_97", "length_98", "length_512", "context_end", "capital_teacher")]
+    fp32_model = load_model(args.model_dir, dtype=torch.float32)
+    fp32_runner = HFRuntime(fp32_model)
+    fp32 = trace(fp32_runner, fp32_cases, specs)
+    del fp32_runner, fp32_model
+    gc.collect()
+    torch.cuda.empty_cache()
     report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
                   linear_packing=metadata["prefill"].get("linear_packing"),
@@ -175,6 +218,7 @@ def main():
                   teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
                   masked_future_checks=True, repeated_request_bitwise=True, context_overflow_rejected=True,
                   matched_hf="hf_full_prompt")
+    report["native_trace_storage"] = "file_backed_after_bitwise_parity"
     comparisons = [
         ("aoti_vs_hf_full_prompt", aoti, reference, True),
         ("aoti_vs_fp32", {k: aoti[k] for k in fp32}, fp32, False),
@@ -202,6 +246,7 @@ def main():
     names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
     names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h", "runtime/common/generation.h"]
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
+              "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]
     for name in names:
         target = args.output / "source" / name
@@ -209,7 +254,8 @@ def main():
         shutil.copy2(root / name, target)
     report["source_sha256"] = {n: sha256(root / n) for n in names}
     final_states = {"hf": reference, "aoti": aoti, "fp32": fp32}
-    torch.save({label: values[("context_end", 3)] for label, values in final_states.items()}, args.output / "context_end.pt")
+    torch.save({label: tuple(t.clone() for t in values[("context_end", 3)])
+                for label, values in final_states.items()}, args.output / "context_end.pt")
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("passed", "native_bitwise", "teacher_steps", "teacher_tensors",
                                            "failure_counts", "greedy_failures")}, indent=2))

@@ -66,6 +66,12 @@ struct Spec {
             "Invalid package entry points");
     require(metadata.at("delta_backend") == prefill.at("delta_backend"), "Package DeltaNet backends differ");
     require(metadata.at("delta_backend") == "triton_op", "Unsupported DeltaNet backend");
+    // Graph counts differ by entry; the dispatch policy must match across a pair.
+    // Missing fields on both sides retain support for earlier package pairs.
+    for (const auto* key : {"delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",
+                           "delta_chunk_size", "delta_transform_tile", "delta_dot_precision"})
+      require(metadata.value(key, Json()) == prefill.value(key, Json()),
+              std::string("Package DeltaNet policy differs: ") + key);
     require(prefill.at("tokens").is_null() && prefill.at("token_range") == Json::array({2, max_prompt}) &&
             metadata.at("token_range") == Json::array({1, 1}), "Expected dynamic T=2..512/T=1 packages");
     const auto version = metadata.at("torch").get<std::string>();

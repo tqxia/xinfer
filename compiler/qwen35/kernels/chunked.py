@@ -9,6 +9,7 @@ import triton
 import triton.language as tl
 
 CHUNK_SIZE = 64
+TRANSFORM_TILE = 32
 VALUE_TILE = 32
 OPTIONS = dict(num_warps=4, num_stages=1)
 
@@ -43,24 +44,24 @@ def _solve(K, G, Beta, Inverse, Prefix, tokens,
 
 @triton.jit
 def _transforms(K, V, Beta, Inverse, Prefix, U, W, tokens,
-                H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
+                      H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
     chunk, head = tl.program_id(0), tl.program_id(1)
     rows = tl.arange(0, C)
-    dims = tl.arange(0, D)
+    dims = tl.program_id(2) * 32 + tl.arange(0, 32)
     time = chunk * C + rows
     valid = time < tokens
     inverse = tl.load(Inverse + (chunk * H + head) * C * C
                       + rows[:, None] * C + rows[None, :])
     offsets = (time[:, None] * H + head) * D + dims[None, :]
-    key = tl.load(K + offsets, mask=valid[:, None], other=0)
     value = tl.load(V + offsets, mask=valid[:, None], other=0)
     beta = tl.load(Beta + time * H + head, mask=valid, other=0)
-    prefix = tl.load(Prefix + (chunk * H + head) * C + rows)
+    destination = (chunk * H + head) * C * D + rows[:, None] * D + dims[None, :]
     u = tl.dot(inverse, value * beta[:, None], input_precision="ieee")
+    tl.store(U + destination, u)
+    key = tl.load(K + offsets, mask=valid[:, None], other=0)
+    prefix = tl.load(Prefix + (chunk * H + head) * C + rows)
     weighted_key = (key * beta[:, None]) * tl.exp(prefix)[:, None]
     w = tl.dot(inverse, weighted_key, input_precision="ieee")
-    destination = (chunk * H + head) * C * D + rows[:, None] * D + dims[None, :]
-    tl.store(U + destination, u)
     tl.store(W + destination, w)
 
 
@@ -130,7 +131,7 @@ def launch_chunked(q, k, v, g, beta, state, output, final):
     incoming = torch.empty((chunks, heads, dim, dim), device=q.device, dtype=torch.float32)
     torch.library.wrap_triton(_solve)[(chunks, heads)](
         k, g, beta, inverse, prefix, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
-    torch.library.wrap_triton(_transforms)[(chunks, heads)](
+    torch.library.wrap_triton(_transforms)[(chunks, heads, dim // TRANSFORM_TILE)](
         k, v, beta, inverse, prefix, u, w, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
     torch.library.wrap_triton(_states)[(heads, dim // VALUE_TILE)](
         k, u, w, prefix, state, incoming, corrections, final, tokens,

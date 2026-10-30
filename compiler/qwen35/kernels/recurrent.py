@@ -1,7 +1,7 @@
-"""Fused decode and chunked prefill behind one functional GDN operator.
+"""Fused recurrence and chunked prefill with graph-level shape dispatch.
 
 Contract: contiguous B=1, H=16, K=V=128; T is a runtime scalar (1..512).
-Prefill uses parallel preparation and FP32 chunk transforms; decode stays fused.
+Short prefill and decode stay fused; long prefill uses tiled FP32 chunk transforms.
 """
 
 import torch
@@ -12,6 +12,7 @@ from triton.language.extra.cuda import libdevice
 from compiler.qwen35.kernels.chunked import launch_chunked
 
 HEADS, DIM, VALUE_TILE = 16, 128, 32
+SHORT_THRESHOLD = 97
 OPTIONS = dict(num_warps=4, num_stages=1)
 
 
@@ -101,11 +102,50 @@ def prepare_kernel(QKV, B, A, Conv, Weight, ALog, DTBias,
     tl.store(Beta + t * H + head, beta)
 
 
-@torch.library.triton_op("xinfer::delta_fused", mutates_args={})
+@torch.library.triton_op("xinfer::delta_cond_short", mutates_args={})
+def short(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
+          conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
+          A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run unchanged fused preparation/recurrence without a device predicate."""
+    tokens = qkv.shape[1]
+    output = qkv.new_empty((1, tokens, HEADS, DIM))
+    next_conv, final = torch.empty_like(conv), torch.empty_like(state)
+    torch.library.wrap_triton(fused_kernel)[(HEADS, DIM // VALUE_TILE)](
+        qkv, b, a, conv, state, weight, A_log, dt_bias, output, next_conv, final, tokens,
+        HEADS, DIM, VALUE_TILE, 4, **OPTIONS)
+    return output, next_conv, final
+
+
+@torch.library.triton_op("xinfer::delta_cond_long", mutates_args={})
+def long(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
+         conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
+         A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Run the C64 chunk path with the measured B3 transform implementation."""
+    tokens = qkv.shape[1]
+    output = qkv.new_empty((1, tokens, HEADS, DIM))
+    next_conv, final = torch.empty_like(conv), torch.empty_like(state)
+    shape = (1, tokens, HEADS, DIM)
+    q, k, v = (torch.empty(shape, device=qkv.device, dtype=torch.float32) for _ in range(3))
+    g, beta = (torch.empty((1, tokens, HEADS), device=qkv.device, dtype=torch.float32) for _ in range(2))
+    torch.library.wrap_triton(prepare_kernel)[(tokens, HEADS)](
+        qkv, b, a, conv, weight, A_log, dt_bias, q, k, v, g, beta, next_conv,
+        tokens, HEADS, DIM, 4, **OPTIONS)
+    launch_chunked(q, k, v, g, beta, state, output, final)
+    return output, next_conv, final
+
+
+def _short_branch(*inputs):
+    return short(*inputs)
+
+
+def _long_branch(*inputs):
+    return long(*inputs)
+
+
 def fused(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
            conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
            A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Prepare QKV/gates and run fused decode or chunked FP32 prefill."""
+    """Validate inputs and select fused recurrence or chunked FP32 prefill."""
     if qkv.ndim != 3 or qkv.shape[0] != 1 or qkv.shape[2] != 3 * HEADS * DIM:
         raise ValueError("Expected QKV [1,T,6144]")
     tokens = qkv.shape[1]
@@ -126,18 +166,7 @@ def fused(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
         raise ValueError("Expected CUDA tensors on one device")
     qkv, b, a, conv, weight, A_log, dt_bias, state = (
         x.contiguous() for x in (*tensors, state))
-    output = qkv.new_empty((1, tokens, HEADS, DIM))
-    next_conv, final = torch.empty_like(conv), torch.empty_like(state)
+    operands = (qkv, b, a, conv, state, weight, A_log, dt_bias)
     if tokens == 1:
-        torch.library.wrap_triton(fused_kernel)[(HEADS, DIM // VALUE_TILE)](
-            qkv, b, a, conv, state, weight, A_log, dt_bias, output, next_conv, final, tokens,
-            HEADS, DIM, VALUE_TILE, 4, **OPTIONS)
-    else:
-        shape = (1, tokens, HEADS, DIM)
-        q, k, v = (torch.empty(shape, device=qkv.device, dtype=torch.float32) for _ in range(3))
-        g, beta = (torch.empty((1, tokens, HEADS), device=qkv.device, dtype=torch.float32) for _ in range(2))
-        torch.library.wrap_triton(prepare_kernel)[(tokens, HEADS)](
-            qkv, b, a, conv, weight, A_log, dt_bias, q, k, v, g, beta, next_conv,
-            tokens, HEADS, DIM, 4, **OPTIONS)
-        launch_chunked(q, k, v, g, beta, state, output, final)
-    return output, next_conv, final
+        return short(*operands)
+    return torch.cond(tokens <= SHORT_THRESHOLD, _short_branch, _long_branch, operands)

@@ -8,8 +8,8 @@ from compiler.qwen35.kernels.recurrent import fused
 class DeltaCore(torch.nn.Module):
     """Explicit hidden/conv/recurrent interface for prefill and decode.
 
-    Reuse original parameters with chunked prefill and fused decode.
-    Projections and gated normalization stay outside the Triton operator.
+    Reuse original parameters with shape-dispatched prefill and fused decode.
+    Projections and gated normalization stay outside the conditional kernels.
     """
 
     def __init__(self, block):

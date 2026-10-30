@@ -2,10 +2,180 @@
 
 The current full-model path uses dynamic prefill and a packaged Triton operator
 exclusively. See [current commands](../../compiler/qwen35/README.md) and
-[the latest integration record](#chunked-gdn-prefill-poc-2026-10-30).
+[the latest integration record](#conditional-full-model-gdn-integration-2026-10-30).
 Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.
+
+## Conditional full-model GDN integration: 2026-10-30
+
+Measured source is `ae402e8` plus the conditional-dispatch working tree.
+`kernels/recurrent.py` now owns the checked functional dispatcher and both
+`triton_op` branches. T=1 and prefill through T=97 use unchanged fused
+recurrence. Longer prefill uses C64 chunking with B3's 32-column U/W transform,
+now the default implementation in `kernels/chunked.py`. The diagnostic copy
+and temporary transform override are removed. The eight-input/three-output
+tensor interface, BF16 boundaries and FP32 IEEE arithmetic remain the same.
+Threshold 97 remains a provisional isolated-kernel crossover.
+
+The full model needs no additional flag. Both entry points were compiled with
+`--enable-inductor-optimization`, retaining combo kernels, 48 packing groups and
+187->97 linear calls. The metadata records both algorithms/operators, threshold,
+chunk size, transform tile and dot precision. Python and C++ reject mismatched
+policy fields across the pair. Older package pairs with fields missing from
+both entries remain compatible.
+
+| Entry | Top-level graph nodes | Conditional blocks | Short / long branch ops | Token range |
+| --- | ---: | ---: | --- | --- |
+| Prefill | 2,203 | 18 | 18 / 18 | 2..512 |
+| Decode | 2,165 | 0 | 18 / 0 | 1 |
+
+Each prefill conditional remains symbolic through strict export. The actual
+packaged C++ contains all 18 `if (s0 <= 97L)` statements and both kernel families;
+there are no proxy-executor calls. A CUDA launch trace of the complete model
+observes 18 fused GDN launches at T=97, and 18 launches of each of the five
+chunk-path kernels at T=98, with no fused GDN launches in that long request.
+These are dispatch checks, not latency measurements.
+
+| Validation | Result |
+| --- | --- |
+| Promoted standalone kernels | 101 cases / 566 calls; all 1,698 JIT/Python AOTI/C++ tensors bitwise equal; `dispatch_passed=True` |
+| Full-model state/masking suite | 87 steps; finite shapes/dtypes, input preservation, reset/repeat and future-KV checks pass, including T=96/97/98 |
+| Native runtime | 35 cases; 5,243 teacher tensors, 30 greedy logit rows and 288 final-state tensors match Python AOTI bitwise |
+| CLI and metadata rejection | 27 cases pass, including mixed/missing threshold, algorithm and transform-tile policy |
+| End-to-end native teacher trace | 295 steps / 14,455 tensors match Python AOTI bitwise; 32 total teacher/greedy cases |
+| Greedy generation | Capital ` Paris.\n`, arithmetic `42\n` and Chinese response all match HF in these three fixtures |
+
+Both model suites cover threshold boundaries, mixed short/long/decode sequences,
+repeat/reset, poisoned future KV and context overflow. Native processes load no
+Python library. Full HF/FP32 numerical acceptance remains open. The expanded
+model report retains 6,785 numerical failure entries across adapter/packing/AOTI
+comparisons. The matched end-to-end report retains 4,867 convolution and 14
+recurrent-state failures; its sole AOTI-vs-HF teacher top-1 difference is
+`length_33`, step 0, with a zero HF top-two margin. Both HF and AOTI also differ
+from FP32 at `capital_teacher`, step 1, with FP32 margin about 0.09289.
+Matching selected greedy responses does not establish general accuracy.
+These totals include the added cases; no numerical limit was enlarged.
+
+The first expanded end-to-end harness hit the container's 64 GB memory limit
+after its native worker finished. It retained HF, Python AOTI and FP32 CPU
+traces while native output files also occupied tmpfs. The validator now proves
+native/Python bitwise parity first, replaces the duplicate Python trace with
+file-backed views of the verified native files, then runs teacher-forced HF/FP32 controls.
+Selected final states are cloned before serialization. A separate 441-tensor
+check verifies the mixed-dtype mapping. The complete rerun finished without
+another OOM event, with all cases and acceptance rules retained.
+
+Reproduce with fresh output directories after exporting both entries and
+rebuilding the native targets using the commands in the compiler README:
+
+```bash
+work/qwen35/venv/bin/python -m compiler.qwen35.export prefill \
+  --enable-inductor-optimization --output work/qwen35/cond-text
+work/qwen35/venv/bin/python -m compiler.qwen35.export decode \
+  --enable-inductor-optimization --output work/qwen35/cond-text
+work/qwen35/venv/bin/python -m compiler.qwen35.tests.validate_cond \
+  --output artifacts/qwen35/0.8b/cond-core-new
+work/qwen35/venv/bin/python -m compiler.qwen35.tests.validate_model \
+  --packages work/qwen35/cond-text --output artifacts/qwen35/0.8b/cond-model-new
+work/qwen35/venv/bin/python -m compiler.qwen35.tests.validate_runtime \
+  --packages work/qwen35/cond-text --output artifacts/qwen35/0.8b/cond-runtime-new
+work/qwen35/venv/bin/python -m compiler.qwen35.tests.validate_end_to_end \
+  --packages work/qwen35/cond-text --output artifacts/qwen35/0.8b/cond-end-to-end-new
+```
+
+Numerical suites return exit 1 while the stated accuracy issues remain open;
+inspect structural/native checks separately. Compact reports, source snapshots,
+context-end tensors, package metadata and launch evidence are retained under
+`artifacts/qwen35/0.8b/cond-integration/`. The full compiled pair is temporarily
+at `/dev/shm/xinfer-cond-model-20261030/text`. Verified raw native outputs were
+discarded after their hashes and comparisons were recorded to fit development
+storage; inputs and packages permit regeneration. Temporary files can disappear
+after restart.
+
+Validation uses development Torch `2.7.0+cu126`, Triton `3.3.0`, SM89 L20 and
+C++11 ABI enabled. The GPU remains busy; no performance result is claimed.
+Host 103's alpha Torch/Triton 3.2 stack still needs its own functional run.
+
+## Standalone conditional GDN dispatch: 2026-10-30
+
+This earlier standalone implementation has since been promoted from
+`diagnostics/cond_dispatch.py` into the production kernels described above.
+The following records its original isolated validation.
+
+`compiler/qwen35/diagnostics/cond_dispatch.py` tests a graph-level
+`torch.cond(qkv.shape[1] <= 97, short, long, operands)`. Short requests reuse
+the existing fused preparation/recurrence kernel; long requests use C64
+chunking with the B3 32-column U/W transform. The copied transform is
+AST-identical to the host-103 B3 source apart from its function name. Existing
+chunk kernels are unchanged; their launcher gains a static transform/grid
+override whose defaults preserve the full-model path. The full model does not
+call this diagnostic dispatcher.
+
+Both branches are functional `triton_op`s with the existing eight tensor
+inputs and fresh `(core, next_conv, next_recurrent)` outputs. Chunk workspaces
+are allocated inside the long branch. The predicate uses symbolic shape
+metadata directly, so native dispatch needs no GPU scalar extraction.
+Threshold 97 is the earlier isolated-kernel crossover, not a tuned full-model
+threshold. C32, autotuning and precision changes are outside this probe.
+
+Strict export and AOTI compilation succeed for BF16 and FP32. Each dtype has
+one T=1 decode package and one dynamic T=2..512 prefill package. Export retains
+a symbolic `higher_order.cond` and both branch operators. Explicit
+`run_decompositions(..., decompose_custom_triton_ops=True)` retains the
+condition and exposes both kernel families. This public option defaults to
+false in Torch 2.7; ordinary export/decomposition intentionally preserves
+high-level `triton_op` nodes.
+
+The actual prefill packages contain six cubins and a generated C++
+`if (s0 <= 97L)`. Decode packages contain one fused cubin and no conditional.
+A separate CUDA launch trace of the final BF16 prefill package observes one
+`fused_kernel` launch at T=97 and only the five chunk-path launches at T=98.
+The unselected pipeline is not enqueued as gated no-op kernels.
+
+The validator reuses the original 83 cases/400 calls without changing seeded
+fixtures. Eighteen derived cases add T=96/97/98 with zero/nonzero state, mixed
+short/long/decode sequences and repeats, and short prefill followed by 64 decode
+continuations. The original long-prefill continuation, checkpoint projection,
+tail/extreme-gate and numerical partition controls remain present.
+
+| Check | Result |
+| --- | --- |
+| Expanded suite | 101 cases, 566 calls: 148 prefill and 418 decode |
+| JIT dispatcher vs explicitly selected branch vs Python AOTI vs C++ | All 1,698 output/state tensors match bitwise |
+| Strict dynamic range and both packaged branches | Pass for BF16 and FP32 |
+| HF recurrent/chunk-64, FP32-input, partition and B3 controls | Existing precision-specific regression limits pass; `dispatch_passed=True` |
+| Input preservation, output ownership, shapes/dtypes/finites, reset/repeat | Pass |
+| Nondefault streams | JIT/Python AOTI, both dtypes and both branches pass |
+| Noncontiguous inputs | Python dispatcher passes; package ABI remains contiguous |
+| Native process | Four packages loaded; no Python or separate custom-op library |
+
+Full-FP32 acceptance remains open. The original subset retains exactly the same
+127 failure keys in each of dispatcher-vs-FP32 and HF-vs-FP32, compared with the
+earlier development chunked report. The expanded suite has 182 failures per
+comparison, 364 total; all failures are in these two BF16-to-FP32 comparisons.
+No error limit is enlarged. Overall `passed=False` and exit 1 remain visible
+alongside `dispatch_passed=True`. This operator result does not establish
+full-model numerical acceptance or resolve its earlier non-tie diagnostics.
+
+Run from the project root with the matching Python/LibTorch build:
+
+```bash
+work/qwen35/venv/bin/python -m compiler.qwen35.tests.validate_cond \
+  --binary work/qwen35/build/qwen35_fused \
+  --output artifacts/qwen35/0.8b/cond-validation-new
+```
+
+Output directories must be fresh. Compact reports, all four packages, graph
+dumps, generated wrappers/cubin hashes and launch evidence are retained in
+`artifacts/qwen35/0.8b/cond-validation/`. Large raw input/output fixtures remain
+temporarily at `/dev/shm/xinfer-cond-20261030/validation-v4`; shared-memory files
+can disappear after restart. The existing C++ runner needs no source change.
+
+This run uses the development L20 with Torch `2.7.0+cu126`, Triton `3.3.0` and
+C++11 ABI enabled. The GPU is fully loaded; no timing claim is made. The pinned
+host-103 alpha Torch/Triton 3.2 environment still needs its own functional run
+before using this dispatcher there. Full-model integration is a later step.
 
 ## Chunked GDN prefill PoC: 2026-10-30
 
