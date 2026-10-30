@@ -1,30 +1,26 @@
-"""Check the static-cache wrapper, compiled handoff, shapes, and cache lifetime."""
+"""Check Flash AOTI handoff/cache state and report drift from independent HF references."""
 
 import argparse
 import json
 from pathlib import Path
 
-import numpy as np
 import torch
 from transformers import StaticCache
-from compiler.common.validation import row_errors, bits_equal
 
-from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, load_model
+from compiler.common.validation import bits_equal
+from compiler.qwen3.custom_ops.attention import load_package_attention_ops
+from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_extent, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
-
-# Calibrated with an independent FP32 control, then checked on boundary cases.
-# Pointwise relative error near zero is not useful for accumulated BF16 error.
-MAX_RELATIVE_ERROR = 0.05
-
-
-def ids_from(path):
-    return [int(word) for word in path.read_text().split()]
+from compiler.qwen3.tests.numerics import (
+    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, policy, token_differences,
+    within_logit_limits,
+)
 
 
 def call(fn, tokens, start, cache):
     ids = torch.tensor([tokens], dtype=torch.int64, device="cuda")
     positions = torch.arange(start, start + len(tokens), device="cuda")
-    return fn(ids, positions, cache).float()
+    return fn(ids, positions, cache, cache_extent(start + len(tokens))).float()
 
 
 def trace(fn, prompt, continuation, cache):
@@ -34,31 +30,13 @@ def trace(fn, prompt, continuation, cache):
     return torch.stack(rows)
 
 
-def error_metrics(actual, expected):
-    error = row_errors(actual, expected)
-    return {"max_abs": error["max_abs"], "max_relative_l2": error["relative_l2"],
-            "max_peak_relative": error["peak_relative"],
-            "top1_agreement": (actual.argmax(-1) == expected.argmax(-1)).sum().item(),
-            "rows": actual.shape[0]}
-
-
-def compare(actual, expected, exact=False):
-    metrics = error_metrics(actual, expected)
-    if exact:
-        torch.testing.assert_close(actual, expected, rtol=0, atol=0)
-        assert bits_equal(actual, expected)
-    else:
-        assert metrics["max_relative_l2"] <= MAX_RELATIVE_ERROR, metrics
-        assert metrics["max_peak_relative"] <= MAX_RELATIVE_ERROR, metrics
-    return metrics
-
-
 def generate(fn, prompt, cache, eos_ids, limit):
     for tensor in cache:
         tensor.zero_()
     score = call(fn, prompt, 0, cache)
     result = []
     for i in range(limit):
+        assert torch.isfinite(score).all().item(), "Nonfinite compiled logits"
         token = score.argmax(-1).item()
         result.append(token)
         if token in eos_ids or i + 1 == limit:
@@ -75,6 +53,7 @@ def check_write(fn, tokens, start, cache):
     end = start + len(tokens)
     assert pointers == [tensor.data_ptr() for tensor in cache]
     for old, new in zip(before, cache):
+        assert torch.isfinite(new).all().item(), "Nonfinite compiled cache"
         assert torch.equal(old[:, :, :start], new[:, :, :start])
         assert torch.equal(old[:, :, end:], new[:, :, end:])
         assert not torch.equal(old[:, :, start:end], new[:, :, start:end])
@@ -90,60 +69,90 @@ def main():
     args = parser.parse_args()
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
+    metadata = {kind: json.loads((args.packages / (kind + ".json")).read_text())
+                for kind in ("prefill", "decode")}
+    for spec in metadata.values():
+        load_package_attention_ops(spec)
+    for key in ("model_revision", "attention_backend", "custom_attention", "cache_input", "kv_extent",
+                "torch_version", "cxx11_abi", "cache_shape", "cache_stride", "flat_input_count",
+                "inductor_configs", "triton_enable_fp_fusion"):
+        assert metadata["prefill"][key] == metadata["decode"][key], f"Package settings differ: {key}"
     model = load_model(args.model_dir)
     wrapper = QwenStep(model)
     prefill = torch._inductor.aoti_load_package(str(args.packages / "prefill.pt2"))
     decode = torch._inductor.aoti_load_package(str(args.packages / "decode.pt2"))
 
-    def compiled(ids, positions, kv):
-        fn = decode if ids.shape[1] == 1 else prefill
-        result = fn(ids, positions, kv)
-        assert result.shape == (1, model.config.vocab_size)
-        assert result.dtype == torch.bfloat16
+    def compiled(ids, positions, kv, extent):
+        result = (decode if ids.shape[1] == 1 else prefill)(ids, positions, kv, extent)
+        assert result.shape == (1, model.config.vocab_size) and result.dtype == torch.bfloat16
         return result
 
-    def hf_static(ids, positions, cache):
+    def eager_wrapper(ids, positions, kv, extent):
+        return wrapper(ids, positions, kv)
+
+    def hf_static(ids, positions, cache, extent):
         return model(input_ids=ids, cache_position=positions, past_key_values=cache,
                      use_cache=True, logits_to_keep=1).logits[:, -1]
 
-    report = {"fixtures": [], "boundaries": [], "context_end": []}
-    precision_cases = []
+    report = dict(fixtures=[], boundaries=[], context_end=[], numerical_policy=policy(),
+                  numerical_failures=[], hf_cache_differences=[], hf_token_differences=[],
+                  hf_greedy_differences=[])
+    report["numerical_policy"]["native_python_aoti"] = "checked_by_validate_cpp"
+    hf_parity = True
+
+    def compare_logits(actual, expected, name):
+        nonlocal hf_parity
+        metrics = error_metrics(actual, expected)
+        hf_parity &= bits_equal(actual, expected)
+        if not within_logit_limits(metrics):
+            report["numerical_failures"].append(dict(case=name, **metrics))
+        differences = token_differences(actual, expected)
+        if differences:
+            report["hf_token_differences"].append(dict(case=name, differences=differences))
+        return metrics
+
+    def compare_cache(actual, expected, name):
+        nonlocal hf_parity
+        metrics = []
+        for index, (a, b) in enumerate(zip(actual, expected)):
+            error = error_metrics(a.flatten(1).float(), b.flatten(1).float())
+            error.pop("top1_agreement")
+            error.update(layer=index // 2, kind="K" if index % 2 == 0 else "V",
+                         bitwise_equal=bits_equal(a, b))
+            hf_parity &= error["bitwise_equal"]
+            if not within_logit_limits(error):
+                report["hf_cache_differences"].append(dict(case=name, **error))
+            metrics.append(error)
+        return metrics
+
+    precision_cases, compiled_sequences = [], {}
     for case in sorted(args.reference.iterdir()):
         if not case.is_dir():
             continue
-        prompt = ids_from(case / "prompt.ids")
-        continuation = ids_from(case / "generated.ids")
+        prompt, continuation = ids_from(case / "prompt.ids"), ids_from(case / "generated.ids")
         meta = json.loads((case / "metadata.json").read_text())
         eager_kv, aoti_kv = allocate_cache(model.config), allocate_cache(model.config)
         hf_kv = StaticCache(model.config, 1, CACHE_LENGTH, device="cuda", dtype=torch.bfloat16)
-        eager = trace(wrapper, prompt, continuation, eager_kv)
+        eager = trace(eager_wrapper, prompt, continuation, eager_kv)
         official = trace(hf_static, prompt, continuation, hf_kv)
         compare(eager, official, exact=True)
         for index, (k, v) in enumerate(zip(hf_kv.key_cache, hf_kv.value_cache)):
-            torch.testing.assert_close(eager_kv[2 * index], k, rtol=0, atol=0)
-            torch.testing.assert_close(eager_kv[2 * index + 1], v, rtol=0, atol=0)
+            compare(eager_kv[2 * index], k, exact=True)
+            compare(eager_kv[2 * index + 1], v, exact=True)
         pointers = [tensor.data_ptr() for tensor in aoti_kv]
         actual = trace(compiled, prompt, continuation, aoti_kv)
-        metrics = compare(actual, eager)
-        assert metrics["top1_agreement"] == len(continuation)
+        metrics = compare_logits(actual, eager, case.name)
         assert pointers == [tensor.data_ptr() for tensor in aoti_kv]
-        # Check the contents of every cache tensor after the compiled handoff.
-        cache_metrics = [compare(a.flatten(1).float(), b.flatten(1).float())
-                         for a, b in zip(aoti_kv, eager_kv)]
-        dynamic = torch.from_numpy(np.fromfile(case / "logits.f32", dtype="<f4").reshape(meta["logits_shape"]))
-        assert actual.argmax(-1).tolist() == continuation
-        assert dynamic.argmax(-1).tolist() == continuation
-        # This resets and reuses the same cache; generation follows its own tokens.
-        assert generate(compiled, prompt, aoti_kv, meta["eos_token_ids"], meta["max_new_tokens"]) == continuation
-        report["fixtures"].append({"name": case.name, "aoti_vs_static": metrics,
-                                   "cache_max_relative_l2": max(m["max_relative_l2"] for m in cache_metrics),
-                                   "cache_max_abs": max(m["max_abs"] for m in cache_metrics),
-                                   "hf_static_exact": True, "greedy_and_reset_pass": True})
+        cache_metrics = compare_cache(aoti_kv, eager_kv, case.name)
+        generated = generate(compiled, prompt, aoti_kv, meta["eos_token_ids"], meta["max_new_tokens"])
+        compiled_sequences[case.name] = generated
+        if generated != continuation:
+            report["hf_greedy_differences"].append(dict(case=case.name, hf_ids=continuation, compiled_ids=generated))
+        report["fixtures"].append(dict(name=case.name, aoti_vs_static=metrics,
+                                       cache_metrics=cache_metrics, hf_static_exact=True,
+                                       compiled_generated_ids=generated))
         precision_cases.append((prompt, continuation, eager, actual))
-        trace_dir = args.packages / "reference"
-        trace_dir.mkdir(exist_ok=True)
-        actual.numpy().astype("<f4").tofile(trace_dir / f"{case.name}.f32")
-        print(report["fixtures"][-1], flush=True)
+        print(dict(name=case.name, aoti_vs_static=metrics), flush=True)
 
     seed = ids_from(args.reference / "capital" / "prompt.ids")
     reused = allocate_cache(model.config)
@@ -152,53 +161,49 @@ def main():
         expected_kv = allocate_cache(model.config)
         for tensor in reused:
             tensor.zero_()
-        expected = call(wrapper, tokens, 0, expected_kv)
+        expected = call(eager_wrapper, tokens, 0, expected_kv)
         actual = check_write(compiled, tokens, 0, reused)
-        metrics = compare(actual, expected)
-        # Nonzero future entries must be ignored, and must remain untouched.
+        metrics = compare_logits(actual, expected, f"length_{length}_prefill")
         poisoned = allocate_cache(model.config)
         for tensor in poisoned:
             tensor.fill_(3)
-        poisoned_score = check_write(compiled, tokens, 0, poisoned)
-        compare(poisoned_score, actual, exact=True)
+        compare(check_write(compiled, tokens, 0, poisoned), actual, exact=True)
         token = expected.argmax(-1).item()
-        expected = call(wrapper, [token], length, expected_kv)
+        expected = call(eager_wrapper, [token], length, expected_kv)
         actual = check_write(compiled, [token], length, reused)
-        handoff = compare(actual, expected)
-        report["boundaries"].append({"prompt_length": length, "prefill": metrics, "decode": handoff,
-                                     "address_and_write_region_pass": True, "future_mask_pass": True})
-        print(report["boundaries"][-1], flush=True)
+        handoff = compare_logits(actual, expected, f"length_{length}_decode")
+        report["boundaries"].append(dict(prompt_length=length, prefill=metrics, decode=handoff,
+                                         address_and_write_region_pass=True, future_mask_pass=True))
 
-    # Fill a real 1,022-token prefix in chunks, then exercise both final slots.
     full = (seed * (CACHE_LENGTH // len(seed) + 1))[:CACHE_LENGTH]
     eager_kv = allocate_cache(model.config)
     for tensor in reused:
         tensor.zero_()
     for start, count in ((0, 512), (512, 510), (1022, 1), (1023, 1)):
-        tokens = full[start:start + count]
-        expected = call(wrapper, tokens, start, eager_kv)
-        actual = check_write(compiled, tokens, start, reused)
-        report["context_end"].append({"position": start, "tokens": count, **compare(actual, expected)})
-        print(report["context_end"][-1], flush=True)
-    # A different prompt after a full context must start from empty cache state.
+        expected = call(eager_wrapper, full[start:start + count], start, eager_kv)
+        actual = check_write(compiled, full[start:start + count], start, reused)
+        report["context_end"].append(dict(position=start, tokens=count,
+                                           **compare_logits(actual, expected, f"context_{start}")))
+    report["full_cache_aoti_vs_hf"] = compare_cache(reused, eager_kv, "context_end")
     capital_meta = json.loads((args.reference / "capital" / "metadata.json").read_text())
-    assert generate(compiled, seed, reused, capital_meta["eos_token_ids"], 64) == ids_from(args.reference / "capital" / "generated.ids")
+    assert generate(compiled, seed, reused, capital_meta["eos_token_ids"],
+                    capital_meta["max_new_tokens"]) == compiled_sequences["capital"]
     report["reset_after_full_context_pass"] = True
-    # Promote the same checkpoint weights to FP32 as an independent precision
-    # control. Neither compilation nor cache adaptation should hide BF16 drift.
     model.float()
     for fixture, (prompt, continuation, eager, actual) in zip(report["fixtures"], precision_cases):
         fp32_kv = tuple(t.float() for t in allocate_cache(model.config))
-        fp32 = trace(wrapper, prompt, continuation, fp32_kv)
-        fixture["bf16_vs_fp32"] = compare(eager, fp32)
-        fixture["aoti_vs_fp32"] = compare(actual, fp32)
-        assert fp32.argmax(-1).tolist() == continuation
-        print({"name": fixture["name"], "fp32_control": fixture["aoti_vs_fp32"]}, flush=True)
-    report["error_limits"] = {"max_relative_l2": MAX_RELATIVE_ERROR,
-                               "max_peak_relative": MAX_RELATIVE_ERROR,
-                               "scope": "per logit row and per whole K/V tensor"}
+        fp32 = trace(eager_wrapper, prompt, continuation, fp32_kv)
+        fixture["bf16_vs_fp32"] = error_metrics(eager, fp32)
+        fixture["aoti_vs_fp32"] = error_metrics(actual, fp32)
+    report["passed"] = not report["numerical_failures"]
+    report["hf_parity_passed"] = bool(hf_parity) and not report["hf_greedy_differences"]
+    report["hf_reference_limits_passed"] = not any(report[key] for key in (
+        "numerical_failures", "hf_cache_differences", "hf_token_differences", "hf_greedy_differences"))
     (args.packages / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
-    print("PASS: static wrapper, AOTI handoff, greedy sequences, shapes, masks, cache reuse, FP32 control", flush=True)
+    if not report["passed"]:
+        raise SystemExit(f"FAIL: {len(report['numerical_failures'])} logit comparisons exceed {MAX_RELATIVE_ERROR:.0%}; "
+                         f"see {args.packages / 'validation.json'}")
+    print("PASS: bounded logits, Flash handoff, cache state/reuse and FP32 controls; HF drift recorded", flush=True)
 
 
 if __name__ == "__main__":

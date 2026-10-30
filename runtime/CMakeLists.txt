@@ -16,7 +16,6 @@ FetchContent_MakeAvailable(nlohmann_json)
 option(QWEN_BUILD_VALIDATION "Build native validation drivers" OFF)
 option(QWEN_BUILD_BENCHMARK "Build fixed-token native benchmarks" OFF)
 option(QWEN_BUILD_PROFILE "Build the Qwen3 NVTX profiling driver" OFF)
-option(QWEN_ENABLE_FLASH_ATTENTION "Build experimental Qwen3 valid-prefix FlashAttention" OFF)
 separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 add_subdirectory(qwen3)
 

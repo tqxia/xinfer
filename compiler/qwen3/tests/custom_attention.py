@@ -13,7 +13,7 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.qwen3.custom_ops.attention import load_attention_ops
 from compiler.qwen3.model import cache_extent
-from compiler.qwen3.tests.validate_aoti import compare
+from compiler.qwen3.tests.numerics import compare
 
 
 class AttentionStep(torch.nn.Module):

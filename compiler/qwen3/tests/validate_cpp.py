@@ -13,7 +13,10 @@ from transformers import StaticCache
 
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
-from compiler.qwen3.tests.validate_aoti import MAX_RELATIVE_ERROR, compare, error_metrics, ids_from
+from compiler.qwen3.tests.numerics import (
+    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, policy,
+    token_differences, within_logit_limits,
+)
 
 
 def trace(step, chunks):
@@ -50,10 +53,6 @@ def main():
     parser.add_argument('--reference', type=Path, default=Path('artifacts/reference'))
     parser.add_argument('--native', type=Path, default=Path('build/qwen_validate'))
     parser.add_argument('--output', type=Path, default=Path('artifacts/three-path'))
-    parser.add_argument('--collect-logit-errors', action='store_true',
-                        help='Record all logit tolerance failures; keep limits unchanged and exit nonzero on failure')
-    parser.add_argument('--collect-top1-errors', action='store_true',
-                        help='Record top-1 differences while continuing diagnostics; token failures still exit nonzero')
     args = parser.parse_args()
     if args.output.exists():
         parser.error('Output directory already exists; choose a fresh --output')
@@ -65,7 +64,6 @@ def main():
     spec = json.loads((args.packages/'decode.json').read_text())
     from compiler.qwen3.custom_ops.attention import load_package_attention_ops
     load_package_attention_ops(spec, native=args.native)
-    prefix_attention = spec.get('cache_input') == 'full_capacity_with_extent'
     model = load_model(args.model_dir)
     hf_cache = StaticCache(model.config, 1, CACHE_LENGTH, device='cuda', dtype=torch.bfloat16)
     hf_tensors = tuple(t for pair in zip(hf_cache.key_cache, hf_cache.value_cache) for t in pair)
@@ -117,20 +115,19 @@ def main():
         greedy_case('limit_one', 'capital', 1),
         greedy_case('limit_three', 'capital', 3),
     ])
-    if prefix_attention:
-        # Exercise shape boundaries and rectangular causal alignment, including
-        # a multi-token append immediately after a one-token initial prompt.
-        sizes = (1, 2, 13, 16, 31, 1, 64, 128, 256, 511, 1)
-        chunks, offset = [], 0
-        for size in sizes:
-            chunks.append(full[offset:offset+size])
-            offset += size
-        assert offset == CACHE_LENGTH
-        cases.extend([
-            dict(name='prefix_boundaries', mode='trace', chunks=chunks, check_overflow=True),
-            dict(name='prefix_boundaries_poison', mode='trace', chunks=chunks, fill=3,
-                 same_as='prefix_boundaries', check_overflow=True),
-        ])
+    # Exercise rectangular causal alignment, including a multi-token append
+    # immediately after a one-token initial prompt and the last cache slot.
+    sizes = (1, 2, 13, 16, 31, 1, 64, 128, 256, 511, 1)
+    chunks, offset = [], 0
+    for size in sizes:
+        chunks.append(full[offset:offset+size])
+        offset += size
+    assert offset == CACHE_LENGTH
+    cases.extend([
+        dict(name='prefix_boundaries', mode='trace', chunks=chunks, check_overflow=True),
+        dict(name='prefix_boundaries_poison', mode='trace', chunks=chunks, fill=3,
+             same_as='prefix_boundaries', check_overflow=True),
+    ])
     manifest = args.output/'cases.json'
     manifest.write_text(json.dumps({'cases': cases}, indent=2)+'\n')
     env = {k: v for k, v in os.environ.items()
@@ -153,18 +150,16 @@ def main():
     def py_step(tokens, position):
         ids = torch.tensor([tokens], dtype=torch.int64, device='cuda')
         positions = torch.arange(position, position+len(tokens), device='cuda')
-        extra = (cache_extent(position + len(tokens)),) if prefix_attention else ()
-        return (decode if len(tokens) == 1 else prefill)(ids, positions, py_cache, *extra).float()
+        return (decode if len(tokens) == 1 else prefill)(
+            ids, positions, py_cache, cache_extent(position + len(tokens))).float()
 
     report = dict(cases=[], error_limit=MAX_RELATIVE_ERROR, native_loader_pairs=native['loader_pairs'],
-                  numerical_failures=[], token_failures=[], collect_logit_errors=args.collect_logit_errors,
-                  collect_top1_errors=args.collect_top1_errors)
+                  numerical_policy=policy(), numerical_failures=[], hf_cache_differences=[],
+                  hf_token_differences=[], hf_greedy_differences=[])
 
     def compare_logits(actual, expected, name, comparison):
-        if not args.collect_logit_errors:
-            return compare(actual, expected)
         metrics = error_metrics(actual, expected)
-        if max(metrics['max_relative_l2'], metrics['max_peak_relative']) > MAX_RELATIVE_ERROR:
+        if not within_logit_limits(metrics):
             report['numerical_failures'].append(dict(case=name, domain='logits', comparison=comparison, **metrics))
         return metrics
 
@@ -181,7 +176,14 @@ def main():
         else:
             eager, eager_ids = greedy(hf_step, case['prompt'], case['limit'], spec['eos_token_ids'])
             aoti, aoti_ids = greedy(py_step, case['prompt'], case['limit'], spec['eos_token_ids'])
-            assert entry['ids'] == aoti_ids == eager_ids == case['expected_ids'], name
+            assert entry['ids'] == aoti_ids, (name, 'Native/Python generation differs')
+            assert eager_ids == case['expected_ids'], (name, 'HF reference fixture changed')
+            if aoti_ids != eager_ids:
+                report['hf_greedy_differences'].append(dict(case=name, hf_ids=eager_ids, compiled_ids=aoti_ids))
+            # A greedy sequence may differ from HF. Compare logits under the
+            # same compiled-fed tokens, not across different continuations.
+            reset(hf_tensors)
+            eager = trace(hf_step, [case['prompt']] + [[token] for token in aoti_ids[:-1]])
         actual = torch.from_numpy(np.fromfile(args.output/(name+'.f32'), dtype='<f4')
                                   .reshape(entry['rows'], spec['vocab_size']))
         assert pointers == [t.data_ptr() for t in py_cache]
@@ -193,21 +195,14 @@ def main():
                        aoti_vs_hf_static=aoti_vs_hf, cpp_vs_hf_static=dict(aoti_vs_hf))
         metrics['aoti_vs_hf_static_bitwise'] = torch.equal(aoti.contiguous().view(torch.uint8),
                                                         eager.contiguous().view(torch.uint8))
-        different = torch.where(actual.argmax(-1) != eager.argmax(-1))[0].tolist()
-        metrics['top1_differences'] = [dict(row=i, hf_id=eager[i].argmax().item(),
-                                          compiled_id=actual[i].argmax().item(),
-                                          hf_top2_margin=(eager[i].topk(2).values.diff().abs().item()),
-                                          hf_selected_token_gap=(eager[i].max()-eager[i,actual[i].argmax()]).item(),
-                                          compiled_top2_margin=actual[i].topk(2).values.diff().abs().item())
-                                     for i in different]
-        if different:
-            assert args.collect_top1_errors, metrics['top1_differences']
-            report['token_failures'].append(dict(case=name,differences=metrics['top1_differences']))
+        metrics['top1_differences'] = token_differences(actual, eager)
+        if metrics['top1_differences']:
+            report['hf_token_differences'].append(dict(case=name, differences=metrics['top1_differences']))
         if case.get('fixture') and case['mode'] == 'trace':
             baseline = torch.from_numpy(np.fromfile(args.reference/case['fixture']/'logits.f32', dtype='<f4')
                                         .reshape(entry['rows'], spec['vocab_size']))
             metrics['cpp_vs_hf_dynamic'] = compare_logits(actual, baseline, name, 'cpp_vs_hf_dynamic')
-            assert actual.argmax(-1).tolist() == fixtures[case['fixture']][1]
+            assert baseline.argmax(-1).tolist() == fixtures[case['fixture']][1], 'Invalid HF fixture'
         for label, rows in (('hf', eager), ('aoti', aoti)):
             save_rows(args.output/(name+'.'+label+'.f32'), rows)
             if 'same_as' in case:
@@ -230,7 +225,7 @@ def main():
                 error['bitwise_equal'] = torch.equal(compiled.view(torch.int16), original.view(torch.int16))
                 cache_errors.append(error)
                 if max(error['max_relative_l2'], error['max_peak_relative']) > MAX_RELATIVE_ERROR:
-                    report['numerical_failures'].append(dict(case=name, **error))
+                    report['hf_cache_differences'].append(dict(case=name, **error))
             full_cache = ([t.cpu().float() for t in py_cache], [t.cpu().float() for t in hf_tensors])
             metrics['cache_cpp_vs_aoti_bitwise'] = True
             metrics['cache_aoti_vs_hf_static_bitwise'] = all(e['bitwise_equal'] for e in cache_errors)
@@ -238,6 +233,7 @@ def main():
             metrics['cache_sha256'] = hashlib.sha256(bits.tobytes()).hexdigest()
             assert entry['overflow_rejected_without_mutation'] and entry['position'] == CACHE_LENGTH
         report['cases'].append(metrics)
+        assert all(torch.isfinite(tensor).all().item() for tensor in py_cache), (name, 'Nonfinite compiled cache')
         print(dict(name=name, rows=entry['rows'], hf_relative_l2=metrics['aoti_vs_hf_static']['max_relative_l2'],
                    top1_differences=metrics['top1_differences']), flush=True)
     # A repeated prompt after different requests must reproduce the initial run exactly.
@@ -259,13 +255,22 @@ def main():
                 error.pop('top1_agreement')
             report['full_cache_fp32_control'].append(dict(layer=index//2, kind='K' if index % 2 == 0 else 'V', **errors))
     report.update(total_rows=sum(c['rows'] for c in report['cases']), repeated_request_exact=True)
-    report['passed'] = not report['numerical_failures'] and not report['token_failures']
+    report['passed'] = not report['numerical_failures']
+    report['hf_parity_passed'] = all(
+        case['aoti_vs_hf_static_bitwise'] and case.get('cache_aoti_vs_hf_static_bitwise', True)
+        for case in report['cases']) and not report['hf_greedy_differences']
+    report['hf_reference_limits_passed'] = not (
+        report['numerical_failures'] or report['hf_cache_differences'] or
+        report['hf_token_differences'] or report['hf_greedy_differences'])
     (args.output/'summary.json').write_text(json.dumps(report, indent=2)+'\n')
     if not report['passed']:
-        raise SystemExit(f"FAIL: {len(report['numerical_failures'])} numerical comparisons exceed the unchanged "
-                         f"{MAX_RELATIVE_ERROR:.0%} error limits; {len(report['token_failures'])} cases have top-1 differences; "
+        raise SystemExit(f"FAIL: {len(report['numerical_failures'])} logit comparisons exceed the unchanged "
+                         f"{MAX_RELATIVE_ERROR:.0%} error limits; "
                          f"all cases and FP32 controls recorded in {args.output}/summary.json")
-    print('PASS: three execution paths, forced inputs, boundaries, cache contents, masks, repeated requests', flush=True)
+    print(f"PASS: native/Python parity, bounded logits and cache-state checks; "
+          f"HF differences: {len(report['hf_cache_differences'])} cache tensors, "
+          f"{len(report['hf_token_differences'])} top-1 cases, "
+          f"{len(report['hf_greedy_differences'])} greedy cases", flush=True)
 
 
 if __name__ == '__main__':

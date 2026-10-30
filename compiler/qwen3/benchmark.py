@@ -16,6 +16,14 @@ from compiler.common.benchmark import (
 from compiler.common.artifacts import read_json, write_json, sha256 as digest
 
 ROOT = Path(__file__).resolve().parents[2]
+PACKAGE_FIELDS = (
+    'model_revision', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
+    'layers', 'kv_heads', 'head_dim', 'cache_length', 'vocab_size', 'cxx11_abi',
+    'cuda_compute_capability', 'cache_shape', 'cache_stride', 'flat_input_count',
+    'eos_token_ids', 'attention_backend', 'cache_input', 'custom_attention',
+    'valid_cache_length', 'kv_extent', 'export_options', 'triton_enable_fp_fusion',
+    'inductor_configs',
+)
 
 
 def wait_idle(allow_busy):
@@ -88,10 +96,35 @@ def summarize(records, workload, reference='eager'):
     for label, profile in result.items():
         for name, case in profile['cases'].items():
             ref = result[reference]['cases'][name]['prediction_ids']
+            assert len(case['prediction_ids']) == len(ref), (label, name, 'Prediction count differs')
             case[f'prediction_agreement_with_{reference}'] = sum(a == b for a, b in zip(case['prediction_ids'], ref))
-            if label == 'aoti_eager':
-                assert case['prediction_ids'] == ref, (label, name, 'Eager-mode predictions differ')
     return result
+
+
+def validate_packages(packages):
+    """Check the fixed Flash ABI and that prefill/decode describe one model."""
+    from compiler.qwen3.custom_ops.attention import OPERATOR_CONTRACT
+
+    for kind in ('prefill', 'decode'):
+        metadata = packages[kind]['metadata']
+        if metadata.get('attention_backend') != 'flash':
+            raise ValueError('Only Flash Qwen3 packages are supported; re-export prefill and decode')
+        if metadata.get('eager_numerics', False):
+            raise ValueError('Legacy eager-numerics packages are unsupported; re-export prefill and decode')
+        if metadata.get('custom_attention') != OPERATOR_CONTRACT:
+            raise ValueError('Unsupported custom attention contract')
+        if metadata.get('cache_input') != 'full_capacity_with_extent':
+            raise ValueError('Flash packages require the full-capacity cache with extent input')
+        if metadata.get('kv_extent') != dict(device='cpu', dtype='uint8', shape='[valid_length + 1]', data_read=False):
+            raise ValueError('Unsupported KV extent contract')
+        if metadata.get('entry_point') != kind:
+            raise ValueError(f'Incorrect {kind} package entry point')
+    prefill, decode = (packages[kind]['metadata'] for kind in ('prefill', 'decode'))
+    for key in PACKAGE_FIELDS:
+        if prefill[key] != decode[key]:
+            raise ValueError(f'Package metadata differs: {key}')
+    if decode['token_length'] != [1, 1] or prefill['token_length'][0] != 2:
+        raise ValueError('Unsupported token-length contract')
 
 
 def run(args):
@@ -107,15 +140,18 @@ def run(args):
         raise ValueError('Choose an absent output directory')
     paired = args.command == 'compare'
     if paired and (args.baseline_label == args.candidate_label or any(
-            not label.replace('_', '').isalnum() or label in ('eager', 'aoti_eager')
+            not label.replace('_', '').isalnum() or label == 'eager'
             for label in (args.baseline_label, args.candidate_label))):
-        raise ValueError('Provide distinct alphanumeric/underscore labels; eager and aoti_eager are reserved')
+        raise ValueError('Provide distinct alphanumeric/underscore labels; eager is reserved')
     packages = ({args.baseline_label: args.baseline_packages.resolve(),
                  args.candidate_label: args.candidate_packages.resolve()}
-                if paired else dict(aoti_eager=args.eager_packages.resolve(), aoti_fused=args.fused_packages.resolve()))
+                if paired else dict(aoti=args.packages.resolve()))
     binary = args.native.resolve()
     if not binary.is_file():
         raise ValueError('Build qwen_benchmark with -DQWEN_BUILD_BENCHMARK=ON first')
+    library = native_attention_library(binary)
+    if library is None:
+        raise ValueError('Native benchmark must link libxinfer_attention_ops.so; rebuild Qwen3')
     prompt = [int(x) for x in (args.reference/'capital/prompt.ids').read_text().split()]
     continuation = [int(x) for x in (args.reference/'capital/generated.ids').read_text().split()]
     workload = dict(warmup=args.warmup, repeats=args.repeats, cases=[
@@ -144,9 +180,7 @@ def run(args):
                        binary_sha256=digest(binary), workload_sha256=digest(out/'workload.json'),
                        model_manifest=read_json(args.model_dir/'model_manifest.json'),
                        allow_busy=args.allow_busy, cpu_threads=1, packages={})
-    library = native_attention_library(binary)
-    if library is not None:
-        environment['attention_library'] = dict(path=str(library), sha256=digest(library))
+    environment['attention_library'] = dict(path=str(library), sha256=digest(library))
     environment['gpu'] = subprocess.check_output([
         'nvidia-smi', '-i', '0', '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
         '--format=csv'], text=True)
@@ -155,24 +189,12 @@ def run(args):
                                                     bytes=(directory/(kind+'.pt2')).stat().st_size,
                                                     sha256=digest(directory/(kind+'.pt2')))
                                            for kind in ('prefill', 'decode')}
-        for entry in environment['packages'][label].values():
-            backend = entry['metadata'].get('attention_backend', 'efficient')
-            if backend not in ('efficient', 'flash'):
-                raise ValueError(f'Unsupported attention backend: {backend}')
-            if backend == 'flash' and library is None:
-                raise ValueError('Build the native benchmark with -DQWEN_ENABLE_FLASH_ATTENTION=ON')
-            if not paired:
-                assert entry['metadata'].get('eager_numerics', False) == (label == 'aoti_eager'), 'Wrong compilation profile'
+        validate_packages(environment['packages'][label])
     if paired:
-        # Original fused packages predate these fields; match runtime defaults.
-        defaults = dict(eager_numerics=False, triton_enable_fp_fusion=True)
         for kind in ('prefill', 'decode'):
-            baseline = defaults | environment['packages'][args.baseline_label][kind]['metadata']
-            candidate = defaults | environment['packages'][args.candidate_label][kind]['metadata']
-            for key in ('model_revision', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
-                        'layers', 'kv_heads', 'head_dim', 'cache_length', 'token_length',
-                        'vocab_size', 'cxx11_abi', 'cuda_compute_capability', 'eager_numerics',
-                        'triton_enable_fp_fusion', 'inductor_configs'):
+            baseline = environment['packages'][args.baseline_label][kind]['metadata']
+            candidate = environment['packages'][args.candidate_label][kind]['metadata']
+            for key in (*PACKAGE_FIELDS, 'token_length'):
                 assert baseline[key] == candidate[key], f'Incomparable packages: {kind}/{key}'
     write_json(out/'environment.json', environment)
     env = {k: v for k, v in os.environ.items()
@@ -180,7 +202,7 @@ def run(args):
     env.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
                PYTHONDONTWRITEBYTECODE='1')
     records = []
-    labels = list(packages) if paired else ['eager', 'aoti_eager', 'aoti_fused']
+    labels = list(packages) if paired else ['eager', 'aoti']
     for round_index in range(args.rounds):
         order = labels[round_index % len(labels):]+labels[:round_index % len(labels)]
         for label in order:
@@ -225,13 +247,12 @@ def main():
         runner.add_argument('--reference', type=Path, default=Path('artifacts/reference'))
         runner.add_argument('--native', type=Path, default=Path('build/qwen_benchmark'))
         if name == 'compare':
-            runner.add_argument('--baseline-packages', type=Path, default=Path('artifacts/aoti'))
-            runner.add_argument('--candidate-packages', type=Path, default=Path('artifacts/aoti-flash'))
-            runner.add_argument('--baseline-label', default='aoti_fused')
-            runner.add_argument('--candidate-label', default='aoti_flash')
+            runner.add_argument('--baseline-packages', type=Path, default=Path('artifacts/aoti-baseline'))
+            runner.add_argument('--candidate-packages', type=Path, default=Path('artifacts/aoti-candidate'))
+            runner.add_argument('--baseline-label', default='baseline')
+            runner.add_argument('--candidate-label', default='candidate')
         else:
-            runner.add_argument('--eager-packages', type=Path, default=Path('artifacts/aoti-eager'))
-            runner.add_argument('--fused-packages', type=Path, default=Path('artifacts/aoti'))
+            runner.add_argument('--packages', type=Path, default=Path('artifacts/aoti'))
         runner.add_argument('--output', type=Path, required=True)
         runner.add_argument('--lengths', type=int, nargs='+', default=[25, 128, 512])
         runner.add_argument('--decode-steps', type=int, default=64)

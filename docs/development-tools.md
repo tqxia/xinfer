@@ -3,6 +3,27 @@
 Run these commands from the repository root with the matching Python/LibTorch
 environment and previously exported packages. Use fresh output directories.
 
+## Compare HF eager with compiled Qwen3
+
+`run` compares the unmodified HF eager reference with one FlashAttention AOTI
+package pair. The compiled profile is named `aoti`; there is no separate
+eager-numerics compilation profile. Each process receives the same prompts and
+forced decode tokens, so differences in predicted tokens do not change the
+measured workload.
+
+```bash
+cmake -S . -B build -DQWEN_BUILD_BENCHMARK=ON
+cmake --build build --target qwen_benchmark -j2
+.venv/bin/python -m compiler.qwen3.benchmark run \
+  --packages artifacts/aoti \
+  --native build/qwen_benchmark \
+  --output artifacts/benchmark-new
+```
+
+The Qwen3 build always links `libxinfer_attention_ops.so`. Deploy that library
+with the native executable and matching LibTorch. Previously exported efficient
+packages must be re-exported using the current exporter.
+
 ## Compare two compiled profiles
 
 `compiler/qwen3/benchmark.py compare` runs two package directories through the same
@@ -21,10 +42,10 @@ reported separately from steady-state latency.
   --output artifacts/comparison-new
 ```
 
-The packages must have matching checkpoint, toolchain, tensor contracts and
-numerical compilation settings. Both may use eager numerics; labels do not choose
-the numerical profile. A changed attention backend is allowed. The existing
-`run` command retains the eager / eager-numerics AOTI / fused AOTI comparison.
+Both package pairs must use the fixed FlashAttention operator and extent-input
+ABI, with matching checkpoint, toolchain, tensor contracts and numerical
+compilation settings. Each pair's prefill/decode metadata is checked as well.
+Labels name the measurements; they do not select another execution backend.
 `--reference` selects the directory containing the saved capital prompt and
 continuation; it defaults to `artifacts/reference`.
 
@@ -34,24 +55,26 @@ hashes. Prediction agreement is diagnostic; use the correctness validator for
 numerical acceptance. GPU-idle checks run before and after each worker. Use
 `--allow-busy` only for harness checks; its timings are marked provisional.
 
-## Collect numerical failures
+## Validate runtime correctness and report HF differences
 
 ```bash
 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/aoti-candidate \
-  --collect-logit-errors --collect-top1-errors \
   --output artifacts/validation-candidate-new
 ```
 
-`--collect-logit-errors` records logit comparisons outside the existing 5%
-relative-L2 or peak-normalized limits. `--collect-top1-errors` records differing
-token IDs, top-two margins and the reference score gap to the compiled-selected
-token. These options allow those comparisons to continue, then save a failed
-`summary.json` and exit nonzero. Without the flags, they fail immediately.
+The default validation report records HF cache errors and differing token IDs,
+including top-two margins and the HF score gap to the compiled-selected token.
+Those differences are accepted diagnostic results for the fused Flash profile;
+the report distinguishes HF parity from runtime correctness. Logit differences
+must still satisfy the existing 5% relative-L2 and peak-normalized limits.
 
-C++/Python AOTI bitwise checks, finite-value checks, cache invariants and generation
-fixture assertions remain strict. Full-cache error collection and FP32 controls
-are retained. The options do not change model arithmetic or acceptance limits.
+C++/Python AOTI bitwise agreement, finite-value checks, cache writes and masking,
+reset/reuse, stable storage, boundary rejection and native/Python generation
+agreement remain strict. Independent HF eager and FP32 controls are retained.
+This policy does not change model arithmetic or make HF numerical equivalence a
+claim of the compiled profile. See [FlashAttention](flash-attention.md) for the
+recorded differences and supported workload.
 
 ## Profile the native runtime
 

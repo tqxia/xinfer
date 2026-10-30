@@ -27,13 +27,15 @@ Run Python tools from the repository root as modules, for example:
 .venv/bin/python -m compiler.qwen3.tests.validate_cpp --help
 ```
 
-Use each model's pinned Python environment. Native executable names and package
-formats remain unchanged; build from the repository root with CMake.
+Use each model's pinned Python environment. Qwen3 uses one fused FlashAttention compilation profile and always links its
+native attention library. Existing efficient Qwen3 packages must be re-exported;
+see its guide for the fixed package contract. Build from the repository root
+with CMake. Qwen3.5 retains its separate configuration and validation policy.
 
 Benchmark measurement boundaries are unchanged: reset, prefill, decode and
-whole request. Both model workers now also record reset-plus-prefill and consumed
+whole request. Both model workers record reset-plus-prefill and consumed
 positions; report headers/profile comparisons remain model-specific. Warmup
 predictions are checked as well as measured repeats. Source snapshots include
-the shared implementation. No CUDA Graphs, compiler or arithmetic changes are
-part of this refactor. Profiling capture/classification refactoring remains
+the shared implementation. Qwen3 keeps HF eager/FP32 references for validation, with bounded HF logit error
+and separate cache/token drift diagnostics. CUDA Graph integration is deferred. Profiling capture/classification refactoring remains
 deferred in PLAN.md.
