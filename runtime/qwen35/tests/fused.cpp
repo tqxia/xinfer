@@ -1,4 +1,4 @@
-// Run packaged recurrent Triton fixtures with no Python runtime or custom-op library.
+// Run fused GDN fixtures through packaged Triton, without Python/custom-op libraries.
 #include "../../common/io.h"
 #include <ATen/Parallel.h>
 #include <c10/core/InferenceMode.h>
@@ -18,7 +18,7 @@ Tensor read_tensor(std::istream& file, const std::vector<int64_t>& shape, at::Sc
 
 int main(int argc, char** argv) {
   try {
-    require(argc == 4, "Usage: qwen35_recurrent FIXTURES OUTPUT PACKAGES");
+    require(argc == 4, "Usage: qwen35_fused FIXTURES OUTPUT PACKAGES");
     const fs::path fixtures(argv[1]), output(argv[2]);
     require(!fs::exists(output), "Output directory already exists");
     c10::InferenceMode inference;
@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
         packages[name] = std::make_unique<torch::inductor::AOTIModelPackageLoader>(
             (fs::path(argv[3]) / (name + ".pt2")).string());
       }
-    Json report = {{"calls", 0}, {"packages_loaded", packages.size()}, {"inputs_unchanged", true}};
+    Json report = {{"calls", 0}, {"packages_loaded", packages.size()}, {"inputs_unchanged", true},
+                   {"decode_calls", 0}, {"prefill_calls", 0}};
     const auto manifest = read_json(fixtures / "cases.json");
     for (const auto& item : manifest.at("cases")) {
       const auto name = item.at("name").get<std::string>();
@@ -38,38 +39,46 @@ int main(int argc, char** argv) {
       const auto dtype_name = item.at("dtype").get<std::string>();
       require(dtype_name == "bf16" || dtype_name == "fp32", "Invalid fixture dtype");
       const auto dtype = dtype_name == "bf16" ? at::kBFloat16 : at::kFloat;
-      std::ifstream initial(fixtures / (name + "-state.bin"), std::ios::binary);
+      std::ifstream initial(fixtures / (name + "-initial.bin"), std::ios::binary);
+      auto conv = read_tensor(initial, {1, 6144, 4}, dtype);
       auto state = read_tensor(initial, {1, 16, 128, 128}, at::kFloat);
-      require(initial.peek() == EOF, "Extra initial state data");
+      auto weight = read_tensor(initial, {6144, 4}, dtype);
+      auto A_log = read_tensor(initial, {16}, dtype);
+      auto dt_bias = read_tensor(initial, {16}, dtype);
+      require(initial.peek() == EOF, "Extra initial fixture data");
+      require(!item.at("lengths").empty(), "Empty fixture");
       int step = 0;
       for (const auto& length : item.at("lengths")) {
         const auto tokens = length.get<int64_t>();
-        require(tokens >= 1 && tokens <= 512, "Token length must be 1..512");
+        require(tokens > 0 && tokens <= 512, "Token length must be 1..512");
         const auto stem = name + "-" + std::to_string(step++);
         std::ifstream file(fixtures / (stem + ".bin"), std::ios::binary);
-        std::vector<Tensor> inputs;
-        for (int i = 0; i < 3; ++i) inputs.push_back(read_tensor(file, {1, tokens, 16, 128}, dtype));
-        inputs.push_back(read_tensor(file, {1, tokens, 16}, at::kFloat));
-        inputs.push_back(read_tensor(file, {1, tokens, 16}, dtype));
-        inputs.push_back(state);
-        require(file.peek() == EOF, "Extra fixture data");
+        auto qkv = read_tensor(file, {1, tokens, 6144}, dtype);
+        auto b = read_tensor(file, {1, tokens, 16}, dtype);
+        auto a = read_tensor(file, {1, tokens, 16}, dtype);
+        require(file.peek() == EOF, "Extra fused input data");
+        std::vector<Tensor> inputs{qkv, b, a, conv, state, weight, A_log, dt_bias};
         std::vector<Tensor> before;
         for (const auto& x : inputs) before.push_back(x.clone());
-        const auto result = packages.at(dtype_name + (tokens == 1 ? "-decode" : "-prefill"))->run(inputs);
+        const std::string mode = tokens == 1 ? "decode" : "prefill";
+        const auto result = packages.at(dtype_name + "-" + mode)->run(inputs);
         for (size_t i = 0; i < inputs.size(); ++i)
           require(at::equal(inputs[i], before[i]), "Input mutation");
-        require(result.size() == 2 && result[0].sizes() == inputs[0].sizes() &&
-                result[0].scalar_type() == dtype && result[1].sizes() == state.sizes() &&
-                result[1].scalar_type() == at::kFloat, "Output shape/dtype mismatch");
+        require(result.size() == 3 && result[0].sizes() == at::IntArrayRef({1, tokens, 16, 128}) &&
+                result[0].scalar_type() == dtype && result[1].sizes() == conv.sizes() &&
+                result[1].scalar_type() == dtype && result[2].sizes() == state.sizes() &&
+                result[2].scalar_type() == at::kFloat, "Output shape/dtype mismatch");
         auto destination = output_file(output / (stem + ".bin"), true);
         for (const auto& x : result) {
           require(at::isfinite(x).all().item<bool>(), "Non-finite result");
           auto cpu = x.cpu().contiguous();
           destination.write(static_cast<const char*>(cpu.const_data_ptr()), cpu.nbytes());
         }
-        require(bool(destination), "Failed to write result");
-        state = result[1];
+        require(bool(destination), "Failed to write fused result");
+        conv = result[1];
+        state = result[2];
         report["calls"] = report["calls"].get<int>() + 1;
+        report[mode + "_calls"] = report[mode + "_calls"].get<int>() + 1;
       }
     }
     std::ifstream maps("/proc/self/maps");
@@ -77,7 +86,8 @@ int main(int argc, char** argv) {
       require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos,
               "Python library loaded");
       require(line.find("libxinfer_delta_ops") == std::string::npos &&
-              line.find("libxinfer_recurrent_ops") == std::string::npos, "Custom-op library loaded");
+              line.find("libxinfer_recurrent_ops") == std::string::npos &&
+              line.find("libxinfer_fused_ops") == std::string::npos, "Custom-op library loaded");
     }
     report["no_python_library"] = true;
     report["no_custom_op_library"] = true;

@@ -70,7 +70,8 @@ def main():
         export_seconds = time.perf_counter() - start
         assert not exported.graph_signature.buffers_to_mutate
         assert not exported.graph_signature.user_inputs_to_mutate
-        triton_ops = sum(str(n.target) == "xinfer.delta_recurrent.default" for n in exported.graph.nodes)
+        delta_operator = "xinfer.delta_fused.default"
+        triton_ops = sum(str(n.target) == delta_operator for n in exported.graph.nodes)
         assert triton_ops == config.layer_types.count("linear_attention")
         (args.output / f"{args.kind}.graph.txt").write_text(exported.graph_module.code)
         print(f"Exported {args.kind}: {len(list(exported.graph.nodes))} nodes; "
@@ -83,7 +84,7 @@ def main():
         compile_seconds = time.perf_counter() - start
     metadata = dict(
         kind=args.kind, tokens=None if dynamic else length, token_range=[2, 512] if dynamic else [length, length],
-        delta_backend="triton_op",
+        delta_backend="triton_op", delta_preparation="fused_triton", delta_operator=delta_operator,
         linear_packing=dict(enabled=True, version=1,
                             groups=[{key: group[key] for key in
                                      ("packed_parameter", "source_parameters", "output_widths")}

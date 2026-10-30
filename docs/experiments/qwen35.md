@@ -740,6 +740,191 @@ run, choose fresh `--output` paths and use the matching `--model-dir` and
 weights and defaults extraction to `work/qwen35/4b/block`; pass that path explicitly
 to export/validation and select separate package/result directories.
 
+## Unified DeltaNet preparation and recurrence: 2026-10-29
+
+**Source cleanup:** The standalone `recurrent_kernel`, its operator wrapper and
+Python/C++ test runners have been removed. The fused validator now uses HF
+convolution, gates and recurrence plus an independent FP32 control. The model
+validator keeps its existing HF comparisons and removes the standalone-core
+control. Numerical limits and native parity requirements are unchanged.
+Cleanup revalidation recompiles four focused AOTI packages and passes all
+396 native calls / 1,188 bitwise tensor checks. `fusion_passed=True`; the fused
+and HF controls each retain 125 failures against full FP32, so `passed=False`
+and exit 1 remain. The retained fused functions are AST-identical, and strict
+prefill/decode exports produce identical graph code to the initial unified pair.
+The retired operator and CMake target are absent. Evidence is in
+`artifacts/qwen35/0.8b/remove-recurrent-validation/summary.json` and
+`artifacts/qwen35/0.8b/remove-recurrent-audit.json`.
+
+The results below were recorded before this cleanup and retain their original
+comparison names and counts; they are not fresh results for the revised tests.
+
+Both production entry points now use `xinfer::delta_fused`, exposed as
+`fused(qkv, b, a, conv, state, weight, A_log, dt_bias)`. The kernel consumes
+projected QKV/A/B, fuses width-four causal convolution/history handling, SiLU,
+beta/log-decay preparation and recurrence, and returns fresh core output,
+convolution state and FP32 recurrent state. T=1 uses the decode package;
+T=2..512 uses one dynamic prefill package. QKV/B/A/Z projections, gated
+normalization and output projection remain outside. The initial validation
+retained a recurrent-core-only operator for reference checks; that control has
+since been removed. Chunked prefill remains a TODO.
+
+Strict full-model export and AOTI compilation pass with default compiler
+settings (`emulate_precision_casts=True`, optional combo optimizations off):
+
+| Entry point | Token contract | Graph nodes | `delta_fused` calls | Generated matrix calls | External convolution / proxy-executor calls |
+| --- | --- | ---: | ---: | ---: | --- |
+| Prefill | Dynamic T=2..512 | 2,166 | 18 | 97 | 0 / 0 |
+| Decode | T=1 | 2,165 | 18 | 97 | 0 / 0 |
+
+Packing remains 48 groups / 187->97 linear calls in both graphs. Packages are
+in `artifacts/qwen35/0.8b/text-unified-fused`. No separate custom-op library or
+Python runtime is needed by the C++ executable.
+
+### Code-generation issue and source workaround
+
+The earlier two-dimensional tap helper exposed a missing BF16 V conversion in
+generated code under the runtime token loop on L20 / SM89 with Torch
+2.7.0+cu126 and Triton 3.3.0. LLVM IR still requested BF16-to-FP32 widening,
+but PTX loaded V's raw BF16 bits into FP32 registers. A zero-V control reproduced
+the bad result to FP32 roundoff. The current helper uses one-dimensional static
+four-tap accumulation with explicit
+masked history/input loads. It preserves the convolution-result cast before
+SiLU and the activation/beta casts before recurrence; no precision setting or
+numerical tolerance was relaxed. The retained probe and generated-code evidence
+are under `artifacts/qwen35/0.8b/unified-fused-codegen`.
+
+### Focused operator validation
+
+Eighty-one BF16/FP32 cases cover convolution-history boundaries T=1,2,3,4,5,
+lengths through 512, zero/nonzero state, mixed prefill/decode carry, whole versus
+partitioned input, repeated requests, gate extremes, cancellation, checkpoint
+projections, strided inputs, streams and contract rejection. Python JIT,
+Python-loaded AOTI and standalone C++ agree bitwise across 396 calls / 1,188
+tensors. Fused-versus-unfused and HF comparisons satisfy the declared
+precision-specific numerical limits.
+
+Both carried states remain bitwise across partitions, as do BF16 core outputs.
+The FP32 core partition comparison records a maximum absolute difference of
+1.86e-9 across static/decode and dynamic/prefill specializations. It uses the
+existing FP32 numerical limits; its bitwise flag and error metrics remain in
+the report. All same-input JIT/AOTI/C++ and repeated-request checks remain exact.
+
+`fusion_passed=True`, while full-FP32 acceptance remains open. Fused and unfused
+BF16 paths each have 125 comparisons against full FP32 above the existing
+limits, with identical BF16 error metrics. All 250 entries remain visible,
+overall `passed=False` and exit 1 are retained. This distinguishes fusion
+correctness from the BF16-to-FP32 gap without hiding either result.
+
+### Full-model and native validation
+
+The 68-step model suite's `fusion_vs_unfused` comparison is bitwise for all
+3,332 tensors. Shape/dtype/finite, masks, future-cache/write regions, unchanged
+inputs and reset/repeat checks pass, including dynamic lengths 2,22,65,511,512.
+The broader numerical report retains 5,241 failure keys versus the earlier
+decode-only run's 5,248: zero added and seven removed. Existing HF/compiler
+numerical acceptance remains open.
+
+Full-model native validation passes 27 cases: 4,018 teacher tensors, 30 greedy
+logit rows and 288 final-state tensors match Python AOTI bitwise. All 23
+rejection checks, CLI parity, reset/repeat and dispatch checks pass. The native
+process maps no Python library. Compiled generation differs from the earlier
+package pair: the capital answer adds token 13 (a period), producing `Paris.`
+instead of `Paris`. Arithmetic and Chinese chat outputs remain unchanged.
+Exact eager fusion and native/AOTI parity do not close the numerical issues or
+establish identical outputs across separately compiled package versions.
+
+Compact reports are retained at
+`artifacts/qwen35/0.8b/unified-fused-validation/summary.json`,
+`artifacts/qwen35/0.8b/unified-fused-model/summary.json` and
+`artifacts/qwen35/0.8b/unified-fused-runtime/summary.json`. Raw fixtures remain
+temporarily under `/dev/shm/xinfer-unified-fused-20261029/` because development
+disk space is limited; that temporary storage can disappear after restart.
+The shared GPU is busy, so no latency or speedup is claimed. Performance must
+be measured on the test host with matching compiler settings and source.
+
+## Fused DeltaNet decode preparation: 2026-10-29
+
+**Historical scope:** This section records the earlier T=1-only fusion.
+The current source uses `xinfer::delta_fused` for T=1..512;
+the results below do not establish acceptance of that unified implementation.
+
+Decode now uses `xinfer::delta_decode`, a `torch.library.triton_op` whose single
+Triton launch fuses width-four causal convolution/history shift, SiLU,
+beta/log-decay preparation and the recurrent core. QKV/B/A/Z projections and
+z-gated normalization/output projection remain outside. The model adapter selects
+this path only for T=1; dynamic prefill keeps native convolution and
+`xinfer::delta_recurrent`. The two kernels share `_recurrent_step`.
+
+The kernel is deliberately narrow: batch one, 16 heads, K=V=128, bias-free
+width-four SiLU convolution, BF16 or FP32 inputs/weights and FP32 recurrent state.
+Convolution accumulates in FP32 and rounds to the input dtype before SiLU;
+activation and beta round again before recurrence. The installed HF reference
+uses grouped `F.conv1d`, so there is no BF16 rounding of individual products.
+Four value tiles share Q/K preparation; only tile zero writes Q/K convolution
+history, while V tiles write disjoint channels. Core output, next convolution
+state and next recurrent state are fresh tensors; input state is unchanged.
+
+Focused validation retains the old HF convolution/gate preparation followed by
+the original recurrent operator, HF recurrence and an independent full-FP32
+control. Nineteen cases cover random zero/nonzero state, 64 carried steps and
+reset/repeat, gate extremes, convolution cancellation, actual checkpoint
+projections, noncontiguous inputs, non-default streams, and rejection checks.
+All 158 BF16 steps match the unfused control bitwise for core and both states.
+FP32 versus unfused maximum errors are 5.59e-9 for core and 1.79e-7 for recurrent
+state; maximum normalized error is 4.57e-6, below the existing 1e-4 FP32 limit.
+All convolution-state updates are exact. Two tiny AOTI packages execute in a
+Python-free C++ process: 300 calls / 900 tensors match Python AOTI bitwise,
+without a separate custom-op library.
+
+The full-FP32 gate is deliberately reported separately. BF16 convolution and
+gate rounding produce 77 comparisons above the existing 1% BF16 limits, both
+for fused and unfused paths. Their per-row FP32 errors are exactly equal.
+`fusion_passed=True`, `fp32_acceptance=False`, and
+`bf16_fp32_errors_match_unfused=True`; all 154 entries remain visible, overall
+`passed=False` and exit 1 are retained. No tolerance was relaxed to accept fusion.
+See `artifacts/qwen35/0.8b/fused-decode-validation-v2/summary.json`.
+
+The unchanged recurrent regression passes all 72 cases with no numerical
+failures, including dynamic lengths and partitioned carry; standalone C++
+executes 204 calls / 408 tensors. A direct probe against the saved original
+kernel is bitwise for BF16 and FP32 at T=1,2,32,65,512. Evidence is
+`fused-decode-recurrent-regression/summary.json` and
+`fused-decode-original-kernel.json` under `artifacts/qwen35/0.8b/`.
+
+Full-model strict export and AOTI compilation pass with the default compiler
+settings (`emulate_precision_casts=True`, optional Inductor optimizations off).
+Packing remains 48 groups / 187->97 linear calls in both entry points. Prefill
+has 2,672 nodes with T=2..512, and its exported code is identical to the prior
+packed graph. Decode decreases from 2,705 to 2,165 nodes with 18 fused operators.
+Generated wrappers each retain 97 matrix calls; decode has zero external
+convolution calls versus 18 in prefill. Both have zero proxy-executor calls.
+New packages are in `artifacts/qwen35/0.8b/text-fused-decode`.
+
+The 68-step full-model suite adds an eager `decode_fusion_vs_unfused` control;
+all 3,332 tensor comparisons are bitwise equal. Shape/dtype/finite, masks,
+future-cache/write regions, input preservation and reset/repeat checks pass.
+Existing full-model HF/packing/compiler gates remain open: 5,248 failures,
+with exactly the same failure keys as the prior packed run (zero added/removed).
+See `fused-decode-model/summary.json`.
+
+Full-model native runtime validation passes 27 cases: 4,018 teacher tensors,
+28 greedy logit rows and 288 final-state tensors match Python AOTI bitwise.
+All 23 rejection checks pass, including context and package contracts. Greedy
+IDs match the prior packed native run for all common cases. This does not mean
+the compiled packages are numerically identical: 25/27 raw state files differ,
+and arithmetic/capital logit traces differ (maximum absolute logit differences
+0.171875/0.328125; global relative L2 about 0.00479/0.01308). Chinese logits
+remain bitwise. Existing AOTI/HF teacher top-token differences remain present.
+See `fused-decode-runtime/summary.json` and `fused-decode-audit.json`.
+
+The development GPU remains shared/busy. These are functional and numerical
+checks, not evidence of a speedup. The next timing comparison should recompile
+on the test host and compare the old combo-enabled control with fused decode
+plus the same combo settings; launch/fusion gains must be remeasured together.
+The optional `--enable-inductor-optimization` flag still only controls the
+existing Inductor combo settings. Chunked prefill remains a TODO.
+
 ## Frozen linear weight packing: 2026-10-28
 
 Implemented `compiler/common/passes/pack_linears.py` as a model-independent pass over
