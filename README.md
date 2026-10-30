@@ -4,6 +4,7 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 
 - [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
+- [GB10 setup and commands](docs/gb10.md): isolated model environments, native build and verified checkpoint locations.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
 - [Plan and deferred work](PLAN.md).
 
