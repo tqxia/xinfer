@@ -11,8 +11,9 @@ is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
 tensors cover 18 conv/recurrent pairs and six KV pairs. Recurrent states use
 FP32. Inputs remain unchanged; returned tensors replace the previous state.
 
-Unified prefill/decode preparation and recurrence use one fused operator.
-Focused validation compares it with HF tensor operations and an independent
+One functional operator dispatches to fused decode or chunked FP32 prefill.
+The chunked path is a forward-only PoC; no speedup is established. Focused
+validation compares it with HF recurrent/chunked operations and an independent
 FP32 control; full-model and native checks cover generation and carried state.
 HF/compiler numerical acceptance remains **open**. The experiment record retains
 the earlier validation results, including the retired standalone-core control.
@@ -23,8 +24,9 @@ No timing result is claimed on the busy development GPU.
 - `model.py`: prepared text checkpoint, functional `TextStep` and state ABI.
 - `adapters/delta.py`: reuse HF weights, projections and gated norm; call unified
   Triton preparation/recurrence for prefill and decode.
-- `kernels/recurrent.py`: unified fused kernel and its `torch.library.triton_op`
-  wrapper.
+- `kernels/recurrent.py`: fused decode, parallel prefill preparation and the
+  shared `torch.library.triton_op` wrapper.
+- `kernels/chunked.py`: FP32 chunk transforms, state scan and output kernels.
 - `export.py`: strict export and AOTInductor packaging.
 - `prepare.py`: offline token IDs; `reference.py`: HF/Python AOTI validation runners.
 - `tests/`: fused-operator, model, C++ and end-to-end checks.
@@ -36,8 +38,8 @@ Native sources live in `runtime/qwen35/`; small shared helpers live in
 ## Dynamic full-model prefill and Triton GDN
 
 `torch.library.triton_op` keeps the GDN operator visible in the exported graph.
-Its implementation uses `wrap_triton` so AOTInductor can compile the kernel and
-include its cubin in each `.pt2` package. The C++ loader needs the two packages,
+Its implementation uses `wrap_triton` so AOTInductor can compile the kernels and
+include their cubins in each `.pt2` package. The C++ loader needs the two packages,
 their JSON metadata and matching LibTorch/CUDA dependencies. It needs no Python,
 Triton installation or separate custom-op library at inference time.
 
@@ -59,16 +61,24 @@ state is `[1,16,128,128]`; core output is `[1,T,16,128]`. Inputs and parameters
 use matching BF16 or FP32, with recurrent state always FP32. The wrapper
 establishes contiguous inputs and allocates fresh outputs.
 
-One program owns one head and 32 value columns, carries FP32 state through T
-tokens, and fuses bias-free width-four causal convolution, history handling,
-SiLU, beta/log-decay preparation, Q/K normalization, state update and output
-reduction. Four value tiles use the same Q/K inputs; only tile zero writes their
-convolution state. Input projections, z-gated normalization and output projection remain
-outside the fused kernel. **TODO: chunked prefill.**
+Decode keeps the existing fused kernel: one program owns one head and 32 value
+columns and combines bias-free width-four convolution/history handling, SiLU,
+beta/log-decay preparation, Q/K normalization, state update and output reduction.
+Four value tiles share Q/K preparation; only tile zero writes their convolution
+history.
 
-Full-model prefill and decode both use the unified fused operator, packaged
-through `triton_op` for standalone C++ execution. Focused validation uses HF's
-tensor recurrence as an independent reference.
+Prefill prepares Q/K/V and gates in parallel across tokens and heads, then runs
+four chunk kernels: cumulative decay and triangular solve, U/W transforms,
+state propagation between chunks, and parallel outputs. The fixed chunk size
+is 64. It is an internal compute tile; dynamic T=2..512 still uses one prefill
+package, with masked neutral tails rather than separate length buckets.
+Workspaces, state arithmetic and matrix products use FP32 with explicit IEEE
+dot precision. Convolution/SiLU and beta retain their input-dtype rounding.
+
+Both paths retain the same eight-input/three-output operator interface and
+require no extra flag. Input projections, z-gated normalization and output
+projection stay outside. Focused validation uses HF recurrent and chunked
+references; the runtime continues to load packaged Triton without Python.
 
 ## Prepare, export and build
 
@@ -105,9 +115,11 @@ cmake --build work/qwen35/build \
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2` and their `.json` metadata under
-`artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`, token
-ranges, source checksums, toolchain and GPU architecture. Keep the package pair
-and metadata together. The runtime rejects incompatible pairs.
+`artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`,
+`delta_algorithm={prefill: chunked_fp32, decode: fused_recurrent}`,
+`delta_chunk_size=64` and `delta_dot_precision=ieee`, plus token ranges, source
+checksums, toolchain and GPU architecture. Keep the package pair and metadata
+together. The runtime rejects incompatible pairs.
 
 [Torch 2.7's package loader](https://github.com/pytorch/pytorch/blob/v2.7.0/torch/csrc/inductor/aoti_package/model_package_loader.cpp#L42)
 extracts directly into `/tmp`, ignoring `TMPDIR`.
@@ -153,26 +165,25 @@ work/qwen35/build/qwen35_aoti artifacts/qwen35/0.8b/text \
   --output artifacts/qwen35/0.8b/end-to-end-new
 ```
 
-The focused fused validator compares fused output and both carried states with
-HF convolution, gates and recurrence. It reports `fusion_passed` separately
+The focused fused validator compares output and both carried states with
+HF convolution, gates, recurrence and chunked prefill. It reports `fusion_passed` separately
 from full FP32 numerical acceptance, retains every comparison failure and
 cross-checks the HF path against the same FP32 control. Python JIT, Python AOTI
 and standalone C++ must agree bitwise. Inspect complete reports before treating
 a nonzero exit as an expected numerical gate.
 
-Partition tests keep both carried states exact. BF16 core partition comparisons
-also require exact bits. FP32 core comparisons use the existing numerical
-limits across static/decode and dynamic/prefill specializations; the initial
-unified run recorded a maximum absolute difference of 1.86e-9. Repeated
-requests and same-input JIT/AOTI/C++ comparisons retain their bitwise
-requirements.
+Chunking reorders arithmetic across sequence partitions. Core output and
+recurrent-state partition comparisons use the existing BF16/FP32 numerical
+limits, while convolution history remains exact. Repeated requests and
+same-input JIT/AOTI/C++ comparisons retain their bitwise requirements.
 
 Use `--packages` and `--binary`/`--native`/`--cli` to select other artifact and
 build directories. Validation output directories must be fresh.
 The focused fused suite checks preparation, core output and both carried states
-through the `qwen35_fused` native target. It covers BF16/FP32, T=1..512
+through the `qwen35_fused` native target. Its 83 cases / 400 calls cover BF16/FP32, T=1..512
 boundaries, mixed prefill/decode continuations, whole versus partitioned inputs
-and repeated requests through four fused AOTI packages.
+and repeated requests through four fused AOTI packages, including chunk-boundary
+and prefill gate-extreme cases. These describe test coverage, not acceptance.
 The native processes verify that neither Python nor custom-op libraries are
 mapped. Full-model checks retain all state tensors, HF/FP32 controls, dispatch
 counts, masked-future checks and CLI rejection cases. Numerical validators exit
@@ -181,12 +192,13 @@ nonzero for acceptance failures and retain the reports.
 Recorded reports from the initial unified implementation are under
 `artifacts/qwen35/0.8b/unified-fused-{validation,model,runtime}/summary.json`;
 the full-model packages are in `artifacts/qwen35/0.8b/text-unified-fused`.
-Those reports predate removal of the standalone recurrent control. Rerun the
-current validators into fresh output directories when validating a new export.
-Cleanup revalidation is recorded in
+Those reports predate removal of the standalone recurrent control. Historical
+cleanup revalidation is recorded in
 `artifacts/qwen35/0.8b/remove-recurrent-validation/summary.json`: all 396 native
 calls / 1,188 tensors match Python AOTI bitwise; fusion checks pass. The fused
 and HF paths each retain 125 FP32 accuracy failures, so overall acceptance is open.
+All of these reports precede the chunked prefill PoC. Re-export and run the
+current validators into fresh output directories for its validation.
 The [experiment record](../../docs/experiments/qwen35.md#unified-deltanet-preparation-and-recurrence-2026-10-29)
 records the code-generation workaround, numerical limits and temporary raw
 fixture location.

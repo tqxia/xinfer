@@ -16,6 +16,7 @@ from compiler.common.artifacts import sha256, ROOT
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
+from compiler.qwen35.kernels.chunked import CHUNK_SIZE
 
 
 def export_step(model, kind):
@@ -84,7 +85,9 @@ def main():
         compile_seconds = time.perf_counter() - start
     metadata = dict(
         kind=args.kind, tokens=None if dynamic else length, token_range=[2, 512] if dynamic else [length, length],
-        delta_backend="triton_op", delta_preparation="fused_triton", delta_operator=delta_operator,
+        delta_backend="triton_op", delta_preparation="triton", delta_operator=delta_operator,
+        delta_algorithm=dict(prefill="chunked_fp32", decode="fused_recurrent"),
+        delta_chunk_size=CHUNK_SIZE, delta_dot_precision="ieee",
         linear_packing=dict(enabled=True, version=1,
                             groups=[{key: group[key] for key in
                                      ("packed_parameter", "source_parameters", "output_widths")}
@@ -106,7 +109,8 @@ def main():
         source_sha256={name: sha256(ROOT / name) for name in (
             'compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/export.py',
             'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py',
-            'compiler/qwen35/kernels/recurrent.py', 'compiler/common/passes/pack_linears.py')},
+            'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py',
+            'compiler/common/passes/pack_linears.py')},
         parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
         rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
         tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,

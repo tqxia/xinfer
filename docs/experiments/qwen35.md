@@ -2,10 +2,115 @@
 
 The current full-model path uses dynamic prefill and a packaged Triton operator
 exclusively. See [current commands](../../compiler/qwen35/README.md) and
-[the latest integration record](#dynamic-only-triton-operators-2026-10-28).
+[the latest integration record](#chunked-gdn-prefill-poc-2026-10-30).
 Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.
+
+## Chunked GDN prefill PoC: 2026-10-30
+
+The working tree based on `c25d154` replaces token-sequential prefill with a
+forward-only chunked GDN implementation. Batch one, 16 heads, K=V=128 and
+T=2..512 remain the prefill contract. The T=1 fused decode kernel and its
+helpers are AST-identical to the committed implementation. Both paths keep
+the same `xinfer::delta_fused` eight-input/three-output interface, functional
+state ownership and existing C++ runner; no new backend flag or C++ source
+change is required.
+
+### Algorithm and precision
+
+`kernels/recurrent.py` prepares convolution/SiLU output, normalized/scaled Q/K
+and gates in parallel across tokens and heads. `kernels/chunked.py` then runs
+four kernels:
+
+1. Compute chunk-local cumulative decay and the unit-lower-triangular transform.
+2. Compute U/W transforms using FP32 matrix products.
+3. Propagate FP32 memory between chunks, storing incoming states and corrected
+   values for each chunk.
+4. Compute outputs in parallel across chunks, heads and value tiles.
+
+This is five launches per DeltaNet prefill operator, rather than one larger
+token loop. Chunk size is 64; the runtime chunk count is `ceil(T/64)`, so one
+dynamic package covers all supported lengths. Prepared Q/K/V, beta and g are
+masked to neutral tail values (`beta=0`, `g=0`); padding does not advance the
+returned memory, and convolution history ends at the last real token.
+Intermediate buffers and matrix products are FP32 with explicit IEEE dot
+precision. Convolution/SiLU and beta retain the original input-dtype rounding;
+the initial PoC introduces no BF16 matrix operands or TF32 arithmetic.
+
+Metadata records `delta_algorithm={prefill: chunked_fp32, decode: fused_recurrent}`,
+`delta_chunk_size=64` and `delta_dot_precision=ieee`. Source manifests include
+`kernels/chunked.py`. The operator/state ABI and dynamic prefill range remain
+unchanged. This is an algorithm/correctness PoC, with no performance claim.
+
+### Focused validation
+
+The 83-case suite executes 400 calls covering BF16/FP32, zero/nonzero incoming
+state, lengths through 512, chunk and convolution boundaries, mixed prefill and
+decode, repeated/reset requests, cancellation, checkpoint projections, and
+decode/prefill gate extremes. HF recurrence and HF's chunked algorithm are
+separate controls, alongside the independent full-FP32 control.
+
+| Check | Result |
+| --- | --- |
+| Fused/chunked implementation vs HF recurrent and chunked controls | Existing numerical limits pass; `fusion_passed=True` |
+| Python JIT vs Python AOTI vs standalone C++ | All 1,200 output/state tensors across 400 calls bitwise equal |
+| Convolution history | Exact, including tails and sequence partitions |
+| Core/recurrent state across sequence partitions | Pass existing precision-specific numerical limits |
+| Input preservation, aliasing, shapes/dtypes/finites, streams, repeated requests and invalid-input rejection | Pass |
+
+Chunking changes floating-point operation order, so partition equivalence now
+uses the existing core/recurrent numerical limits rather than bitwise state
+requirements. Same-input JIT/AOTI/C++ and repeated requests remain exact, as
+does convolution history. No numerical threshold was enlarged.
+
+Full-FP32 acceptance remains open: fused-vs-FP32 and HF-vs-FP32 each record
+127 failures. All 254 comparisons remain visible, overall `passed=False` and
+exit 1 are retained. Equal counts do not establish identical error metrics.
+
+### Full-model export and numerical checks
+
+Strict export and AOTI compilation pass for both complete model entry points.
+Prefill has 2,166 graph nodes; decode has 2,165. Both retain 18
+`xinfer.delta_fused` calls, 48 packing groups and 187->97 linear calls.
+Generated wrappers each contain 97 external matrix calls and zero external
+convolution or proxy-executor calls.
+
+All 68 model-suite steps pass shape/dtype/finite, input preservation,
+reset/repeat, future-KV/write-region and masking checks, including dynamic
+lengths 2,22,65,511,512. The numerical report retains 5,219 failures versus
+the previous unified implementation's 5,241, with 10 added and 32 removed
+failure keys. Reported top-1-difference rows increase from 10 to 14, including
+a new `aoti_vs_hf` difference at `dynamic_32`, step 1, with a control top-two
+margin of 0.125. These rows can cover repeated comparisons; they are not a
+count of distinct prompts. Accuracy acceptance remains open, and the lower
+failure total does not establish an accuracy improvement.
+
+Full-model native validation passes 27 cases: 4,018 teacher tensors, 28 greedy
+logit rows and 288 final-state tensors match Python AOTI bitwise. All 23
+rejection cases and input/reset/repeat, CLI and dispatch checks pass. The native
+process loads no Python library. Relative to the previous fused package pair,
+the capital response removes the period (`Paris` instead of `Paris.`), with the
+same change in its repeated request. Arithmetic (`42`) and Chinese responses
+remain unchanged. Native parity establishes agreement with the current AOTI
+packages, while the HF/FP32 numerical issues remain open.
+
+### Evidence and performance scope
+
+Compact reports belong under
+`artifacts/qwen35/0.8b/chunked-validation/summary.json`,
+`artifacts/qwen35/0.8b/chunked-model/summary.json` and
+`artifacts/qwen35/0.8b/chunked-runtime/summary.json`. The new model package pair
+is temporarily in `/dev/shm/xinfer-chunked-20261030/text`; large fixtures and
+compiler scratch also use temporary storage because development disk space is
+limited. These files can disappear after restart; re-export on the target
+host with its matching Torch/LibTorch and GPU architecture.
+
+The shared development GPU is at 100% utilization, so no latency or speedup is
+claimed. Host-103 profiling should compare the committed token-sequential
+baseline and this chunked candidate with the same Inductor optimization flags,
+precision settings, workload and native build. Existing full-model numerical
+differences must remain explicit during that comparison.
 
 # Qwen3.5: text-only AOTI / C++ experiment
 

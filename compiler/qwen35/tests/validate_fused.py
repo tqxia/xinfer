@@ -10,13 +10,15 @@ import subprocess
 import torch
 import torch.nn.functional as F
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
-    causal_conv1d_fn, causal_conv1d_update, torch_recurrent_gated_delta_rule,
+    causal_conv1d_fn, causal_conv1d_update, torch_chunk_gated_delta_rule,
+    torch_recurrent_gated_delta_rule,
 )
 
 from compiler.common.artifacts import ROOT, read_json, sha256, write_json
 from compiler.common.validation import bits_equal, compare_file, cpu_copy, raw_bytes, row_errors
 from compiler.qwen35.config import ARTIFACT_DIR, configure
 from compiler.qwen35.diagnostics.block import MODEL_DIR, load_block
+from compiler.qwen35.kernels.chunked import CHUNK_SIZE
 from compiler.qwen35.kernels.recurrent import fused
 
 LENGTHS = (1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
@@ -33,8 +35,8 @@ class Fused(torch.nn.Module):
         return fused(qkv, b, a, conv, state, weight, A_log, dt_bias)
 
 
-def reference(qkv, b, a, conv, state, weight, A_log, dt_bias):
-    """HF convolution, gate preparation and recurrent reference."""
+def reference(qkv, b, a, conv, state, weight, A_log, dt_bias, *, chunked=False):
+    """HF preparation with either recurrent or chunked prefill arithmetic."""
     tokens = qkv.shape[1]
     if tokens == 1:
         next_conv = conv.clone()
@@ -46,9 +48,10 @@ def reference(qkv, b, a, conv, state, weight, A_log, dt_bias):
     q, k, v = (x.reshape(1, tokens, 16, 128) for x in mixed.transpose(1, 2).split(2048, dim=-1))
     beta = b.sigmoid()
     g = -A_log.float().exp() * F.softplus(a.float() + dt_bias)
-    core, final = torch_recurrent_gated_delta_rule(
-        q, k, v, g, beta, initial_state=state,
-        output_final_state=True, use_qk_l2norm_in_kernel=True)
+    implementation = torch_chunk_gated_delta_rule if chunked and tokens > 1 else torch_recurrent_gated_delta_rule
+    options = dict(chunk_size=CHUNK_SIZE) if chunked and tokens > 1 else {}
+    core, final = implementation(q, k, v, g, beta, initial_state=state,
+                                 output_final_state=True, use_qk_l2norm_in_kernel=True, **options)
     return core, next_conv, final
 
 
@@ -80,6 +83,15 @@ def make_cases(block_dir):
             b.copy_(torch.linspace(-80, 80, 16))
             a.fill_((-80, -20, -1, 0, 19, 20, 21, 80)[i])
         cases.append(gates)
+        # Reuse whole's seeded data so adding this case leaves old fixtures unchanged.
+        prefill_gates = dict(whole, name=f"{dtype_name}-prefill-gate-extremes",
+                             steps=[tuple(x[:, start:end].clone() for x in whole["steps"][0])
+                                    for start, end in ((0, 65), (65, 66))])
+        extremes = torch.tensor([-80, -20, -1, 0, 19, 20, 21, 80], dtype=dtype)
+        for _, b, a in prefill_gates["steps"]:
+            b.copy_(torch.linspace(-80, 80, 16))
+            a.copy_(extremes[torch.arange(a.shape[1]) % len(extremes)].view(1, -1, 1))
+        cases.append(prefill_gates)
         zero = case("zero-qkv")
         zero["conv"].zero_()
         zero["steps"][0][0].zero_()
@@ -165,12 +177,15 @@ def main():
         cases = make_cases(args.block_dir)
         write_cases(args.output, cases)
         report = dict(seed=35, torch=torch.__version__, triton=importlib.metadata.version("triton"),
+                      chunk_size=CHUNK_SIZE,
+                      partition_acceptance=dict(core="numerical", conv="bitwise", recurrent="numerical"),
                       limits=LIMITS, absolute_limits=ABS_LIMITS, comparisons=[], failures=[], packages=[],
                       checkpoint_case=any(c["name"] == "bf16-checkpoint" for c in cases),
                       binary_sha256=sha256(args.binary),
                       hf_source_sha256=sha256(inspect.getfile(causal_conv1d_update)),
                       source_sha256={name: sha256(ROOT / name) for name in (
                           "compiler/qwen35/tests/validate_fused.py", "compiler/qwen35/kernels/recurrent.py",
+                          "compiler/qwen35/kernels/chunked.py",
                           "runtime/qwen35/tests/fused.cpp", "runtime/qwen35/CMakeLists.txt")})
         packages = {}
         destination = args.output / "packages"
@@ -199,7 +214,7 @@ def main():
         results = {}
         calls = dict(fused=fused, aoti=lambda *x: packages["bf16" if x[0].dtype == torch.bfloat16 else "fp32",
                                                         "decode" if x[0].shape[1] == 1 else "prefill"](*x),
-                     hf=reference, fp32=reference)
+                     hf=reference, hf_chunked=lambda *x: reference(*x, chunked=True), fp32=reference)
         for name, call in calls.items():
             print(f"Running {name}: {len(cases)} cases", flush=True)
             results[name] = run_cases(call, cases, fp32=name == "fp32")
@@ -242,7 +257,7 @@ def main():
             else:
                 raise AssertionError(f"Accepted invalid {name}")
 
-    pairs = (("fused", "aoti"), ("fused", "hf"),
+    pairs = (("fused", "aoti"), ("fused", "hf"), ("fused", "hf_chunked"),
              ("fused", "fp32"), ("hf", "fp32"))
     for actual_engine, expected_engine in pairs:
         compare(report, f"{actual_engine}_vs_{expected_engine}", results[actual_engine],
@@ -252,13 +267,10 @@ def main():
             parts = [values[f"{dtype}-split", i] for i in range(len(PARTITIONS))]
             key = (f"{dtype}-partition", 0)
             combined = {key: (torch.cat([p[0] for p in parts], dim=1), *parts[-1][1:])}
-            # Static/decode and dynamic/prefill can round FP32 core reductions
-            # differently. Keep carried state exact and the core's existing limits.
-            exact_tensors = ()
-            if engine in ("fused", "aoti"):
-                exact_tensors = (0, 1, 2) if dtype == "bf16" else (1, 2)
+            # Chunking reorders FP32 core/state arithmetic across partitions.
+            # Keep the existing numerical limits and require exact conv history.
             compare(report, f"{engine}_partition", combined, {key: values[f"{dtype}-whole", 0]},
-                    exact_tensors=exact_tensors)
+                    exact_tensors=(1,))
     env = {k: os.environ[k] for k in ("CUDA_VISIBLE_DEVICES", "LD_LIBRARY_PATH") if k in os.environ}
     env.update(PATH="/usr/bin:/bin", OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", PYTHONHOME="/nonexistent-python-home")
     output = args.output / "cpp-aoti"
@@ -274,7 +286,8 @@ def main():
                            convolution_state_exact=all(row["max_abs"] == 0 for row in report["comparisons"]
                                                        if row["tensor"] == "conv"))
     # Separate the fusion regression from the pre-existing BF16-to-FP32 gap.
-    fusion_comparisons = {"fused_vs_aoti", "fused_vs_hf", "fused_partition", "aoti_partition"}
+    fusion_comparisons = {"fused_vs_aoti", "fused_vs_hf", "fused_vs_hf_chunked",
+                          "fused_partition", "aoti_partition"}
     report["fusion_passed"] = not any(
         row["comparison"] in fusion_comparisons or
         (row["comparison"] == "fused_vs_fp32" and row["case"].startswith("fp32-"))
