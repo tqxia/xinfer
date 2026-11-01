@@ -97,7 +97,9 @@ class LayerState:
             self.recurrent_states = [b]
             self.record_past = False
         else:
-            self.keys, self.values = a, b
+            # Keep updates in list slots, as for DeltaNet state. Torch 2.13
+            # export can lose attribute assignments after a symbolic cond.
+            self.kv = [a, b]
 
 
 class TextCache:
@@ -124,15 +126,16 @@ class TextCache:
 
     def update(self, key, value, layer_idx):
         layer = self.layers[layer_idx]
-        layer.keys = layer.keys.index_copy(2, self.position, key)
-        layer.values = layer.values.index_copy(2, self.position, value)
-        return layer.keys, layer.values
+        new_key = layer.kv[0].index_copy(2, self.position, key)
+        new_value = layer.kv[1].index_copy(2, self.position, value)
+        layer.kv[0], layer.kv[1] = new_key, new_value
+        return new_key, new_value
 
     def tensors(self):
         result = []
         for kind, layer in zip(self.kinds, self.layers):
             result.extend((layer.conv_states[0], layer.recurrent_states[0]) if kind == "linear_attention"
-                          else (layer.keys, layer.values))
+                          else layer.kv)
         return result
 
 

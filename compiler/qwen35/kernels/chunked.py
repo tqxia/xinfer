@@ -124,11 +124,14 @@ def launch_chunked(q, k, v, g, beta, state, output, final):
     """Write fresh output/final tensors; inputs are FP32 prepared head vectors."""
     tokens, heads, dim = q.shape[1:]
     chunks = (tokens + CHUNK_SIZE - 1) // CHUNK_SIZE
-    inverse = torch.empty((chunks, heads, CHUNK_SIZE, CHUNK_SIZE), device=q.device, dtype=torch.float32)
-    prefix = torch.empty((chunks, heads, CHUNK_SIZE), device=q.device, dtype=torch.float32)
-    shape = (chunks, heads, CHUNK_SIZE, dim)
+    # Kernels use flat pointer offsets, so workspace shape metadata is unused.
+    # Flatten without padding: a sample with one chunk must not specialize the
+    # dynamic chunk dimension to 1 during AOTInductor's tensor-layout checks.
+    inverse = torch.empty((chunks * heads * CHUNK_SIZE * CHUNK_SIZE,), device=q.device, dtype=torch.float32)
+    prefix = torch.empty((chunks * heads * CHUNK_SIZE,), device=q.device, dtype=torch.float32)
+    shape = (chunks * heads * CHUNK_SIZE * dim,)
     u, w, corrections = (torch.empty(shape, device=q.device, dtype=torch.float32) for _ in range(3))
-    incoming = torch.empty((chunks, heads, dim, dim), device=q.device, dtype=torch.float32)
+    incoming = torch.empty((chunks * heads * dim * dim,), device=q.device, dtype=torch.float32)
     torch.library.wrap_triton(_solve)[(chunks, heads)](
         k, g, beta, inverse, prefix, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
     torch.library.wrap_triton(_transforms)[(chunks, heads, dim // TRANSFORM_TILE)](
