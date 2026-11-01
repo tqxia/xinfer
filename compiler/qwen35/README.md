@@ -155,8 +155,11 @@ Leave room there for both model libraries: about 3 GB plus margin for this pair.
 ### Optional compiler optimizations
 
 Pass `--enable-inductor-optimization` to enable the current Inductor optimization
-settings. This generic flag currently sets `combo_kernels=True` and
-`benchmark_combo_kernel=True`; future optimizations can extend the same flag.
+settings: `combo_kernels=True`, `benchmark_combo_kernel=True`, and
+`coordinate_descent_tuning=True`. Coordinate descent tunes generated kernels
+and, on the tested Torch build, enables multiply-and-sum lowering for CUDA
+matrix products with M=1 or N=1. Batch-one decode projections qualify; ordinary
+batched projections with M>1 and N>1 do not use this particular lowering.
 Export both entry points with matching settings into a fresh directory:
 
 ```bash
@@ -171,7 +174,10 @@ Metadata records the `enable_inductor_optimization` flag and resolved
 The flag is off by default and
 requires no runtime switch. Rerun the model, runtime and end-to-end validators with
 `--packages artifacts/qwen35/0.8b/text-optimized`, since these optimizations can
-change floating-point results.
+change floating-point results. The isolated GB10 reduction experiment changed
+convolution/recurrent states beyond the existing comparison thresholds and
+some token predictions. Its measured decode gain does not establish numerical
+acceptance or the performance of this combined combo-plus-reduction setting.
 
 ## Generate and validate
 

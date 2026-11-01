@@ -72,7 +72,7 @@ def main():
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
     parser.add_argument("--enable-inductor-optimization", action="store_true",
-                        help="Enable optional Inductor optimizations (currently combo kernels)")
+                        help="Enable Inductor combo kernels and coordinate-descent reduction tuning")
     parser.add_argument("--eager-numerics", action="store_true",
                         help="Keep native mean reductions and disable FP contraction")
     args = parser.parse_args()
@@ -109,7 +109,8 @@ def main():
               f"DeltaNet branches {graph}; ranges {exported.range_constraints}", flush=True)
         options = {"emulate_precision_casts": True}
         if args.enable_inductor_optimization:
-            options.update(combo_kernels=True, benchmark_combo_kernel=True)
+            options.update(combo_kernels=True, benchmark_combo_kernel=True,
+                           coordinate_descent_tuning=True)
         start = time.perf_counter()
         torch._inductor.aoti_compile_and_package(exported, package_path=str(package), inductor_configs=options)
         compile_seconds = time.perf_counter() - start
