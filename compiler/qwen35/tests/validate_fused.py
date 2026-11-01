@@ -133,7 +133,10 @@ def write_cases(directory, cases):
 def run_cases(call, cases, fp32=False):
     results = {}
     for case in cases:
-        convert = lambda x: x.to(device="cuda", dtype=torch.float32 if fp32 else x.dtype).contiguous()
+        # .contiguous() leaves unused B=1 strides unchanged. Force the exact
+        # packed strides expected by AOTI guards and the native runner.
+        convert = lambda x: x.to(device="cuda", dtype=torch.float32 if fp32 else x.dtype,
+                                 copy=True, memory_format=torch.contiguous_format)
         conv, state, weight, A_log, dt_bias = (convert(case[k]) for k in ("conv", "state", "weight", "A_log", "dt_bias"))
         for step, data in enumerate(case["steps"]):
             inputs = (*map(convert, data), conv, state, weight, A_log, dt_bias)
@@ -193,7 +196,8 @@ def main():
         for dtype in ("bf16", "fp32"):
             for mode, tokens in (("decode", 1), ("prefill", 32)):
                 case = next(c for c in cases if c["name"] == f"{dtype}-t{tokens}-state")
-                sample = tuple(x.cuda().contiguous() for x in (*case["steps"][0], *(case[k] for k in ("conv", "state", "weight", "A_log", "dt_bias"))))
+                sample = tuple(x.to(device="cuda", copy=True, memory_format=torch.contiguous_format)
+                               for x in (*case["steps"][0], *(case[k] for k in ("conv", "state", "weight", "A_log", "dt_bias"))))
                 ops = [torch.ops.xinfer.delta_cond_short.default]
                 if mode == "prefill":
                     ops.append(torch.ops.xinfer.delta_cond_long.default)

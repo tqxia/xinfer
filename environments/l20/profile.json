@@ -1,0 +1,9 @@
+{
+  "system": "Linux",
+  "machine": "x86_64",
+  "python": "3.12",
+  "torch_runtime": "2.7.0+cu126",
+  "cuda": "12.6",
+  "triton": "3.3.0",
+  "sm": [8, 9]
+}

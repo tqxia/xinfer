@@ -13,45 +13,28 @@ and package ABI. Qwen3.5 retains its separate adapter, environment and policy.
 
 ## Environment
 
-Run these commands on `kikoxia-any4.devcloud.woa.com`, port `36000`, as `root`.
+L20 and GB10 use the same compiler, attention adapter and C++ runtime. Start with
+[the target environment guide](../../environments/README.md) to select the native
+Torch/Triton/CUDA stack, create the isolated model environment, and build/export
+into target-specific directories. Export-time Torch and native LibTorch must
+come from the same selected installation.
+The guide uses `environments/setup.sh` and `environments/check.sh` for setup and
+checking; the Python implementations and tests also live under `environments/`.
 
-```bash
-cd /data/workspace/develop/qwen3-aoti-poc
-```
+`requirements.txt` pins this model's HF dependencies, including Transformers
+4.51.3. Torch and Triton versions belong to the target profile. The existing
+[`environments/l20/qwen3.lock`](../../environments/l20/qwen3.lock) records the
+original L20 environment, including its CUDA packages. It is a historical full
+snapshot, not the GB10 installation recipe.
 
-The project `.venv` contains its own Hugging Face dependencies. Only Torch,
-Triton, and their NVIDIA packages are linked from `/data/workspace/abo/.venv`.
-ABO's unrelated packages are not on the project's import path. These links are
-read-only dependencies by convention: do not upgrade or uninstall the shared
-packages through this venv. The C++ build must use this same Torch build.
-
-- Python 3.12.13; PyTorch runtime `2.7.0+cu126`; Triton 3.3.0.
-- Transformers 4.51.3; tokenizers 0.21.4; safetensors 0.5.3.
-- CUDA build 12.6; C++11 ABI enabled; NVIDIA L20, compute capability 8.9.
-- `compiler/qwen3/requirements.txt` pins the main packages; `compiler/qwen3/requirements.lock` records the
-  complete resolved package set. Torch's distribution metadata says `2.7.0`;
-  its runtime version includes `+cu126`.
-
-To recreate the project venv on this host, first create it in an absent `.venv`
-directory, then link the existing native packages and install the locked extras:
-
-```bash
-/data/workspace/abo/.venv/bin/python -m venv .venv
-.venv/bin/python - <<'PY'
-from pathlib import Path
-base = Path('/data/workspace/abo/.venv/lib/python3.12/site-packages')
-dest = Path('.venv/lib/python3.12/site-packages')
-paths = [base / name for name in ('torch', 'torchgen', 'functorch', 'triton', 'nvidia')]
-for pattern in ('torch-*.dist-info', 'triton-*.dist-info', 'nvidia*.dist-info'):
-    paths.extend(base.glob(pattern))
-for source in paths:
-    if not source.exists():
-        raise FileNotFoundError(source)
-    (dest / source.name).symlink_to(source, target_is_directory=True)
-PY
-.venv/bin/python -m pip install -r compiler/qwen3/requirements.lock
-.venv/bin/python -m pip check
-```
+The commands below retain the original **L20 development layout**: `.venv`,
+`build/`, and `/data/workspace/abo/.venv` on
+`kikoxia-any4.devcloud.woa.com`, port `36000`. That native stack is Python 3.12,
+Torch `2.7.0+cu126`, Triton 3.3.0, CUDA 12.6 and SM89. The project environment
+contains separate HF dependencies and links only the selected native stack.
+Treat those linked packages as read-only; keep ABO's unrelated packages off
+this environment's import path. Use the target guide's explicit paths for new
+L20 or GB10 runs.
 
 ## Prepare offline inputs
 

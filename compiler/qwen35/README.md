@@ -59,6 +59,8 @@ It reuses the existing Python-free C++ runner. `dispatch_passed` reports the
 dispatch/backend regression gate separately from the existing HF/FP32 numerical
 acceptance; inspect both. Noncontiguous inputs are checked through the Python
 dispatcher; exported package inputs retain the contiguous-layout ABI.
+The suite enables AOTI input guards and packs fixtures with canonical strides,
+including singleton dimensions, to match the native runner's tensor layout.
 
 ## Dynamic full-model prefill and Triton GDN
 
@@ -108,11 +110,21 @@ references; the runtime continues to load packaged Triton without Python.
 
 ## Prepare, export and build
 
-Use `requirements.txt` in an isolated environment; the development environment
-is `work/qwen35/venv`. Export-time Torch and native LibTorch must match. Optional
-`fla` and `causal_conv1d` must be absent so the surrounding HF operations use the
-validated tensor implementation. Rebuild and re-export on the target GPU and
-toolchain; the existing SM89 artifacts are not a portable deployment bundle.
+L20 and GB10 use the same model adapter, GDN kernels and C++ runtime. Follow
+[the target environment guide](../../environments/README.md) for the native
+Torch/Triton/CUDA stack, isolated model environments and target-specific
+build/package directories. `requirements.txt` contains this model's HF pins,
+including Transformers 5.20.2; native stack pins live in the target profiles.
+Use `environments/setup.sh` and `environments/check.sh` through that guide;
+environment tooling and its tests live under `environments/`.
+Export-time Torch and native LibTorch must come from the same installation.
+Optional `fla` and `causal_conv1d` must be absent so the surrounding HF operations
+use the validated tensor implementation.
+
+The commands below retain the original **L20 development layout**, including
+`work/qwen35/venv` and `work/qwen35/build`. For new runs on either target, use the
+target guide's explicit paths. Rebuild and re-export on the target GPU and
+toolchain; compiled SM89 packages remain specific to their deployment stack.
 
 Run from the repository root. Export refuses to overwrite compiled packages;
 use `--output` to select a fresh package directory for a repeated experiment.

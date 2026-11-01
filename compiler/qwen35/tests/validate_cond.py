@@ -11,6 +11,9 @@ import subprocess
 import traceback
 import zipfile
 
+# Exercise the packaged size/stride contract, including unused B=1 strides.
+os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
+
 import torch
 from transformers.models.qwen3_5 import modeling_qwen3_5
 
@@ -62,7 +65,8 @@ def dispatch_cases(cases):
 
 
 def inputs_for(case):
-    return tuple(x.cuda().contiguous() for x in
+    """Match native packed inputs; .contiguous() can retain singleton strides."""
+    return tuple(x.to(device="cuda", copy=True, memory_format=torch.contiguous_format) for x in
                  (*case["steps"][0], *(case[key] for key in STATE_FIELDS)))
 
 

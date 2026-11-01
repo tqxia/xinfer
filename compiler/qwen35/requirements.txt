@@ -1,6 +1,4 @@
-# Install in the isolated Qwen3.5 environment. The existing Torch CUDA build is reused.
-torch==2.7.0
-triton==3.3.0
+# Model dependencies; select the native stack through environments/README.md.
 transformers==5.20.2
 huggingface-hub==2.3.0
 tokenizers==0.23.3

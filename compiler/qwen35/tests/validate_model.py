@@ -86,7 +86,10 @@ def check_mask_and_writes(functions, config, tokens):
         else:
             assert bits_equal(a, b)
     next_state = list(clean[1:])
-    decoded = functions["decode"](ids[:, :1].contiguous(), position.new_tensor([length]), next_state)
+    # .contiguous() keeps the old row stride for this [1,1] slice; the decode
+    # package's stride guard expects the packed (1,1) layout.
+    decode_ids = ids[:, :1].clone(memory_format=torch.contiguous_format)
+    decoded = functions["decode"](decode_ids, position.new_tensor([length]), next_state)
     for index, spec in enumerate(specs):
         if spec["kind"] in ("key", "value"):
             assert bits_equal(next_state[index][:, :, :length], decoded[index + 1][:, :, :length])

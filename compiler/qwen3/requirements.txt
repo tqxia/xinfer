@@ -1,6 +1,4 @@
-# Torch/Triton/CUDA are linked from ABO first; do not upgrade those shared packages.
-torch==2.7.0
-triton==3.3.0
+# Model dependencies; select the native stack through environments/README.md.
 transformers==4.51.3
 tokenizers==0.21.4
 safetensors==0.5.3
