@@ -32,7 +32,10 @@ CUDA device 0. Idle checks, telemetry and recorded GPU information use the same
 UUID, stored as `gpu_uuid` in `environment.json`.
 
 The [Qwen3.5 `run` and `check-idle` commands](../compiler/qwen35/README.md#benchmark)
-follow the same GPU selection policy.
+follow the same GPU selection policy. Qwen3.5 full-model exports also use the
+shared `libxinfer_attention_ops.so` for prefix FlashAttention; build it before
+export and deploy it with the native executable. Re-export older Qwen3.5
+efficient-attention packages for the current caller-owned KV contract.
 
 ## Compare two compiled profiles
 

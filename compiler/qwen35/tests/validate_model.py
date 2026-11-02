@@ -9,6 +9,7 @@ from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
 from compiler.common.artifacts import require, sha256, ROOT
+from compiler.common.attention import cache_extent
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.common.validation import bits_equal
 from compiler.qwen35.tests.common import fixtures, compare, LIMIT
@@ -44,6 +45,21 @@ def hf_trace(model, cases, dynamic=False):
     return trace
 
 
+def check_state_transition(state, output, before, specs, offset, length):
+    """Only appended KV rows may mutate; returned KV must alias caller storage."""
+    for incoming, result, original, spec in zip(state, output[1:], before, specs):
+        assert list(result.shape) == spec["shape"] and str(result.dtype) == "torch." + spec["dtype"]
+        if spec["kind"] in ("key", "value"):
+            assert result.data_ptr() == incoming.data_ptr(), "KV output lost caller-owned storage"
+            assert result.stride() == incoming.stride(), "KV output layout changed"
+            assert bits_equal(incoming, result), "KV output differs from updated input"
+            assert bits_equal(incoming[:, :, :offset], original[:, :, :offset]), "Past KV overwritten"
+            end = offset + length
+            assert bits_equal(incoming[:, :, end:], original[:, :, end:]), "Future KV overwritten"
+        else:
+            assert bits_equal(incoming, original), "DeltaNet input state mutated"
+
+
 def explicit_trace(functions, config, cases):
     trace = {}
     specs = state_specs(config)
@@ -54,12 +70,12 @@ def explicit_trace(functions, config, cases):
             position = torch.arange(offset, offset + len(tokens), device="cuda")
             before = [t.clone() for t in (ids, position, *state)]
             kind = "prefill" if len(tokens) > 1 else "decode"
-            output = functions[kind](ids, position, state)
+            extent = cache_extent(offset + len(tokens))
+            output = functions[kind](ids, position, state, extent)
             assert len(output) == 1 + len(specs)
             assert output[0].shape == (1, config.vocab_size) and output[0].dtype == torch.bfloat16
-            assert all(bits_equal(a, b) for a, b in zip((ids, position, *state), before)), "Input mutation"
-            for tensor, spec in zip(output[1:], specs):
-                assert list(tensor.shape) == spec["shape"] and str(tensor.dtype) == "torch." + spec["dtype"]
+            assert all(bits_equal(a, b) for a, b in zip((ids, position), before)), "Token/position input mutated"
+            check_state_transition(state, output, before[2:], specs, offset, len(tokens))
             assert all(torch.isfinite(t).all() for t in output)
             trace[(case["name"], index)] = tuple(t.cpu().clone() for t in output)
             state, offset = list(output[1:]), offset + len(tokens)
@@ -72,11 +88,14 @@ def check_mask_and_writes(functions, config, tokens):
     ids = torch.tensor([tokens], device="cuda")
     position = torch.arange(length, device="cuda")
     state = zero_state(config)
-    clean = functions["prefill"](ids, position, state)
+    clean = tuple(t.clone() for t in functions["prefill"](ids, position, state, cache_extent(length)))
+    state = zero_state(config)
     for tensor, spec in zip(state, specs):
         if spec["kind"] in ("key", "value"):
             tensor.fill_(7.0 if spec["kind"] == "key" else -3.0)
-    poison = functions["prefill"](ids, position, state)
+    before = [t.clone() for t in state]
+    poison = functions["prefill"](ids, position, state, cache_extent(length))
+    check_state_transition(state, poison, before, specs, 0, length)
     assert bits_equal(clean[0], poison[0]), "Masked future cache affects logits"
     for index, spec in enumerate(specs):
         a, b = clean[index + 1], poison[index + 1]
@@ -86,15 +105,13 @@ def check_mask_and_writes(functions, config, tokens):
         else:
             assert bits_equal(a, b)
     next_state = list(clean[1:])
+    before = [t.clone() for t in next_state]
     # .contiguous() keeps the old row stride for this [1,1] slice; the decode
     # package's stride guard expects the packed (1,1) layout.
     decode_ids = ids[:, :1].clone(memory_format=torch.contiguous_format)
-    decoded = functions["decode"](decode_ids, position.new_tensor([length]), next_state)
-    for index, spec in enumerate(specs):
-        if spec["kind"] in ("key", "value"):
-            assert bits_equal(next_state[index][:, :, :length], decoded[index + 1][:, :, :length])
-            assert bits_equal(next_state[index][:, :, length + 1:], decoded[index + 1][:, :, length + 1:])
-    return dict(poisoned_future_ignored=True, kv_write_regions_preserved=True)
+    decoded = functions["decode"](decode_ids, position.new_tensor([length]), next_state, cache_extent(length + 1))
+    check_state_transition(next_state, decoded, before, specs, length, 1)
+    return dict(poisoned_future_ignored=True, kv_write_regions_preserved=True, kv_inputs_updated_in_place=True)
 
 
 @torch.inference_mode()
@@ -113,7 +130,8 @@ def main():
         assert meta["torch"] == torch.__version__ and meta["cache_length"] == CACHE_LENGTH
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
-    for field in ("checkpoint", "state", "source_sha256", "inductor_configs", "attention_backend", "shared_weights"):
+    for field in ("checkpoint", "state", "source_sha256", "inductor_configs", "attention_backend", "shared_weights",
+                  "input_mutation", "cache_input", "kv_extent", "custom_attention"):
         assert metadata["prefill"][field] == metadata["decode"][field], field
     assert metadata["prefill"].get("linear_packing") == metadata["decode"].get("linear_packing")
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
@@ -166,7 +184,7 @@ def main():
                   linear_packing=metadata["prefill"].get("linear_packing"),
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
                   shared_weights=metadata["prefill"]["shared_weights"],
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/adapters/attention.py', 'compiler/common/attention.py', 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
     seed = cases[1]["steps"][0] * 8
     report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 96, 97, 98, 511, 512]
@@ -190,7 +208,7 @@ def main():
     for i in range(len(mixed["steps"])):
         assert all(bits_equal(a, b) for a, b in zip(
             compiled[("mixed_dispatch", i)], compiled[("mixed_dispatch_repeat", i)]))
-    report["checks"].update(reset_repeat_bitwise=True, input_preservation=True, finite_shapes_dtypes=True)
+    report["checks"].update(reset_repeat_bitwise=True, non_kv_input_preservation=True, finite_shapes_dtypes=True)
     report["passed"] = not report["failures"]
     (args.output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     torch.save({name: trace[("long_prefix", len(cases[4]["steps"]) - 1)]

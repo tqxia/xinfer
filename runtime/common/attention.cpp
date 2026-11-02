@@ -10,7 +10,7 @@
 namespace xinfer {
 
 int attention_ops_abi_version() { return 1; }
-// Inference-only, batch-one Qwen3-0.6B contract. No input is mutated or returned.
+// Inference-only, batch-one Qwen3/Qwen3.5 contract. No input is mutated or returned.
 at::Tensor flash_attention(const at::Tensor& q, const at::Tensor& k,
                           const at::Tensor& v, const at::Tensor& extent,
                           double scale) {
@@ -18,10 +18,14 @@ at::Tensor flash_attention(const at::Tensor& q, const at::Tensor& k,
               "xinfer attention requires Q/K/V on the same CUDA device");
   TORCH_CHECK(q.scalar_type() == at::kBFloat16 && k.scalar_type() == at::kBFloat16 &&
               v.scalar_type() == at::kBFloat16, "xinfer attention requires BF16");
-  TORCH_CHECK(q.dim() == 4 && q.size(0) == 1 && q.size(1) == 16 && q.size(3) == 128 &&
+  TORCH_CHECK(q.dim() == 4 && q.size(0) == 1 &&
               q.size(2) >= 1 && q.size(2) <= 512, "Unsupported Q shape");
-  TORCH_CHECK(k.sizes() == at::IntArrayRef({1, 8, 1024, 128}) && v.sizes() == k.sizes(),
-              "Expected full-capacity K/V inputs [1,8,1024,128]");
+  TORCH_CHECK(k.dim() == 4 && v.dim() == 4 && k.size(0) == 1 && k.size(2) == 1024 &&
+              k.size(3) == q.size(3) && v.sizes() == k.sizes(),
+              "Expected matching full-capacity K/V inputs [1,kv_heads,1024,head_dim]");
+  TORCH_CHECK((q.size(1) == 16 && k.size(1) == 8 && q.size(3) == 128) ||
+              (q.size(1) == 8 && k.size(1) == 2 && q.size(3) == 256),
+              "Unsupported query/KV head dimensions");
   TORCH_CHECK(extent.device().is_cpu() && extent.scalar_type() == at::kByte &&
               extent.dim() == 1, "Expected a CPU uint8 extent vector");
   const int64_t length = extent.size(0) - 1;  // Metadata only; never read tensor data.
@@ -43,9 +47,9 @@ at::Tensor flash_attention(const at::Tensor& q, const at::Tensor& k,
   // Normalize singleton strides to the fake kernel's contiguous contract.
   // The pinned native kernel already returns logically contiguous output for
   // these shapes; contiguous() is a no-op in the validated decode/prefill cases.
-  const auto tokens = q.size(2);
-  return out.contiguous().as_strided({1, 16, tokens, 128},
-                                    {16 * tokens * 128, tokens * 128, 128, 1});
+  const auto heads = q.size(1), tokens = q.size(2), dim = q.size(3);
+  return out.contiguous().as_strided({1, heads, tokens, dim},
+                                    {heads * tokens * dim, tokens * dim, dim, 1});
 }
 
 }  // namespace xinfer

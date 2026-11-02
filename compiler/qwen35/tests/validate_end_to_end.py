@@ -14,6 +14,7 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import sha256, ROOT
+from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.reference import HFRuntime
 from compiler.qwen35.model import configure_text, load_model
@@ -113,6 +114,11 @@ def main():
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "end-to-end")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    attention_library = native_attention_library(args.native)
+    if attention_library is None:
+        raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
+    os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
+    load_attention_ops(attention_library)
     configure_text()
     metadata = {k: json.loads((args.packages / f"{k}.json").read_text()) for k in ("prefill", "decode")}
     for kind, meta in metadata.items():
@@ -171,13 +177,16 @@ def main():
     run([args.native.resolve(), args.packages.resolve(), manifest.resolve(), (args.output / "native").resolve()],
         env, args.output / "native.log")
     native = json.loads((args.output / "native/native.json").read_text())
-    assert native["no_python_library"] and native["loader_pairs"] == 1 and len(native["cases"]) == len(cases + chats)
+    assert native["no_python_library"] and native["attention_library"] and native["loader_pairs"] == 1
+    assert len(native["cases"]) == len(cases + chats)
     for case, actual in zip(cases + chats, native["cases"]):
         name = case["name"]
         assert actual["name"] == name
         if "steps" in case:
             compare_file(args.output / "native" / f"{name}.states", (t for i in range(len(case["steps"])) for t in aoti[(name, i)]))
-            assert actual["position"] == sum(map(len, case["steps"])) and actual["inputs_unchanged"]
+            assert actual["position"] == sum(map(len, case["steps"]))
+            assert actual["kv_inputs_updated_in_place"] and actual["non_kv_inputs_unchanged"]
+            assert actual["kv_write_regions_preserved"]
             if case.get("check_overflow"):
                 assert actual["overflow_rejected"]
         else:
@@ -212,10 +221,12 @@ def main():
     torch.cuda.empty_cache()
     report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  attention_backend=metadata["prefill"]["attention_backend"],
                   linear_packing=metadata["prefill"].get("linear_packing"),
                   shared_weights=metadata["decode"]["shared_weights"],
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
+                  attention_library_sha256=sha256(attention_library), kv_inputs_updated_in_place=True,
                   teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
                   masked_future_checks=True, repeated_request_bitwise=True, context_overflow_rejected=True,
                   matched_hf="hf_full_prompt")
@@ -249,6 +260,8 @@ def main():
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
               "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]
+    names += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
+              "runtime/common/attention.cpp", "runtime/common/attention.h"]
     for name in names:
         target = args.output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)

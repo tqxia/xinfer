@@ -1,8 +1,9 @@
 # Qwen3.5 experiment record
 
-The current full-model path uses dynamic prefill and a packaged Triton operator
-exclusively. See [current commands](../../compiler/qwen35/README.md) and
-[the latest integration record](#conditional-full-model-gdn-integration-2026-10-30).
+The current full-model path uses dynamic prefill, packaged Triton GDN and native
+prefix FlashAttention with caller-owned KV buffers. See
+[current commands](../../compiler/qwen35/README.md) and
+[the Flash integration record](#prefix-flash-and-in-place-kv-2026-11-02).
 Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.
@@ -13,6 +14,77 @@ dynamic-export probe (`diagnostics/probe_dynamic.py`) are archived in commit
 shared helpers and preparation command now live in
 `compiler/qwen35/tests/block.py`. The commands below retain their historical
 paths and use the original checkout or recorded source snapshot.
+
+## Prefix Flash and in-place KV: 2026-11-02
+
+The six full-attention layers now reuse the shared native prefix-Flash operator
+with eight query heads, two KV heads and head dimension 256. The adapter retains
+HF projections, Q/K normalization, partial RoPE and the sigmoid output gate.
+The 18 DeltaNet layers retain the same packaged Triton kernels and conditional
+dispatch. KV updates write into caller-owned buffers; returned KV tensors alias
+those buffers. Conv/recurrent inputs remain unchanged. The CPU `kv_extent`
+input supplies the populated length through its shape, without reading CUDA
+tensor data. Lower-right causality covers decode and appended prefill chunks.
+
+Both native model families were rebuilt. Qwen3.5 full-model executables now
+require `libxinfer_attention_ops.so`; standalone GDN targets remain independent
+of it. Rebuild and re-export the earlier `efficient_sdpa` / functional-state
+packages. Current runtimes reject their metadata before package loading. The
+five shared-weight deployment files and externally managed weight ownership
+remain unchanged.
+
+| Entry | Graph nodes | Conditional blocks | Short / long branch ops | In-place KV updates | Flash calls |
+| --- | ---: | ---: | --- | ---: | ---: |
+| Prefill | 2,300 | 18 | 18 / 18 | 12 | 6 |
+| Decode | 2,262 | 0 | 18 / 0 | 12 | 6 |
+
+Strict export retains dynamic prefill T=2..512 and a dynamic extent of 2..1025
+elements. Generated-code inspection confirms that the old twelve full-capacity
+1 MiB KV copies and twelve expanded-KV temporaries are absent in both entries.
+Decode writes only twelve rows of 512 BF16 elements, totaling 12 KiB of KV
+stores per token. This removes 12 MiB of copied cache payload (24 MiB of
+read/write traffic) and 48 MiB of explicit head-expansion output writes per
+token. These counts exclude the native Flash backend's internal traffic and
+workspaces, and all other model operations.
+
+| Validation | Result |
+| --- | --- |
+| Shared operator, conditional-cache and gated-adapter regressions | 4 operator tests, 1 CPU cache test and 2 adapter tests pass |
+| Python runtime contract | 6 tests / 43 subcases pass both normally and with `python -O`, with CUDA hidden |
+| Benchmark GPU-selection regressions | 19 tests pass |
+| Native runtime and CLI | 35 cases; 5,243 teacher tensors, 288 greedy final-state tensors and 30 greedy logit rows match Python AOTI bitwise; 49 rejection cases pass |
+| Full end-to-end native parity | 32 cases, 294 teacher steps and 14,406 teacher tensors match Python AOTI bitwise |
+| Qwen3 compatibility | Existing paired package needs no re-export; all 79 native output files (454,738,432 bytes) match the previous baseline hashes |
+
+HF numerical acceptance remains **open**. The end-to-end report retains 4,693
+convolution-state and 15 recurrent-state failure entries, compared with 4,693
+and 29 in the prior shared-weight baseline. Both reports have four HF teacher
+top-1 differences, and the capital greedy continuation first differs from HF at
+generated-token index 1. The maximum AOTI/HF logit relative-L2 error is
+0.03144832328, compared with 0.03322604671 previously. The existing 5% numerical
+limit is unchanged; native parity and these comparisons do not establish full
+HF equivalence.
+
+A separate fresh process measured each bundle after a 128-token prefill and
+two warm decode calls. Five measured decode calls ending at positions 131..135 had the
+same pre-call live allocation, 1,479.0659 MiB, in both bundles. The transient
+PyTorch allocator peak above that live allocation fell from 38.8798828 MiB to
+19.3203125 MiB; all five samples agreed. KV input/output addresses were stable
+for 0/12 buffers previously and 12/12 buffers with the new contract. This is an
+allocator measurement, not reserved memory, NVML device usage or end-to-end
+device-memory savings. The shared development GPU reported 100% utilization,
+so this run makes no latency or throughput claim.
+
+Packages and reports are under `artifacts/l20/qwen35-flash-20261102/`, including
+the `shared/` bundle and `memory-before.json` / `memory-after.json`. The memory
+probe is `work/l20/qwen35-flash-20261102/memory_probe.py`. The previous numerical
+baseline is
+`artifacts/l20/shared-weights-archive-20261102/qwen35/shared-end-to-end/summary.json`;
+the compiled-code comparison uses
+`artifacts/l20/qwen35-default-20261102/shared/decode.pt2` as its old package.
+Retain each report's package, source and attention-library hashes when
+reproducing the comparison. Large native state traces were hashed and removed
+after bitwise parity checks; their digests and reports remain available.
 
 ## Conditional full-model GDN integration: 2026-10-30
 

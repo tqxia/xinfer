@@ -114,10 +114,11 @@ done
 ```
 
 `--build` verifies that CMake selected the active environment's LibTorch, resolving
-symlinks to the shared native installation. Build before Qwen3 export so Python
-can register its native FlashAttention operator. Deploy that library with the
-Qwen3 executable. Qwen3.5 packages its GDN kernels and needs no separate GDN
-custom-op library.
+symlinks to the shared native installation. Build before either full-model
+export so Python can register the shared native FlashAttention operator. Deploy
+`libxinfer_attention_ops.so` with both Qwen3 and Qwen3.5 full-model executables.
+Qwen3.5 packages its GDN kernels and needs no separate GDN custom-op library;
+its standalone GDN validation targets do not use the attention library.
 
 L20 keeps its host CUDA 12.2 compiler and explicitly links the CUDA 12.6 runtime
 from the selected wheel installation. The two CMake variables select that

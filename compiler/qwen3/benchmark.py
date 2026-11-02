@@ -183,7 +183,7 @@ def run(args):
     source.mkdir()
     for name in ('compiler/qwen3/benchmark.py', 'runtime/qwen3/benchmark.cpp', 'runtime/qwen3/runtime.h', 'compiler/qwen3/model.py',
                  'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
-                 'runtime/qwen3/custom_ops/attention.cpp', 'runtime/qwen3/custom_ops/attention.h',
+                 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/common/attention.py',
                  'compiler/qwen3/custom_ops/attention.py', 'compiler/qwen3/custom_ops/__init__.py',
                  'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
                  'runtime/common/io.h', 'runtime/common/generation.h', 'runtime/common/benchmark.h',

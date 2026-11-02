@@ -314,6 +314,8 @@ class Qwen35GpuRouting(unittest.TestCase):
                 (model / 'manifest.json').write_text(json.dumps(manifest))
                 native = root / 'qwen35_benchmark'
                 native.write_bytes(b'native benchmark fixture')
+                library = root / 'libxinfer_attention_ops.so'
+                library.write_bytes(b'attention fixture')
                 packages = root / 'packages'
                 packages.mkdir()
                 for kind in ('prefill', 'decode'):
@@ -352,6 +354,7 @@ class Qwen35GpuRouting(unittest.TestCase):
                         patch.object(qwen35_benchmark, 'run_worker', side_effect=worker), \
                         patch.object(qwen35_benchmark.platform, 'platform', return_value='test-platform'), \
                         patch.object(qwen35_benchmark.subprocess, 'check_output', side_effect=query), \
+                        patch.object(qwen35_benchmark, 'native_attention_library', return_value=library), \
                         patch('transformers.AutoTokenizer.from_pretrained') as tokenizer, \
                         patch('compiler.qwen35.prepare.encode_prompt', return_value=[7, 8]), \
                         patch('compiler.common.weights.validate_shared_weights', return_value={}):
@@ -370,6 +373,7 @@ class Qwen35GpuRouting(unittest.TestCase):
                 environment = json.loads((args.output / 'environment.json').read_text())
                 self.assertEqual(environment['gpu_uuid'], gpu)
                 self.assertIn(gpu, environment['gpu'])
+                self.assertEqual(environment['attention_library_sha256'], qwen35_benchmark.sha256(library))
                 summary = json.loads((args.output / 'summary.json').read_text())
                 self.assertEqual(set(summary['profiles']), {'hf', 'cpp_aoti'})
                 self.assertTrue(summary['functional_checks_passed'])

@@ -13,6 +13,7 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import sha256, ROOT
+from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.model import configure_text
 from compiler.qwen35.tests.common import fixtures
@@ -65,6 +66,34 @@ def reject_invalid(args, env, metadata):
         ("gpu_arch", lambda m: [v.update(sm=[0, 0]) for v in m.values()], "GPU architecture mismatch"),
     ]
     mutations += [
+        ("mixed_attention_backend", lambda m: m["prefill"].update(attention_backend="efficient_sdpa"),
+         "Package metadata differs: attention_backend"),
+        ("mixed_attention_contract", lambda m: m["prefill"]["custom_attention"].update(abi_version=0),
+         "Package metadata differs: custom_attention"),
+        ("mixed_cache_contract", lambda m: m["prefill"].update(cache_input="full_capacity"),
+         "Package metadata differs: cache_input"),
+        ("mixed_cache_extent", lambda m: m["prefill"]["kv_extent"].update(data_read=True),
+         "Package metadata differs: kv_extent"),
+        ("mixed_input_mutation", lambda m: m["prefill"].update(input_mutation=False),
+         "Package metadata differs: input_mutation"),
+        ("mixed_export_options", lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=True),
+         "Package metadata differs: export_options"),
+        ("legacy_attention_pair", lambda m: [v.update(attention_backend="efficient_sdpa", input_mutation=False)
+                                             for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("missing_attention_contract", lambda m: [v.pop("custom_attention") for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("unknown_attention_contract", lambda m: [v["custom_attention"].update(abi_version=0) for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("missing_cache_contract", lambda m: [v.pop("cache_input") for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("missing_cache_extent", lambda m: [v.pop("kv_extent") for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("invalid_cache_extent", lambda m: [v["kv_extent"].update(data_read=True) for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
+        ("invalid_export_options", lambda m: [v["export_options"].update(backed_size_oblivious=True)
+                                              for v in m.values()],
+         "Legacy attention or state contract is unsupported"),
         ("mixed_delta_threshold", lambda m: m["prefill"].update(delta_short_threshold=98),
          "Package DeltaNet policy differs: delta_short_threshold"),
         ("mixed_delta_algorithm", lambda m: m["prefill"].update(delta_algorithm={"prefill": "different"}),
@@ -134,6 +163,11 @@ def main():
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "runtime-validation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    attention_library = native_attention_library(args.binary)
+    if attention_library is None:
+        raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
+    os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
+    load_attention_ops(attention_library)
     configure_text()
     metadata = {k: json.loads((args.packages / f"{k}.json").read_text()) for k in ("prefill", "decode")}
     for kind, meta in metadata.items():
@@ -193,13 +227,16 @@ def main():
     run([args.binary.resolve(), args.packages.resolve(), manifest.resolve(), (args.output / "native").resolve()],
         env, args.output / "native.log")
     native = json.loads((args.output / "native/native.json").read_text())
-    assert native["loader_pairs"] == 1 and native["no_python_library"] and len(native["cases"]) == len(cases)
+    assert native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"]
+    assert len(native["cases"]) == len(cases)
     report = dict(comparison="C++ vs Python AOTI", hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
                   delta_backend=metadata["prefill"]["delta_backend"],
+                  attention_backend=metadata["prefill"]["attention_backend"],
                   linear_packing=metadata["prefill"].get("linear_packing"),
                   shared_weights=metadata["decode"]["shared_weights"],
                   cases=[], teacher_tensors=0, greedy_logit_rows=0, greedy_state_tensors=0,
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
+                  attention_library_sha256=sha256(attention_library),
                   binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)})
     for case, actual in zip(cases, native["cases"]):
         name = case["name"]
@@ -220,7 +257,8 @@ def main():
             actual["text"] = tokenizer.decode(ref["ids"], skip_special_tokens=True)
         else:
             compare_file(args.output / "native" / f"{name}.states", (t for row in ref["rows"] for t in row))
-            assert actual["inputs_unchanged"]
+            assert actual["kv_inputs_updated_in_place"] and actual["non_kv_inputs_unchanged"]
+            assert actual["kv_write_regions_preserved"]
             report["teacher_tensors"] += sum(len(row) for row in ref["rows"])
             if case.get("check_overflow"):
                 assert actual["overflow_rejected"]
@@ -248,6 +286,8 @@ def main():
                Path("runtime/qwen35/runtime.h"), Path("runtime/qwen35/main.cpp"),
                Path("runtime/qwen35/tests/text_validate.cpp")]
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    sources += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
+                "runtime/common/attention.cpp", "runtime/common/attention.h"]
     report["source_sha256"] = {str(p): sha256(root / p) for p in sources}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("native_runtime_passed", "teacher_tensors", "greedy_logit_rows",

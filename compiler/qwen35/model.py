@@ -1,4 +1,4 @@
-"""Original HF text model with a flat, functional tensor-state interface."""
+"""HF text model with caller-owned KV buffers and functional DeltaNet state."""
 
 import argparse
 import json
@@ -103,8 +103,9 @@ class LayerState:
 
 
 class TextCache:
-    def __init__(self, kinds, position, state):
+    def __init__(self, kinds, position, state, extent=None):
         self.position = position
+        self.extent = extent
         self.kinds = kinds
         self.layers = []
         for i, kind in enumerate(kinds):
@@ -126,10 +127,9 @@ class TextCache:
 
     def update(self, key, value, layer_idx):
         layer = self.layers[layer_idx]
-        new_key = layer.kv[0].index_copy(2, self.position, key)
-        new_value = layer.kv[1].index_copy(2, self.position, value)
-        layer.kv[0], layer.kv[1] = new_key, new_value
-        return new_key, new_value
+        layer.kv[0].index_copy_(2, self.position, key)
+        layer.kv[1].index_copy_(2, self.position, value)
+        return tuple(layer.kv)
 
     def tensors(self):
         result = []
@@ -142,20 +142,19 @@ class TextCache:
 class TextStep(torch.nn.Module):
     def __init__(self, model):
         super().__init__()
+        from compiler.qwen35.adapters.attention import install_attention
+        install_attention(model)
         self.original = model
 
-    def forward(self, input_ids, cache_position, state):
+    def forward(self, input_ids, cache_position, state, kv_extent):
         model = self.original.model
-        cache = TextCache(model.config.layer_types, cache_position, state)
+        cache = TextCache(model.config.layer_types, cache_position, state, kv_extent)
         hidden = model.embed_tokens(input_ids)
         positions = cache_position.view(1, 1, -1).expand(3, 1, -1)
         rotary = model.rotary_emb(hidden, positions)
-        allowed = torch.arange(CACHE_LENGTH, device=input_ids.device)[None, :] <= cache_position[:, None]
-        mask = torch.zeros_like(allowed, dtype=hidden.dtype).masked_fill(~allowed, torch.finfo(hidden.dtype).min)
-        mask = mask[None, None, :, :]
         for kind, layer in zip(model.config.layer_types, model.layers):
             hidden = layer(hidden, position_embeddings=rotary,
-                           attention_mask=mask if kind == "full_attention" else None,
+                           attention_mask=None,
                            position_ids=cache_position[None, :], past_key_values=cache, use_cache=True)
         hidden = model.norm(hidden)
         logits = self.original.lm_head(hidden[:, -1:, :])[:, 0, :]

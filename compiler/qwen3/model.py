@@ -4,14 +4,11 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers.cache_utils import Cache
 
+from compiler.common.attention import cache_extent
+
 
 CACHE_LENGTH = 1024
 MAX_PROMPT = 512
-
-
-def cache_extent(valid_length):
-    """Only this CPU tensor's shape is read; +1 avoids AOTI's size-one guards."""
-    return torch.empty(valid_length + 1, dtype=torch.uint8)
 
 
 class TensorCache(Cache):

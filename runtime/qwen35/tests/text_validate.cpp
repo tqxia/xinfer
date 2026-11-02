@@ -39,20 +39,35 @@ int main(int argc, char** argv) {
         size_t count = 0;
         for (const auto& ids : item.at("steps")) {
           const auto inputs = runtime.state();
+          const auto position = runtime.position();
+          const auto length = static_cast<int64_t>(ids.size());
           std::vector<at::Tensor> before;
           for (const auto& tensor : inputs) before.push_back(tensor.clone());
           const auto logits = runtime.step(ids.get<std::vector<int64_t>>());
           require(at::isfinite(logits).all().item<bool>(), "Non-finite logits");
           write_tensor(states, logits);
           for (size_t i = 0; i < inputs.size(); ++i) {
-            require(at::equal(inputs[i], before[i]), "Input state mutated");
+            const auto kind = spec.metadata.at("state").at(i).at("kind");
+            if (kind == "key" || kind == "value") {
+              require(inputs[i].data_ptr() == runtime.state()[i].data_ptr(), "KV output lost caller-owned storage");
+              require(inputs[i].strides() == runtime.state()[i].strides(), "KV output layout changed");
+              require(at::equal(inputs[i].narrow(2, 0, position), before[i].narrow(2, 0, position)),
+                      "Past KV overwritten");
+              const auto end = position + length;
+              require(at::equal(inputs[i].narrow(2, end, spec.capacity - end),
+                                before[i].narrow(2, end, spec.capacity - end)), "Future KV overwritten");
+            } else {
+              require(at::equal(inputs[i], before[i]), "DeltaNet input state mutated");
+            }
             require(at::isfinite(runtime.state()[i]).all().item<bool>(), "Non-finite state");
             write_tensor(states, runtime.state()[i]);
           }
           ++count;
         }
         row["steps"] = count;
-        row["inputs_unchanged"] = true;
+        row["kv_inputs_updated_in_place"] = true;
+        row["non_kv_inputs_unchanged"] = true;
+        row["kv_write_regions_preserved"] = true;
       }
       if (item.value("check_overflow", false)) {
         require(runtime.position() == spec.capacity, "Context not full");
@@ -75,10 +90,17 @@ int main(int argc, char** argv) {
     }
     std::ifstream maps("/proc/self/maps");
     require(maps.is_open(), "Cannot inspect process mappings");
-    for (std::string line; std::getline(maps, line);)
-      require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos &&
-              line.find("libxinfer_") == std::string::npos, "Python or custom-op library loaded");
+    bool attention_library = false;
+    for (std::string line; std::getline(maps, line);) {
+      require(line.find("libpython") == std::string::npos && line.find("libtorch_python") == std::string::npos,
+              "Python library loaded");
+      const bool expected = line.find("libxinfer_attention_ops.so") != std::string::npos;
+      require(line.find("libxinfer_") == std::string::npos || expected, "Unexpected custom-op library loaded");
+      attention_library = attention_library || expected;
+    }
+    require(attention_library, "Native attention library was not loaded");
     report["no_python_library"] = true;
+    report["attention_library"] = true;
     std::ofstream file(output / "native.json");
     file << report.dump(2) << '\n';
     file.close();

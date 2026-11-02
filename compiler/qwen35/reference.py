@@ -7,6 +7,7 @@ from transformers import StaticCache
 from compiler.qwen35.config import CACHE_LENGTH
 from compiler.common.artifacts import require
 from compiler.common.weights import SharedWeights, validate_shared_weights
+from compiler.common.attention import OPERATOR_CONTRACT, cache_extent, load_attention_ops
 
 
 class HFRuntime:
@@ -55,6 +56,14 @@ class PythonRuntime:
         decode = json.loads((packages / "decode.json").read_text())
         require(not metadata.get("eager_numerics", False) and not decode.get("eager_numerics", False),
                 "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
+        for field in ("attention_backend", "input_mutation", "cache_input", "kv_extent", "custom_attention", "export_options"):
+            require(metadata.get(field) == decode.get(field), f"Package metadata differs: {field}")
+        require(metadata.get("attention_backend") == "flash" and metadata.get("input_mutation") == "kv_only" and
+                metadata.get("cache_input") == "full_capacity_with_extent" and
+                metadata.get("kv_extent") == dict(device="cpu", dtype="uint8", shape="[valid_length + 1]", data_read=False) and
+                metadata.get("custom_attention") == OPERATOR_CONTRACT and
+                metadata.get("export_options") == dict(backed_size_oblivious=False),
+                "Legacy attention or state contract is unsupported; re-export Qwen3.5 packages with the current exporter")
         assert metadata.get("linear_packing") == decode.get("linear_packing"), "Package linear-packing settings differ"
         assert metadata["delta_backend"] == decode["delta_backend"], "Package DeltaNet backends differ"
         for field in ("delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",
@@ -63,6 +72,7 @@ class PythonRuntime:
         assert metadata["delta_backend"] == "triton_op", "Unsupported DeltaNet backend"
         assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
         validate_shared_weights(packages, metadata, decode)
+        load_attention_ops()
         self.weights = SharedWeights(packages, metadata["shared_weights"])
         self.functions = {kind: self.weights.load(kind) for kind in ("prefill", "decode")}
         self.specs = specs
@@ -76,7 +86,12 @@ class PythonRuntime:
         length = len(tokens)
         ids = torch.tensor([tokens], device="cuda")
         positions = torch.arange(self.position, self.position + length, device="cuda")
-        result = self.functions["prefill" if length > 1 else "decode"](ids, positions, self.state)
+        result = self.functions["prefill" if length > 1 else "decode"](
+            ids, positions, self.state, cache_extent(self.position + length))
+        for before, after, spec in zip(self.state, result[1:], self.specs):
+            if spec["kind"] in ("key", "value"):
+                require(before.data_ptr() == after.data_ptr() and before.stride() == after.stride(),
+                        "KV outputs must alias caller-owned buffers")
         self.state = list(result[1:])
         self.position += length
         return result[0]

@@ -14,6 +14,7 @@ from compiler.common.benchmark import (
     wait_idle as check_idle, run_worker, resolve_gpu,
 )
 from compiler.common.artifacts import sha256, read_json, write_json
+from compiler.common.attention import native_attention_library
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 
 
@@ -110,6 +111,8 @@ def benchmark(args):
     root = Path(__file__).resolve().parents[2]
     sources = ["compiler/qwen35/" + n for n in ("benchmark.py", "reference.py", "model.py", "config.py", "prepare.py", "export.py", "requirements.txt")]
     sources += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py"]
+    sources += ["compiler/qwen35/adapters/attention.py", "compiler/common/attention.py",
+                "runtime/common/attention.cpp", "runtime/common/attention.h"]
     sources += ["compiler/common/passes/pack_linears.py"]
     sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "compiler/common/weights.py", "runtime/common/io.h",
@@ -127,6 +130,10 @@ def benchmark(args):
         "--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory", "--format=csv"], text=True)
     linked = subprocess.check_output(["ldd", str(args.native.resolve())], text=True)
     assert "libpython" not in linked and "libtorch_python" not in linked
+    attention_library = native_attention_library(args.native)
+    if attention_library is None:
+        raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
+    environment["attention_library_sha256"] = sha256(attention_library)
     (out / "native.ldd").write_text(linked)
     for kind in ("prefill", "decode"):
         meta = read_json(args.packages / f"{kind}.json")

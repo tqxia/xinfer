@@ -3,7 +3,7 @@
 #include "../common/generation.h"
 #include "../common/weights.h"
 
-#include "custom_ops/attention.h"
+#include "../common/attention.h"
 
 #include <ATen/ATen.h>
 #include <c10/core/InferenceMode.h>

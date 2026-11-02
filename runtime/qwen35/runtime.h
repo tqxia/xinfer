@@ -2,6 +2,7 @@
 #include "../common/io.h"
 #include "../common/generation.h"
 #include "../common/weights.h"
+#include "../common/attention.h"
 
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
@@ -56,6 +57,17 @@ struct Spec {
     const auto prefill = read_json(packages / "prefill.json");
     require(!metadata.value("eager_numerics", false) && !prefill.value("eager_numerics", false),
             "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter");
+    for (const auto* key : {"attention_backend", "input_mutation", "cache_input", "kv_extent", "custom_attention", "export_options"})
+      require(metadata.value(key, Json()) == prefill.value(key, Json()),
+              std::string("Package metadata differs: ") + key);
+    const Json attention = {{"name", "xinfer::flash_attention"}, {"abi_version", 1}, {"read_only", true}};
+    const Json extent = {{"device", "cpu"}, {"dtype", "uint8"}, {"shape", "[valid_length + 1]"}, {"data_read", false}};
+    require(metadata.value("attention_backend", Json()) == "flash" && metadata.value("input_mutation", Json()) == "kv_only" &&
+            metadata.value("cache_input", Json()) == "full_capacity_with_extent" &&
+            metadata.value("kv_extent", Json()) == extent && metadata.value("custom_attention", Json()) == attention &&
+            metadata.value("export_options", Json()) == Json({{"backed_size_oblivious", false}}),
+            "Legacy attention or state contract is unsupported; re-export Qwen3.5 packages with the current exporter");
+    require(xinfer::attention_ops_abi_version() == 1, "Unsupported native attention ABI");
     for (const auto* key : {"checkpoint", "torch", "cuda", "cxx11_abi", "sm", "layer_types", "state",
                            "cache_length", "vocabulary", "hidden_size", "logits", "input_order", "output_order",
                            "input_mutation", "generation_config", "inductor_configs", "attention_backend",
@@ -78,8 +90,7 @@ struct Spec {
     const auto version = metadata.at("torch").get<std::string>();
     require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
-    require(metadata.at("attention_backend") == "efficient_sdpa" && metadata.at("tf32") == false &&
-            metadata.at("input_mutation") == false, "Unsupported attention or mutation contract");
+    require(metadata.at("tf32") == false, "Unsupported numerical contract");
     capacity = metadata.at("cache_length");
     vocab = metadata.at("vocabulary");
     require(capacity == 1024 && vocab > 0, "Unsupported context capacity or vocabulary");
@@ -110,6 +121,7 @@ struct Spec {
       inputs.push_back(name);
       outputs.push_back(name);
     }
+    inputs.push_back("kv_extent");
     require(metadata.at("input_order") == inputs && metadata.at("output_order") == outputs, "Invalid tensor ABI order");
     const auto stop = metadata.at("generation_config").at("eos_token_id");
     eos = stop.is_array() ? stop.get<std::vector<int64_t>>() : std::vector<int64_t>{stop.get<int64_t>()};
@@ -165,6 +177,7 @@ class Runtime {
         prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
+    extent_ = at::empty({spec.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();
   }
 
@@ -184,14 +197,20 @@ class Runtime {
     std::vector<at::Tensor> inputs{at::tensor(tokens, at::kLong).view({1, length}).to(options),
                                    at::arange(position_, position_ + length, options)};
     inputs.insert(inputs.end(), state_.begin(), state_.end());
+    inputs.push_back(extent_.slice(0, 0, position_ + length + 1));
     auto result = (length > 1 ? prefill_ : decode_).run(inputs);
     ++(length > 1 ? prefill_calls_ : decode_calls_);
     require(result.size() == 1 + state_.size(), "Incorrect package output count");
     require(result[0].sizes() == at::IntArrayRef({1, spec_.vocab}) && result[0].scalar_type() == at::kBFloat16,
             "Incorrect logits shape/dtype");
-    for (size_t i = 0; i < state_.size(); ++i)
+    for (size_t i = 0; i < state_.size(); ++i) {
       require(result[i + 1].sizes() == state_[i].sizes() && result[i + 1].scalar_type() == state_[i].scalar_type(),
               "Incorrect state shape/dtype");
+      const auto kind = spec_.metadata.at("state").at(i).at("kind");
+      if (kind == "key" || kind == "value")
+        require(result[i + 1].data_ptr() == state_[i].data_ptr() && result[i + 1].strides() == state_[i].strides(),
+                "KV outputs must alias caller-owned buffers");
+    }
     state_.assign(result.begin() + 1, result.end());
     position_ += length;
     return result[0];
@@ -213,6 +232,7 @@ class Runtime {
   xinfer::SharedWeights weights_;
   Loader prefill_, decode_;
   std::vector<at::Tensor> state_;
+  at::Tensor extent_;
   int64_t position_ = 0;
   int64_t prefill_calls_ = 0, decode_calls_ = 0;
 };

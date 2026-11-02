@@ -9,7 +9,14 @@ Prefill is always dynamic: each input of 2–512 tokens uses one prefill call.
 A single token uses the decode package. Batch size is one and context capacity
 is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
 tensors cover 18 conv/recurrent pairs and six KV pairs. Recurrent states use
-FP32. Inputs remain unchanged; returned tensors replace the previous state.
+FP32. The caller owns the KV buffers, which are updated in place at the appended
+positions. Returned KV tensors alias those buffers; conv/recurrent inputs remain
+unchanged and their returned tensors replace the previous state.
+
+The six full-attention layers use native FlashAttention over the populated cache
+prefix, with grouped KV heads and no explicit head expansion. The original HF
+projections, Q/K normalization, RoPE and sigmoid output gate remain in the model.
+The 18 DeltaNet layers retain their packaged Triton kernels.
 
 One functional dispatcher selects fused recurrence for T<=97 and B3/C64
 chunked FP32 prefill for longer requests. The threshold is provisional. Focused
@@ -21,7 +28,9 @@ No timing result is claimed on the busy development GPU.
 
 ## Source layout
 
-- `model.py`: prepared text checkpoint, functional `TextStep` and state ABI.
+- `model.py`: prepared text checkpoint, `TextStep` and explicit state ABI.
+- `adapters/attention.py`: reuse HF attention weights and gating around the
+  shared native prefix-FlashAttention operator.
 - `adapters/delta.py`: reuse HF weights, projections and gated norm; call unified
   Triton preparation/recurrence for prefill and decode.
 - `kernels/recurrent.py`: fused recurrence, parallel preparation, functional
@@ -35,6 +44,35 @@ No timing result is claimed on the busy development GPU.
 
 Native sources live in `runtime/qwen35/`; small shared helpers live in
 `compiler/common/` and `runtime/common/`.
+
+## Prefix attention and caller-owned KV
+
+Both entry points accept the same state interface:
+
+```text
+step(input_ids, cache_position, state, kv_extent) -> last_logits, *next_state
+```
+
+`state` contains two tensors per layer in layer order. The six BF16 KV pairs
+have shape `[1,2,1024,256]`. Updates use in-place `index_copy_`, writing only the
+current token rows. The 18 conv/recurrent pairs retain their functional update
+contract. KV outputs alias the input buffers; other state outputs become the
+next call's inputs.
+
+Inputs must be unpadded, batch-one contiguous appends to a populated prefix.
+`kv_extent` is a CPU `uint8` tensor whose shape is `[valid_length + 1]`, including
+the current append. Only its shape is read; no CUDA scalar is copied back to
+discover the length. FlashAttention receives views of the valid K/V prefix and
+handles grouped heads directly: eight query heads, two KV heads and head
+dimension 256. Its lower-right causal alignment supports both decode and
+prefill chunks appended after an existing prefix. Future capacity is neither
+copied by cache updates nor expanded into attention temporaries.
+
+There is one compiled attention profile and no backend selector. Rebuild the
+runtime and re-export packages made with the earlier functional KV and
+`efficient_sdpa` contract. The runtimes reject that legacy metadata before
+loading the packages. A backend change can alter floating-point results;
+the existing numerical validators and limits still apply.
 
 ## Conditional GDN validation
 
@@ -78,14 +116,16 @@ including singleton dimensions, to match the native runner's tensor layout.
 `torch.cond` retains both GDN branches in the exported graph. Each branch uses
 `torch.library.triton_op` and `wrap_triton` so AOTInductor can compile the kernels and
 include their cubins in each `.pt2` package. The C++ loader needs the two packages,
-their JSON metadata, `weights.pt` and matching LibTorch/CUDA dependencies. It needs no Python,
-Triton installation or separate custom-op library at inference time.
+their JSON metadata, `weights.pt`, `libxinfer_attention_ops.so` and matching
+LibTorch/CUDA dependencies. It needs no Python or Triton installation at
+inference time. GDN kernels remain inside the packages; the shared native
+library supplies FlashAttention.
 
 The separate cubin builder, CUDA-driver launcher and ATen chunk implementation
 have been removed. Export has no backend or dynamic-prefill switch. Older fixed
 or external-custom-op packages need to be re-exported for this runtime.
 
-The adapter retains the same functional tensor interface for both entry points:
+The GDN adapter retains the same functional tensor interface for both entry points:
 
 ```text
 fused(qkv, b, a, conv, state, weight, A_log, dt_bias)
@@ -142,6 +182,18 @@ Run from the repository root. One export invocation compiles both entry points
 sequentially. Choose a new or empty `--output` directory for each experiment;
 export refuses to replace a populated directory.
 
+Build the native targets first using the target environment guide, then select
+their FlashAttention library for Python export and validation:
+
+```bash
+export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
+```
+
+Without that variable Python defaults to `build/libxinfer_attention_ops.so`.
+Native full-model targets link the library directly. Deploy it with the native
+executable and matching LibTorch/CUDA; it is not embedded in the `.pt2` files.
+The standalone GDN validation targets do not depend on the attention library.
+
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 QWEN_PY="$Q35_PY"
@@ -161,7 +213,9 @@ Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shar
 the short/long branch operators and algorithms, `delta_short_threshold=97`,
 `delta_chunk_size=64`, `delta_transform_tile=32` and `delta_dot_precision=ieee`,
 plus per-entry conditional graph counts, token ranges, source
-checksums, toolchain and GPU architecture. The archive embeds its mappings in
+checksums, toolchain and GPU architecture. Attention metadata records the Flash
+operator contract, shape-only extent input and KV-only mutation policy.
+The archive embeds its mappings in
 `extra/weights.json`; no standalone weight manifest is deployed. Both entry
 metadata files contain the same final archive size and checksum. The exporter
 stages both entries, writes the archive once, and publishes the completed
@@ -248,9 +302,11 @@ through the `qwen35_fused` native target. Its 83 cases / 400 calls cover BF16/FP
 boundaries, mixed prefill/decode continuations, whole versus partitioned inputs
 and repeated requests through four fused AOTI packages, including chunk-boundary
 and prefill gate-extreme cases. These describe test coverage, not acceptance.
-The native processes verify that neither Python nor custom-op libraries are
-mapped. Full-model checks retain all state tensors, HF/FP32 controls, dispatch
-counts, masked-future checks and CLI rejection cases. Numerical validators exit
+The standalone GDN processes verify that neither Python nor custom-op libraries
+are mapped. Full-model processes require the shared native attention library
+while remaining free of Python libraries. Full-model checks retain all state
+tensors, HF/FP32 controls, dispatch counts, stable KV storage, appended-write
+regions, future-prefix isolation and CLI rejection cases. Numerical validators exit
 nonzero for acceptance failures and retain the reports.
 
 Recorded reports from the initial unified implementation are under
@@ -281,8 +337,8 @@ For this model, 48 groups combine DeltaNet inputs, MLP gate/up and attention QKV
 reducing 187 linear calls to 97. Split outputs retain the original BF16 dtype
 and contiguous layout for downstream views. Contiguous copies can cost time
 in prefill; packing reduces launches rather than the number of weight bytes.
-Packing is the default for both prefill and decode. No additional model
-adapters or native libraries are needed.
+Packing is the default for both prefill and decode. It adds no model adapter or
+native library dependency beyond the full-model FlashAttention path.
 
 ```bash
 "$QWEN_PY" -m compiler.qwen35.export
