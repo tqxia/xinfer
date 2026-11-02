@@ -16,7 +16,7 @@ from transformers.models.qwen3_5 import modeling_qwen3_5
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import sha256
-from compiler.qwen35.diagnostics.block import BlockStep
+from compiler.qwen35.tests.block import BlockStep
 from compiler.qwen35.model import configure_text, load_model, zero_state
 
 

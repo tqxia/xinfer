@@ -7,6 +7,13 @@ Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.
 
+The fixed-shape block exporter (`diagnostics/export_block.py`) and original HF
+dynamic-export probe (`diagnostics/probe_dynamic.py`) are archived in commit
+`0984678`. That commit also contains the old `diagnostics/block.py` path; its
+shared helpers and preparation command now live in
+`compiler/qwen35/tests/block.py`. The commands below retain their historical
+paths and use the original checkout or recorded source snapshot.
+
 ## Conditional full-model GDN integration: 2026-10-30
 
 Measured source is `ae402e8` plus the conditional-dispatch working tree.

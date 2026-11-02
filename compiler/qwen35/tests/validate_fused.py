@@ -17,7 +17,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from compiler.common.artifacts import ROOT, read_json, sha256, write_json
 from compiler.common.validation import bits_equal, compare_file, cpu_copy, raw_bytes, row_errors
 from compiler.qwen35.config import ARTIFACT_DIR, configure
-from compiler.qwen35.diagnostics.block import MODEL_DIR, load_block
+from compiler.qwen35.tests.block import MODEL_DIR, load_block
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE
 from compiler.qwen35.kernels.recurrent import fused
 
@@ -187,7 +187,8 @@ def main():
                       binary_sha256=sha256(args.binary),
                       hf_source_sha256=sha256(inspect.getfile(causal_conv1d_update)),
                       source_sha256={name: sha256(ROOT / name) for name in (
-                          "compiler/qwen35/tests/validate_fused.py", "compiler/qwen35/kernels/recurrent.py",
+                          "compiler/qwen35/tests/validate_fused.py", "compiler/qwen35/tests/block.py",
+                          "compiler/qwen35/kernels/recurrent.py",
                           "compiler/qwen35/kernels/chunked.py",
                           "runtime/qwen35/tests/fused.cpp", "runtime/qwen35/CMakeLists.txt")})
         packages = {}

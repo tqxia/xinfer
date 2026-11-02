@@ -29,8 +29,9 @@ No timing result is claimed on the busy development GPU.
 - `kernels/chunked.py`: C64 FP32 chunking with B3's 32-column U/W transform.
 - `export.py`: strict export and AOTInductor packaging.
 - `prepare.py`: offline token IDs; `reference.py`: HF/Python AOTI validation runners.
-- `tests/`: fused-operator, model, C++ and end-to-end checks.
-- `diagnostics/`: retained HF block experiments and focused numerical reproducers.
+- `tests/`: fused-operator, model, C++ and end-to-end checks; `tests/block.py`
+  owns shared layer-0 checkpoint fixtures and their preparation command.
+- `diagnostics/`: the retained Q35-NUM-001 rounding reproducer.
 
 Native sources live in `runtime/qwen35/`; small shared helpers live in
 `compiler/common/` and `runtime/common/`.
@@ -46,6 +47,16 @@ The condition uses `qkv.shape[1]` directly. Each branch owns fresh output/state
 tensors, and only the long branch allocates chunk workspaces. Strict export
 retains one dynamic prefill range, T=2..512. AOTI packages both branches and
 generates a native shape comparison; T=1 uses a separate decode package.
+
+The fused and conditional validators share the block helpers in `tests/block.py`.
+To prepare a missing layer-0 checkpoint fixture, run this once; reuse an existing
+fixture on subsequent runs:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.tests.block
+```
+
+Run the conditional validator with the native fused runner:
 
 ```bash
 "$QWEN_PY" -m compiler.qwen35.tests.validate_cond \
@@ -327,13 +338,15 @@ requirements, validation and native A/B measurement.
 - **Q35-NUM-002:** partition-sensitive greedy choices in earlier experiments.
   Triton full-model tests also record differences already present before
   Inductor; they cannot all be attributed to the lost rounding boundary.
-- `python -m compiler.qwen35.diagnostics.probe_dynamic` records the original
-  HF tensor fallback's bounded dynamic-export limitation. The Triton adapter
-  avoids tracing that chunk scan.
 
 [The experiment record](../../docs/experiments/qwen35.md) preserves earlier
 fixed-prefill, ATen custom-op and manually packaged Triton results as history.
 Their removed source files can be recovered from Git history or the recorded
-source snapshots. The retained 4B HF single-block probe is diagnostic only.
+source snapshots. The retired fixed-shape block exporter
+(`diagnostics/export_block.py`) and original HF dynamic-export probe
+(`diagnostics/probe_dynamic.py`) are archived in commit `0984678`; their
+historical commands require that checkout or its source snapshot. The shared
+block helpers now live in `tests/block.py`. Its preparation command also accepts
+`--model Qwen/Qwen3.5-4B` for manual block diagnostics.
 Generated evidence remains ignored in `artifacts/qwen35/`; builds and caches
 remain ignored in `work/`.

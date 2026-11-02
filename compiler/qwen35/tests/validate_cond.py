@@ -20,7 +20,7 @@ from transformers.models.qwen3_5 import modeling_qwen3_5
 from compiler.common.artifacts import ROOT, read_json, sha256, write_json
 from compiler.common.validation import bits_equal, compare_file, cpu_copy
 from compiler.qwen35.config import ARTIFACT_DIR, configure
-from compiler.qwen35.diagnostics.block import MODEL_DIR
+from compiler.qwen35.tests.block import MODEL_DIR
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused as dispatch, long, short
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
 from compiler.qwen35.tests.validate_fused import (
@@ -308,6 +308,7 @@ def main():
                   partition_acceptance=dict(core="numerical", conv="bitwise", recurrent="numerical"),
                   source_sha256={name: sha256(ROOT / name) for name in (
                       "compiler/qwen35/tests/validate_cond.py", "compiler/qwen35/tests/validate_fused.py",
+                      "compiler/qwen35/tests/block.py",
                       "compiler/qwen35/kernels/recurrent.py",
                       "compiler/qwen35/kernels/chunked.py", "runtime/qwen35/tests/fused.cpp")},
                   comparisons=[], failures=[], packages=[], passed=False, dispatch_passed=False)

@@ -11,7 +11,7 @@ from transformers import DynamicCache
 
 from compiler.qwen35.config import ARTIFACT_DIR, PREFILL, configure
 from compiler.common.artifacts import sha256, ROOT
-from compiler.qwen35.diagnostics.block import BlockStep, MODEL_DIR, input_shapes, load_block, zero_state
+from compiler.qwen35.tests.block import BlockStep, MODEL_DIR, input_shapes, load_block, zero_state
 from compiler.common.validation import bits_equal
 from compiler.qwen35.tests.common import metrics
 from compiler.qwen35.tests.sequence import chunks, run_sequence
@@ -207,7 +207,7 @@ def main():
     assert "libpython" not in ldd and "libtorch_python" not in ldd
     report = dict(limit=LIMIT, fixture="seeded hidden states; real layer-0 weights", seed=35,
                   checkpoint=json.loads((args.model_dir / "manifest.json").read_text()),
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/diagnostics/block.py', 'compiler/qwen35/tests/validate_block.py', 'compiler/qwen35/tests/sequence.py', 'compiler/qwen35/tests/sequence_cases.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/tests/block.py', 'compiler/qwen35/tests/validate_block.py', 'compiler/qwen35/tests/sequence.py', 'compiler/qwen35/tests/sequence_cases.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py')},
                   cases=cases, comparisons=[], failures=[], binary_sha256=sha256(args.binary),
                   native=json.loads((args.output / "native/native.json").read_text()),
                   native_rejections=check_native_rejections(args, env),
