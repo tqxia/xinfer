@@ -1,4 +1,4 @@
-find_package(Torch 2.7 REQUIRED)
+find_package(Torch 2.13 REQUIRED)
 
 # Match the installed LibTorch headers, including C++20 on the GB10 toolchain.
 get_target_property(QWEN_CXX_STANDARD torch CXX_STANDARD)

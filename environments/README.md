@@ -161,6 +161,14 @@ The default numerical settings and algorithms are shared across targets; this
 workflow leaves optional Inductor tuning off. Package pairs must have matching
 metadata, compiler settings and source identity. Re-export and rebuild for each
 native stack/GPU; keep all existing runtime compatibility checks enabled.
+Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
+files, and one shared `weights.pt`. Deploy all five files together. The archive
+embeds the exact constant mappings and tensor views in `extra/weights.json`;
+there is no separate weight manifest. Both entry metadata files hold the archive
+size and SHA-256 checksum. When the second entry extends the archive, export
+updates both metadata checksums under the same lock. One entry alone is an
+incomplete bundle. Current Python/native runtimes require shared-weight format 2
+and Torch 2.13 or newer; re-export embedded-weight and earlier shared bundles.
 Keep old Torch 2.7 package pairs with their original runtime. Rebuild and
 re-export for Torch 2.13; a version match does not establish compatibility with
 older generated code. The old 2.7 loader extracts Qwen3.5's libraries into `/tmp`
@@ -181,7 +189,8 @@ without making a timing claim.
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   environments.tests.test_check environments.tests.test_setup \
-  environments.tests.test_entrypoints compiler.qwen35.tests.test_text_cache
+  environments.tests.test_entrypoints compiler.qwen35.tests.test_text_cache \
+  compiler.common.tests.test_weights
 "$Q35_PY" -m compiler.qwen35.tests.validate_cond \
   --binary "$BUILD/qwen35_fused" --output "$Q35_ROOT/cond-validation"
 

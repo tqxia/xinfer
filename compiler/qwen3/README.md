@@ -27,14 +27,16 @@ checking; the Python implementations and tests also live under `environments/`.
 original L20 environment, including its CUDA packages. It is a historical full
 snapshot, not the GB10 installation recipe.
 
-For new L20 runs select the versioned Torch 2.13 environments and build from
-[the L20 guide](../../environments/l20/README.md). The commands below retain the
-original **Torch 2.7 L20 development layout**: `.venv`, `build/`, and
-`/data/workspace/abo/.venv` on `kikoxia-any4.devcloud.woa.com`, port `36000`.
-That historical native stack is Python 3.12, Torch `2.7.0+cu126`, Triton 3.3.0,
-CUDA 12.6 and SM89. Keep its packages with that runtime for rollback. Use the
-target guide's explicit Python, build, cache and output paths for new runs;
-rebuild and re-export packages when changing the native stack.
+Use the tested Torch 2.13 target profiles for new shared-weight exports. Torch
+2.7 and packages with embedded constants are unsupported by the current runtime;
+keep historical packages with their original binaries for rollback. Examples
+below use the L20 paths; select the corresponding paths from the target guide
+for GB10.
+
+```bash
+Q3_PY="$PWD/work/l20/qwen3-torch213-venv/bin/python"
+BUILD="$PWD/work/l20/build-torch213"
+```
 
 ## Prepare offline inputs
 
@@ -45,12 +47,12 @@ they do not modify the checkpoint or download another copy.
 
 ```bash
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
-.venv/bin/python -m compiler.qwen3.prepare verify
-.venv/bin/python -m compiler.qwen3.prepare encode \
+"$Q3_PY" -m compiler.qwen3.prepare verify
+"$Q3_PY" -m compiler.qwen3.prepare encode \
   --prompt 'What is the capital of France? Answer in one short sentence.' \
   --output work/prompt.ids
 # Run once in an absent output directory to generate independent HF fixtures.
-.venv/bin/python -m compiler.qwen3.tests.validate --output artifacts/reference
+"$Q3_PY" -m compiler.qwen3.tests.validate --output artifacts/reference
 ```
 
 Reference generation checks manual HF DynamicCache decoding against HF
@@ -67,14 +69,11 @@ no attention build switch. Both Python export and native inference require this
 library and matching LibTorch/CUDA. The first CMake configuration fetches the
 pinned nlohmann/json headers; later builds reuse the cached dependency.
 
+Follow the target guide's native build command, including its CUDA runtime
+selection on L20, then select that build for Python:
+
 ```bash
-/data/workspace/abo/.venv/bin/cmake -S . -B build -G Ninja \
-  -DCMAKE_PREFIX_PATH=/data/workspace/abo/.venv/lib/python3.12/site-packages/torch/share/cmake \
-  -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
-  -DTORCH_CUDA_ARCH_LIST=8.9 -DCMAKE_BUILD_TYPE=Release \
-  -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
-/data/workspace/abo/.venv/bin/cmake --build build -j2
-export XINFER_ATTENTION_OPS_LIBRARY="$PWD/build/libxinfer_attention_ops.so"
+export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 ```
 
 Python defaults to `build/libxinfer_attention_ops.so`; the environment variable
@@ -91,8 +90,8 @@ These examples intentionally leave historical `artifacts/aoti/` packages alone.
 ```bash
 export TORCHINDUCTOR_COMPILE_THREADS=2
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor-qwen3-flash"
-.venv/bin/python -m compiler.qwen3.export decode --output artifacts/qwen3-flash
-.venv/bin/python -m compiler.qwen3.export prefill --output artifacts/qwen3-flash
+"$Q3_PY" -m compiler.qwen3.export decode --output artifacts/qwen3-flash
+"$Q3_PY" -m compiler.qwen3.export prefill --output artifacts/qwen3-flash
 ```
 
 Both commands accept `--model-dir`. There is no numerical-mode or attention
@@ -102,11 +101,25 @@ cache for both entry points and record their actual compilation settings.
 Changing the compiler or tuning cache can change rounding, so validate every
 new pair rather than assuming cross-build bitwise reproducibility.
 
-The directory contains `prefill.pt2`, `decode.pt2`, matching JSON metadata, and
-exported graph text. Metadata records the fixed Flash backend, custom operator
+The directory contains weightless `prefill.pt2` and `decode.pt2`, matching JSON
+metadata, exported graph text and `weights.pt`. The archive embeds its constant
+mappings in `extra/weights.json`; there is no separate `weights.json` file. Both
+entry metadata files record the archive size and checksum. Metadata also records
+the fixed Flash backend, custom operator
 ABI, extent/cache contract, checkpoint, Torch/CUDA versions, GPU architecture,
 C++ ABI and actual numerical settings. Keep these fields even though the CLI no
 longer selects a backend: they prevent incompatible packages being mixed.
+
+Both entry points compile with `aot_inductor.package_constants_in_so=False` and
+`always_keep_tensor_constants=True`. The common exporter saves each immutable
+constant once and records exact per-package constant names. Python and C++ load
+one CUDA weight pool, retain its owner until both loaders are destroyed, and
+inject its tensors with `user_managed=True`. Loading verifies the metadata,
+archive identity and every constant's shape/dtype; missing or mixed weights are
+errors. When the second entry is exported, the helper updates the archive
+checksum in both metadata files under the export lock. Deploy the five required
+files (two `.pt2`, two `.json` and `weights.pt`) together with the native attention
+library. Copying only the two `.pt2` files is insufficient.
 
 ### Package contract
 
@@ -133,16 +146,17 @@ masks, training and attention-weight requests are unsupported.
 ## Validate
 
 ```bash
-.venv/bin/python -m compiler.qwen3.tests.custom_attention \
+"$Q3_PY" -m compiler.qwen3.tests.custom_attention \
   --output artifacts/qwen3-attention-check
-.venv/bin/python -m compiler.qwen3.tests.attention_adapter \
+"$Q3_PY" -m compiler.qwen3.tests.attention_adapter \
   --output artifacts/qwen3-adapter-check
-.venv/bin/python -m compiler.qwen3.tests.validate_aoti --packages artifacts/qwen3-flash
-AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
-  --packages artifacts/qwen3-flash --native build/qwen_validate \
+"$Q3_PY" -m compiler.qwen3.tests.validate_aoti --packages artifacts/qwen3-flash
+AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
+  --packages artifacts/qwen3-flash --native "$BUILD/qwen_validate" \
   --output artifacts/qwen3-validation
-.venv/bin/python -m compiler.qwen3.tests.smoke_cpp \
-  --packages artifacts/qwen3-flash --output artifacts/qwen3-native-smoke
+"$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
+  --packages artifacts/qwen3-flash --native "$BUILD/qwen_aoti" \
+  --output artifacts/qwen3-native-smoke
 ```
 
 Use fresh output directories. Validation separates two conclusions:
@@ -166,9 +180,9 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 ## Generate in C++
 
 ```bash
-./build/qwen_aoti artifacts/qwen3-flash work/prompt.ids work/generated.ids \
+"$BUILD/qwen_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
   --max-new-tokens 64 --trace work/native-logits.f32
-.venv/bin/python -m compiler.qwen3.prepare decode --input work/generated.ids
+"$Q3_PY" -m compiler.qwen3.prepare decode --input work/generated.ids
 ```
 
 The native executable runs without an activated venv or interpreter. It resets
@@ -181,8 +195,9 @@ with `CUDA_VISIBLE_DEVICES`.
 ## Benchmark and profile
 
 ```bash
-.venv/bin/python -m compiler.qwen3.benchmark run \
-  --packages artifacts/qwen3-flash --output artifacts/qwen3-benchmark
+"$Q3_PY" -m compiler.qwen3.benchmark run \
+  --packages artifacts/qwen3-flash --native "$BUILD/qwen_benchmark" \
+  --output artifacts/qwen3-benchmark
 ```
 
 `run` compares HF eager with one compiled profile using identical forced tokens.

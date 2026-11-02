@@ -8,6 +8,8 @@ import subprocess
 import numpy as np
 import torch
 
+from compiler.common.weights import SharedWeights, validate_shared_weights
+from compiler.common.artifacts import sha256
 from compiler.qwen3.custom_ops.attention import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
@@ -32,6 +34,7 @@ linked = subprocess.check_output(['ldd', str(binary)], text=True)
 assert 'not found' not in linked
 assert 'libpython' not in linked and 'libtorch_python' not in linked
 spec = json.loads((packages / 'decode.json').read_text())
+validate_shared_weights(packages, json.loads((packages / 'prefill.json').read_text()), spec)
 load_package_attention_ops(spec, native=binary)
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
@@ -167,6 +170,53 @@ for name, message in package_cases:
     assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
     report['rejections'].append(name)
 
+weight_cases = (
+    ('missing_shared_weights_contract', 'Shared weights metadata is required'),
+    ('mixed_shared_weights_contract', 'Shared weights contracts differ'),
+    ('mixed_weight_archive_checksum', 'Shared weights contracts differ'),
+    ('wrong_weight_archive_checksum', 'Shared weights archive checksum mismatch'),
+    ('missing_weight_archive', 'Shared weights archive is missing'),
+    ('corrupt_weight_archive', 'Shared weights archive checksum mismatch'),
+    ('missing_embedded_weight_metadata', 'Shared weights archive metadata is invalid'),
+)
+for name, message in weight_cases:
+    damaged = out / name
+    damaged.mkdir()
+    metadata = {kind: json.loads((packages / (kind + '.json')).read_text())
+                for kind in ('prefill', 'decode')}
+    if name == 'missing_shared_weights_contract':
+        for item in metadata.values():
+            del item['shared_weights']
+    elif name == 'mixed_shared_weights_contract':
+        metadata['prefill']['shared_weights']['identity'] = '0' * 64
+    elif name == 'mixed_weight_archive_checksum':
+        metadata['prefill']['shared_weights']['sha256'] = '0' * 64
+    elif name == 'wrong_weight_archive_checksum':
+        for item in metadata.values():
+            item['shared_weights']['sha256'] = '0' * 64
+    if name == 'corrupt_weight_archive':
+        (damaged / 'weights.pt').write_bytes(b'corrupted weight archive')
+    elif name == 'missing_embedded_weight_metadata':
+        archive = damaged / 'weights.pt'
+        torch.jit.save(torch.jit.script(torch.nn.Identity()), str(archive))
+        for item in metadata.values():
+            item['shared_weights'].update(bytes=archive.stat().st_size, sha256=sha256(archive))
+    elif name != 'missing_weight_archive':
+        (damaged / 'weights.pt').symlink_to((packages / 'weights.pt').resolve())
+    for kind, item in metadata.items():
+        (damaged / (kind + '.json')).write_text(json.dumps(item))
+        (damaged / (kind + '.pt2')).symlink_to((packages / (kind + '.pt2')).resolve())
+    try:
+        validate_shared_weights(damaged, metadata['prefill'], metadata['decode'])
+    except (ValueError, FileNotFoundError) as error:
+        assert message in str(error), (name, str(error))
+    else:
+        raise AssertionError(f'Python accepted invalid weight bundle: {name}')
+    result = run_native([damaged, args.reference / 'capital/prompt.ids', out / 'mixed.ids'], name,
+                        environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+    assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
+    report['rejections'].append(name)
+
 seed = ids_from(args.reference / 'capital' / 'prompt.ids')
 for length, budget in ((1, 3), (2, 3), (512, 3), (len(seed), 1)):
     prompt = (seed * (length // len(seed) + 1))[:length]
@@ -182,11 +232,9 @@ for length, budget in ((1, 3), (2, 3), (512, 3), (len(seed), 1)):
     native_traces.append((entry, prompt, generated, trace_path, budget))
     print(report['boundaries'][-1], flush=True)
 
-# Finish every native process before loading the Python packages. Each pair of
-# loaders owns model weights; retaining both processes' pairs at once needlessly
-# increases deployment-test memory pressure.
-prefill = torch._inductor.aoti_load_package(str(packages / 'prefill.pt2'))
-decode = torch._inductor.aoti_load_package(str(packages / 'decode.pt2'))
+# Finish native workers before retaining the Python process's GPU weight pool.
+weights = SharedWeights(packages, spec['shared_weights'])
+prefill, decode = weights.load('prefill'), weights.load('decode')
 for entry, prompt, generated, trace_path, budget in native_traces:
     compare_native_trace(prompt, generated, trace_path, budget)
     entry['logits_bitwise_equal'] = True

@@ -1,6 +1,7 @@
 #pragma once
 #include "../common/io.h"
 #include "../common/generation.h"
+#include "../common/weights.h"
 
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
@@ -119,6 +120,7 @@ struct Spec {
       require(fs::file_size(packages / (std::string(kind) + ".pt2")) == meta.at("package_bytes").get<uintmax_t>(),
               "Package file size mismatch");
     }
+    xinfer::validate_shared_weights(packages, prefill, metadata);
   }
 
   void check_tokens(const std::vector<int64_t>& ids) const {
@@ -159,7 +161,10 @@ class Runtime {
  public:
   Runtime(const fs::path& packages, const Spec& spec)
       : spec_(spec),
+        weights_(packages, spec.metadata.at("shared_weights")),
         prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
+    weights_.load(prefill_, "prefill");
+    weights_.load(decode_, "decode");
     reset();
   }
 
@@ -204,6 +209,8 @@ class Runtime {
 
  private:
   const Spec& spec_;
+  // The shared CUDA tensors must outlive both borrowing loaders.
+  xinfer::SharedWeights weights_;
   Loader prefill_, decode_;
   std::vector<at::Tensor> state_;
   int64_t position_ = 0;

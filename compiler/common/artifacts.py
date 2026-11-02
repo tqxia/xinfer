@@ -1,4 +1,4 @@
-"""Small file helpers shared by model tools; no model or Torch imports."""
+"""Artifact I/O, deterministic hashing and validation; no model or Torch imports."""
 
 import hashlib
 import json
@@ -6,6 +6,21 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def canonical_json(value):
+    """Encode metadata deterministically for hashing and archive records."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def json_sha256(value):
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()
+
+
+def require(condition, message):
+    """Validate external inputs even when Python assertions are disabled."""
+    if not condition:
+        raise ValueError(message)
 
 
 def sha256(path):

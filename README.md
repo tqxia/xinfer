@@ -37,6 +37,12 @@ compilation profile and always links its native attention library. Existing effi
 see its guide for the fixed package contract. Build from the repository root
 with CMake. Qwen3.5 retains its separate configuration and validation policy.
 
+Both exporters now produce weightless prefill/decode packages and one shared
+`weights.pt` archive containing the constant mappings. Both package metadata
+files record its checksum. Deploy the complete five-file package directory. The Python and C++ runtimes retain one weight pool and lend its
+storage to both loaders with `user_managed`; rebuild with Torch 2.13 or newer
+and re-export existing embedded-weight packages before using the current runtime.
+
 Benchmark measurement boundaries are unchanged: reset, prefill, decode and
 whole request. Both model workers record reset-plus-prefill and consumed
 positions; report headers/profile comparisons remain model-specific. Warmup

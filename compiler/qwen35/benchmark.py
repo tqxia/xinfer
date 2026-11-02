@@ -89,6 +89,7 @@ def summarize(records, workload):
 
 
 def benchmark(args):
+    from compiler.common.weights import validate_shared_weights
     from transformers import AutoTokenizer
     from compiler.qwen35.prepare import encode_prompt
 
@@ -114,8 +115,8 @@ def benchmark(args):
     sources += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py"]
     sources += ["compiler/common/passes/pack_linears.py"]
     sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "runtime/common/io.h",
-                "runtime/common/generation.h", "runtime/common/benchmark.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "compiler/common/weights.py", "runtime/common/io.h",
+                "runtime/common/generation.h", "runtime/common/benchmark.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     for name in sources:
         target = out / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -135,10 +136,14 @@ def benchmark(args):
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == environment["model_manifest"]
         environment["packages"][kind] = meta
+    environment["shared_weights"] = validate_shared_weights(
+        args.packages, environment["packages"]["prefill"], environment["packages"]["decode"])
     correctness = dict(passed=None, reason="No matching end-to-end report supplied")
     if args.validation.exists():
         validation = read_json(args.validation)
         assert validation["package_sha256"] == {k: m["package_sha256"] for k, m in environment["packages"].items()}, "Validation is for different packages"
+        assert validation.get("shared_weights") == environment["packages"]["decode"]["shared_weights"], \
+            "Validation is for a different weight archive"
         correctness = dict(passed=validation["passed"], native_bitwise=validation["native_bitwise"],
                            report_sha256=sha256(args.validation), numerical_failures=len(validation["failures"]),
                            greedy_failures=len(validation["greedy_failures"]))

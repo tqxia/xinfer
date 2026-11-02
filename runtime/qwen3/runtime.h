@@ -1,6 +1,7 @@
 #pragma once
 #include "../common/io.h"
 #include "../common/generation.h"
+#include "../common/weights.h"
 
 #include "custom_ops/attention.h"
 
@@ -35,6 +36,7 @@ using xinfer::write_logits;
 struct Spec {
   int64_t layers, cache_length, max_prompt, vocab;
   std::vector<int64_t> cache_shape, cache_stride, eos;
+  Json shared_weights;
 
   explicit Spec(const fs::path& directory) {
     const auto prefill = read_json(directory / "prefill.json");
@@ -102,6 +104,8 @@ struct Spec {
     require(decode.at("flat_input_count") == 3 + 2 * layers, "Invalid native input count");
     require(!eos.empty() && std::all_of(eos.begin(), eos.end(), [this](int64_t id) { return id >= 0 && id < vocab; }),
             "Invalid EOS token IDs");
+    xinfer::validate_shared_weights(directory, prefill, decode);
+    shared_weights = decode.at("shared_weights");
   }
 };
 
@@ -123,8 +127,10 @@ inline std::vector<int64_t> read_ids(const fs::path& path, const Spec& spec) {
 class Runtime {
  public:
   Runtime(const fs::path& directory, const Spec& spec)
-      : spec_(spec), prefill_((directory / "prefill.pt2").string()),
+      : spec_(spec), weights_(directory, spec.shared_weights), prefill_((directory / "prefill.pt2").string()),
         decode_((directory / "decode.pt2").string()) {
+    weights_.load(prefill_, "prefill");
+    weights_.load(decode_, "decode");
     // LibTorch allocations are aligned; keep these exact buffers for both loaders.
     for (int64_t i = 0; i < 2 * spec.layers; ++i)
       cache_.push_back(at::zeros(spec.cache_shape,
@@ -174,6 +180,7 @@ class Runtime {
  private:
   const Spec& spec_;
   const c10::Device device_{c10::kCUDA, 0};
+  xinfer::SharedWeights weights_;
   Loader prefill_, decode_;
   std::vector<at::Tensor> cache_;
   at::Tensor extent_;

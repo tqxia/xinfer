@@ -213,6 +213,7 @@ def main():
     report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
                   delta_backend=metadata["prefill"]["delta_backend"],
                   linear_packing=metadata["prefill"].get("linear_packing"),
+                  shared_weights=metadata["decode"]["shared_weights"],
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
                   teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
@@ -244,7 +245,7 @@ def main():
     names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
-    names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "runtime/common/io.h", "runtime/common/generation.h"]
+    names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
               "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]

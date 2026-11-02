@@ -111,6 +111,8 @@ def validate_packages(packages):
             raise ValueError('Only Flash Qwen3 packages are supported; re-export prefill and decode')
         if metadata.get('eager_numerics', False):
             raise ValueError('Legacy eager-numerics packages are unsupported; re-export prefill and decode')
+        if not metadata.get('shared_weights'):
+            raise ValueError('Qwen3 packages require shared weights; re-export prefill and decode')
         if metadata.get('custom_attention') != OPERATOR_CONTRACT:
             raise ValueError('Unsupported custom attention contract')
         if metadata.get('cache_input') != 'full_capacity_with_extent':
@@ -123,11 +125,26 @@ def validate_packages(packages):
     for key in PACKAGE_FIELDS:
         if prefill[key] != decode[key]:
             raise ValueError(f'Package metadata differs: {key}')
+    if prefill['shared_weights'] != decode['shared_weights']:
+        raise ValueError('Package metadata differs: shared_weights')
     if decode['token_length'] != [1, 1] or prefill['token_length'][0] != 2:
         raise ValueError('Unsupported token-length contract')
 
 
+def validate_comparison(baseline, candidate, baseline_weights, candidate_weights):
+    """Compare model inputs and numerical settings independently of artifact hashes."""
+    for kind in ('prefill', 'decode'):
+        before, after = (profile[kind]['metadata'] for profile in (baseline, candidate))
+        for key in (*PACKAGE_FIELDS, 'token_length'):
+            if before[key] != after[key]:
+                raise ValueError(f'Incomparable packages: {kind}/{key}')
+    for key in ('identity_sha256', 'sources'):
+        if baseline_weights[key] != candidate_weights[key]:
+            raise ValueError(f'Incomparable shared weights: {key}')
+
+
 def run(args):
+    from compiler.common.weights import validate_shared_weights
     from compiler.qwen3.custom_ops.attention import native_attention_library
 
     if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
@@ -169,6 +186,7 @@ def run(args):
                  'compiler/qwen3/custom_ops/attention.py', 'compiler/qwen3/custom_ops/__init__.py',
                  'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
                  'runtime/common/io.h', 'runtime/common/generation.h', 'runtime/common/benchmark.h',
+                 'runtime/common/weights.h', 'runtime/common/sha256.h', 'compiler/common/weights.py',
                  'compiler/common/benchmark.py', 'runtime/qwen3/CMakeLists.txt'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
@@ -179,7 +197,7 @@ def run(args):
                                       for p in sorted(source.rglob('*')) if p.is_file()},
                        binary_sha256=digest(binary), workload_sha256=digest(out/'workload.json'),
                        model_manifest=read_json(args.model_dir/'model_manifest.json'),
-                       allow_busy=args.allow_busy, cpu_threads=1, packages={})
+                       allow_busy=args.allow_busy, cpu_threads=1, packages={}, shared_weights={})
     environment['attention_library'] = dict(path=str(library), sha256=digest(library))
     environment['gpu'] = subprocess.check_output([
         'nvidia-smi', '-i', '0', '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
@@ -190,12 +208,14 @@ def run(args):
                                                     sha256=digest(directory/(kind+'.pt2')))
                                            for kind in ('prefill', 'decode')}
         validate_packages(environment['packages'][label])
+        environment['shared_weights'][label] = validate_shared_weights(
+            directory, environment['packages'][label]['prefill']['metadata'],
+            environment['packages'][label]['decode']['metadata'])
     if paired:
-        for kind in ('prefill', 'decode'):
-            baseline = environment['packages'][args.baseline_label][kind]['metadata']
-            candidate = environment['packages'][args.candidate_label][kind]['metadata']
-            for key in (*PACKAGE_FIELDS, 'token_length'):
-                assert baseline[key] == candidate[key], f'Incomparable packages: {kind}/{key}'
+        validate_comparison(environment['packages'][args.baseline_label],
+                            environment['packages'][args.candidate_label],
+                            environment['shared_weights'][args.baseline_label],
+                            environment['shared_weights'][args.candidate_label])
     write_json(out/'environment.json', environment)
     env = {k: v for k, v in os.environ.items()
            if k not in ('VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME', 'LD_LIBRARY_PATH')}

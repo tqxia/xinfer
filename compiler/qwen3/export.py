@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from compiler.common.weights import compile_shared
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
 from compiler.qwen3.custom_ops.attention import OPERATOR_CONTRACT
 from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model, cache_extent
@@ -61,46 +62,49 @@ def main():
         print(f"Exported {args.kind}; compiling...", flush=True)
         # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
         options = {"emulate_precision_casts": True}
-        torch._inductor.aoti_compile_and_package(
-            exported, package_path=str(package), inductor_configs=options,
-        )
+        revision = json.loads((args.model_dir / "model_manifest.json").read_text())["revision"]
         from torch._inductor.runtime.triton_helpers import get_backend_options
-        metadata = {
-            "entry_point": args.kind,
-            "torch_version": torch.__version__,
-            "torch_cuda_version": torch.version.cuda,
-            "cxx11_abi": torch._C._GLIBCXX_USE_CXX11_ABI,
-            "cuda_compute_capability": list(torch.cuda.get_device_capability()),
-            "model_revision": json.loads((args.model_dir / "model_manifest.json").read_text())["revision"],
-            "batch_size": 1,
-            "token_length": [length, length] if args.kind == "decode" else [2, MAX_PROMPT],
-            "cache_length": CACHE_LENGTH,
-            "layers": model.config.num_hidden_layers,
-            "kv_heads": model.config.num_key_value_heads,
-            "head_dim": model.config.head_dim,
-            "vocab_size": model.config.vocab_size,
-            "dtype": "bfloat16",
-            "inductor_configs": options,
-            "export_options": export_options,
-            "attention_backend": "flash",
-            "cache_input": "full_capacity_with_extent",
-            "valid_cache_length": [1, CACHE_LENGTH],
-            "kv_extent": {"device": "cpu", "dtype": "uint8", "shape": "[valid_length + 1]", "data_read": False},
-            "triton_enable_fp_fusion": get_backend_options()["enable_fp_fusion"],
-            "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
-            "flat_input_count": 3 + len(cache),
-            "input_alignment_bytes": 16,
-            "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
-            "cache_shape": list(cache[0].shape),
-            "cache_stride": list(cache[0].stride()),
-            "cache_padding": 0,
-            "output": "last-token logits [1, vocab_size]",
-            "eos_token_ids": model.generation_config.eos_token_id,
-            "export_and_compile_seconds": time.perf_counter() - start,
-        }
-        metadata.update(custom_attention=OPERATOR_CONTRACT, flash_implementation="adapter",
-                        model_adapter=adapter_report)
-        (args.output / f"{args.kind}.json").write_text(json.dumps(metadata, indent=2) + "\n")
+
+        def metadata_factory(_compiled_path):
+            metadata = {
+                "entry_point": args.kind,
+                "torch_version": torch.__version__,
+                "torch_cuda_version": torch.version.cuda,
+                "cxx11_abi": torch._C._GLIBCXX_USE_CXX11_ABI,
+                "cuda_compute_capability": list(torch.cuda.get_device_capability()),
+                "model_revision": revision,
+                "batch_size": 1,
+                "token_length": [length, length] if args.kind == "decode" else [2, MAX_PROMPT],
+                "cache_length": CACHE_LENGTH,
+                "layers": model.config.num_hidden_layers,
+                "kv_heads": model.config.num_key_value_heads,
+                "head_dim": model.config.head_dim,
+                "vocab_size": model.config.vocab_size,
+                "dtype": "bfloat16",
+                "export_options": export_options,
+                "attention_backend": "flash",
+                "cache_input": "full_capacity_with_extent",
+                "valid_cache_length": [1, CACHE_LENGTH],
+                "kv_extent": {"device": "cpu", "dtype": "uint8", "shape": "[valid_length + 1]", "data_read": False},
+                "triton_enable_fp_fusion": get_backend_options()["enable_fp_fusion"],
+                "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
+                "flat_input_count": 3 + len(cache),
+                "input_alignment_bytes": 16,
+                "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
+                "cache_shape": list(cache[0].shape),
+                "cache_stride": list(cache[0].stride()),
+                "cache_padding": 0,
+                "output": "last-token logits [1, vocab_size]",
+                "eos_token_ids": model.generation_config.eos_token_id,
+                "export_and_compile_seconds": time.perf_counter() - start,
+            }
+            metadata.update(custom_attention=OPERATOR_CONTRACT, flash_implementation="adapter",
+                            model_adapter=adapter_report)
+            return metadata
+
+        compile_shared(
+            exported, package, identity=dict(model="qwen3-0.6b", revision=revision),
+            inductor_configs=options, metadata_factory=metadata_factory)
         print(f"Saved {package} ({package.stat().st_size} bytes)", flush=True)
 
 

@@ -90,10 +90,14 @@ records. That report is in the run's `cond-guarded/` directory.
 Torch 2.13 exposes `load_constants(..., user_managed=True)` for borrowing
 externally owned constant tensors. This requires freshly exported weightless
 packages (`aot_inductor.package_constants_in_so=False`) and an owner that keeps
-the shared GPU tensors alive for both loaders. A small sharing probe does not
-migrate the Qwen runtimes: their existing prefill/decode packages still contain
-independent weights until their export and loading paths are changed. Rebuild
-and re-export all model packages before validating them against the new stack.
+the shared GPU tensors alive for both loaders. Both current Qwen exporters and
+runtimes now use shared-weight format 2, with one archive and a retained shared
+pool. Mappings are embedded in `weights.pt`; its checksum is recorded in both
+package metadata files. No separate weight manifest is required.
+Rebuild and re-export existing embedded-weight packages, including those built
+with Torch 2.13. Keep their old binaries for rollback. The initial environment
+canary below is separate from the full-model sharing validation recorded in
+[`docs/experiments/shared-weights.md`](../../docs/experiments/shared-weights.md).
 
 On **2026-11-02**, the Torch 2.13 stack passed 10 direct Triton GPU cases and
 two Inductor cases. Python AOTI and native C++ each loaded two freshly compiled

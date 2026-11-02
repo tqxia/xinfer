@@ -70,6 +70,14 @@ def reject_invalid(args, env, metadata):
         ("decode_range", lambda m: m["decode"].update(token_range=[1, 2]), "Expected dynamic T=2..512/T=1 packages"),
         ("mixed_backend", lambda m: m["prefill"].update(delta_backend="invalid"), "Package DeltaNet backends differ"),
         ("unknown_backend", lambda m: [v.update(delta_backend="invalid") for v in m.values()], "Unsupported DeltaNet backend"),
+        ("mixed_shared_weights", lambda m: m["prefill"]["shared_weights"].update(identity="different"),
+         "Shared weights contracts differ"),
+        ("missing_shared_weights", lambda m: [v.pop("shared_weights") for v in m.values()],
+         "Shared weights metadata is required"),
+        ("mixed_archive_checksum", lambda m: m["prefill"]["shared_weights"].update(sha256="0" * 64),
+         "Shared weights contracts differ"),
+        ("wrong_archive_checksum", lambda m: [v["shared_weights"].update(sha256="0" * 64) for v in m.values()],
+         "Shared weights archive checksum mismatch"),
     ]
     if "delta_short_threshold" in metadata["decode"]:
         mutations.append(("missing_delta_threshold", lambda m: m["prefill"].pop("delta_short_threshold"),
@@ -82,8 +90,30 @@ def reject_invalid(args, env, metadata):
         for kind, meta in modified.items():
             (packages / f"{kind}.json").write_text(json.dumps(meta))
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
+        (packages / "weights.pt").symlink_to((args.packages / "weights.pt").resolve())
         output = packages / "generated.ids"
         run([args.cli, packages, prompt, output], env, directory / f"{name}.log", success=False, error=error)
+        assert not output.exists()
+        passed.append(name)
+    for name, error in (("missing_weights_archive", "Shared weights archive is missing"),
+                        ("corrupt_weights_archive", "Shared weights archive checksum mismatch"),
+                        ("missing_embedded_weights_metadata", "Shared weights archive metadata is invalid")):
+        packages = directory / name
+        packages.mkdir()
+        modified = copy.deepcopy(metadata)
+        if name == "corrupt_weights_archive":
+            (packages / "weights.pt").write_bytes(b"corrupt shared weights\n")
+        elif name == "missing_embedded_weights_metadata":
+            archive = packages / "weights.pt"
+            torch.jit.save(torch.jit.script(torch.nn.Identity()), str(archive))
+            for item in modified.values():
+                item["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
+        for kind, meta in modified.items():
+            (packages / f"{kind}.json").write_text(json.dumps(meta))
+            (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
+        output = packages / "generated.ids"
+        run([args.cli, packages, prompt, output], env, directory / f"{name}.log",
+            success=False, error=error)
         assert not output.exists()
         passed.append(name)
     return passed
@@ -162,6 +192,7 @@ def main():
     report = dict(comparison="C++ vs Python AOTI", hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
                   delta_backend=metadata["prefill"]["delta_backend"],
                   linear_packing=metadata["prefill"].get("linear_packing"),
+                  shared_weights=metadata["decode"]["shared_weights"],
                   cases=[], teacher_tensors=0, greedy_logit_rows=0, greedy_state_tensors=0,
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)})
@@ -211,7 +242,7 @@ def main():
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
                Path("runtime/qwen35/runtime.h"), Path("runtime/qwen35/main.cpp"),
                Path("runtime/qwen35/tests/text_validate.cpp")]
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     report["source_sha256"] = {str(p): sha256(root / p) for p in sources}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("native_runtime_passed", "teacher_tensors", "greedy_logit_rows",

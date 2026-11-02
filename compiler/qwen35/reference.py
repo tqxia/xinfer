@@ -5,6 +5,7 @@ import torch
 from transformers import StaticCache
 
 from compiler.qwen35.config import CACHE_LENGTH
+from compiler.common.weights import SharedWeights, validate_shared_weights
 
 
 class HFRuntime:
@@ -58,8 +59,9 @@ class PythonRuntime:
             assert metadata.get(field) == decode.get(field), f"Package DeltaNet policy differs: {field}"
         assert metadata["delta_backend"] == "triton_op", "Unsupported DeltaNet backend"
         assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
-        self.functions = {kind: torch._inductor.aoti_load_package(str(packages / f"{kind}.pt2"))
-                          for kind in ("prefill", "decode")}
+        validate_shared_weights(packages, metadata, decode)
+        self.weights = SharedWeights(packages, metadata["shared_weights"])
+        self.functions = {kind: self.weights.load(kind) for kind in ("prefill", "decode")}
         self.specs = specs
 
     def reset(self):

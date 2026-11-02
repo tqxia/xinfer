@@ -8,6 +8,7 @@ import torch
 from transformers import StaticCache
 
 from compiler.common.validation import bits_equal
+from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.qwen3.custom_ops.attention import load_package_attention_ops
 from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_extent, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
@@ -75,12 +76,13 @@ def main():
         load_package_attention_ops(spec)
     for key in ("model_revision", "attention_backend", "custom_attention", "cache_input", "kv_extent",
                 "torch_version", "cxx11_abi", "cache_shape", "cache_stride", "flat_input_count",
-                "inductor_configs", "triton_enable_fp_fusion"):
+                "inductor_configs", "triton_enable_fp_fusion", "shared_weights"):
         assert metadata["prefill"][key] == metadata["decode"][key], f"Package settings differ: {key}"
+    validate_shared_weights(args.packages, metadata["prefill"], metadata["decode"])
     model = load_model(args.model_dir)
     wrapper = QwenStep(model)
-    prefill = torch._inductor.aoti_load_package(str(args.packages / "prefill.pt2"))
-    decode = torch._inductor.aoti_load_package(str(args.packages / "decode.pt2"))
+    weights = SharedWeights(args.packages, metadata["decode"]["shared_weights"])
+    prefill, decode = weights.load("prefill"), weights.load("decode")
 
     def compiled(ids, positions, kv, extent):
         result = (decode if ids.shape[1] == 1 else prefill)(ids, positions, kv, extent)

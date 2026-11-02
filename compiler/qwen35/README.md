@@ -67,7 +67,7 @@ including singleton dimensions, to match the native runner's tensor layout.
 `torch.cond` retains both GDN branches in the exported graph. Each branch uses
 `torch.library.triton_op` and `wrap_triton` so AOTInductor can compile the kernels and
 include their cubins in each `.pt2` package. The C++ loader needs the two packages,
-their JSON metadata and matching LibTorch/CUDA dependencies. It needs no Python,
+their JSON metadata, `weights.pt` and matching LibTorch/CUDA dependencies. It needs no Python,
 Triton installation or separate custom-op library at inference time.
 
 The separate cubin builder, CUDA-driver launcher and ATen chunk implementation
@@ -121,18 +121,18 @@ Export-time Torch and native LibTorch must come from the same installation.
 Optional `fla` and `causal_conv1d` must be absent so the surrounding HF operations
 use the validated tensor implementation.
 
-The commands below retain the original **Torch 2.7 L20 development layout**, including
-`work/qwen35/venv` and `work/qwen35/build`. For new runs on either target, use the
-target guide's explicit paths; L20 now selects versioned Torch 2.13 venvs and
-a separate build. Rebuild and re-export on the target GPU and
-toolchain; compiled SM89 packages remain specific to their deployment stack.
+Use the Torch 2.13 target profiles for the current shared-weight format. Keep
+older Torch 2.7 bundles with their matching runtime for historical comparisons.
+Rebuild and re-export on the target GPU and toolchain; compiled SM89 packages
+remain specific to their deployment stack. The shared target guide sets
+`Q35_PY`, `BUILD`, the matching CUDA runtime link flags and build tools.
 
 Run from the repository root. Export refuses to overwrite compiled packages;
 use `--output` to select a fresh package directory for a repeated experiment.
 
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-QWEN_PY=work/qwen35/venv/bin/python
+QWEN_PY="$Q35_PY"
 # Keep large compilation scratch files off a small system /tmp filesystem.
 mkdir -p work/qwen35/tmp work/qwen35/inductor-cache
 export TMPDIR="$PWD/work/qwen35/tmp"
@@ -141,29 +141,36 @@ export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
 "$QWEN_PY" -m compiler.qwen35.model
 "$QWEN_PY" -m compiler.qwen35.export prefill
 "$QWEN_PY" -m compiler.qwen35.export decode
-
-QWEN_CMAKE_PREFIX=$("$QWEN_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
-QWEN_SM=$("$QWEN_PY" -c 'import torch; print("%d.%d" % torch.cuda.get_device_capability())')
-cmake -S . -B work/qwen35/build -G Ninja \
-  -DCMAKE_PREFIX_PATH="$QWEN_CMAKE_PREFIX" -DTORCH_CUDA_ARCH_LIST="$QWEN_SM" \
-  -DCMAKE_BUILD_TYPE=Release -DQWEN_BUILD_QWEN35=ON \
-  -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
-cmake --build work/qwen35/build \
-  --target qwen35_aoti qwen35_validate qwen35_fused qwen35_benchmark -j2
 ```
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
-Export produces `prefill.pt2`, `decode.pt2` and their `.json` metadata under
+Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
+`weights.pt` archive under
 `artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`,
 the short/long branch operators and algorithms, `delta_short_threshold=97`,
 `delta_chunk_size=64`, `delta_transform_tile=32` and `delta_dot_precision=ieee`,
 plus per-entry conditional graph counts, token ranges, source
-checksums, toolchain and GPU architecture. Keep the package pair and metadata
-together. The runtime rejects incompatible pairs.
+checksums, toolchain and GPU architecture. The archive embeds its mappings in
+`extra/weights.json`; no standalone weight manifest is deployed. Both entry
+metadata files contain the archive size and checksum, and the second export
+updates both checksums under the export lock. Keep all five required files
+(two `.pt2`, two `.json` and `weights.pt`) together. The runtime rejects incompatible pairs and
+missing or mismatched weights; old embedded-weight bundles need re-export.
 
-[Torch 2.7's package loader](https://github.com/pytorch/pytorch/blob/v2.7.0/torch/csrc/inductor/aoti_package/model_package_loader.cpp#L42)
-extracts directly into `/tmp`, ignoring `TMPDIR`.
-Leave room there for both model libraries: about 3 GB plus margin for this pair.
+Export runs linear packing before extracting constants, so the archive contains
+the packed tensors used by the compiled graph. Shared and tied tensors are
+deduplicated. Each package records its exact constant-name mapping, including
+lifted constants, inside the archive. Compilation sets `aot_inductor.package_constants_in_so=False`
+and `always_keep_tensor_constants=True`. Prefill and decode therefore carry no
+private copy of the model weights.
+
+Both runtimes load the archive to CUDA once and retain that owner for the full
+loader lifetime. They inject each package's constants with
+`load_constants(..., user_managed=True)` (the fourth C++ argument). The native
+loader verifies that its actual constant pointers refer to the shared pool.
+Treat weights as immutable while either loader is running. Export prefill and
+decode sequentially into the same fresh directory; a different checkpoint or
+inconsistent tensor content is rejected instead of replacing the archive.
 
 ### Optional compiler optimizations
 

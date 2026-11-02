@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
+from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.qwen3.tests.numerics import (
@@ -62,6 +63,8 @@ def main():
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     spec = json.loads((args.packages/'decode.json').read_text())
+    prefill_spec = json.loads((args.packages/'prefill.json').read_text())
+    validate_shared_weights(args.packages, prefill_spec, spec)
     from compiler.qwen3.custom_ops.attention import load_package_attention_ops
     load_package_attention_ops(spec, native=args.native)
     model = load_model(args.model_dir)
@@ -142,8 +145,8 @@ def main():
     assert len(native['cases']) == len(cases)
     print(f'Native driver passed {len(cases)} cases with one pair of loaders.', flush=True)
 
-    prefill = torch._inductor.aoti_load_package(str(args.packages/'prefill.pt2'))
-    decode = torch._inductor.aoti_load_package(str(args.packages/'decode.pt2'))
+    weights = SharedWeights(args.packages, spec['shared_weights'])
+    prefill, decode = weights.load('prefill'), weights.load('decode')
     py_cache = allocate_cache(model.config)
     pointers = [t.data_ptr() for t in py_cache]
 
