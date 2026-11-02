@@ -84,17 +84,17 @@ of `libpython` and `libtorch_python`.
 
 ## Export the canonical package pair
 
-Choose a new directory. The exporter refuses to replace existing packages.
+Choose a new or empty directory. One invocation exports and compiles both entry
+points; the exporter refuses to replace a populated output directory.
 These examples intentionally leave historical `artifacts/aoti/` packages alone.
 
 ```bash
 export TORCHINDUCTOR_COMPILE_THREADS=2
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor-qwen3-flash"
-"$Q3_PY" -m compiler.qwen3.export decode --output artifacts/qwen3-flash
-"$Q3_PY" -m compiler.qwen3.export prefill --output artifacts/qwen3-flash
+"$Q3_PY" -m compiler.qwen3.export --output artifacts/qwen3-flash
 ```
 
-Both commands accept `--model-dir`. There is no numerical-mode or attention
+The command accepts `--model-dir`. There is no numerical-mode or attention
 selector. Export retains `emulate_precision_casts=True` and disables TF32;
 ordinary Inductor fusion remains enabled. Use the same toolchain and tuning
 cache for both entry points and record their actual compilation settings.
@@ -116,8 +116,9 @@ constant once and records exact per-package constant names. Python and C++ load
 one CUDA weight pool, retain its owner until both loaders are destroyed, and
 inject its tensors with `user_managed=True`. Loading verifies the metadata,
 archive identity and every constant's shape/dtype; missing or mixed weights are
-errors. When the second entry is exported, the helper updates the archive
-checksum in both metadata files under the export lock. Deploy the five required
+errors. Export stages both packages and their diagnostics, writes the archive
+once, and publishes the completed directory after both entries succeed. Both
+metadata files contain the same final archive checksum. Deploy the five required
 files (two `.pt2`, two `.json` and `weights.pt`) together with the native attention
 library. Copying only the two `.pt2` files is insufficient.
 

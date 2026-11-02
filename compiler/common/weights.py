@@ -1,7 +1,6 @@
-"""Weightless AOTI packages backed by one retained, verified tensor pool."""
+"""Complete prefill/decode bundles backed by one retained, verified tensor pool."""
 
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -13,7 +12,7 @@ import zipfile
 import torch
 
 from compiler.common.artifacts import (
-    canonical_json, json_sha256, read_json, require, sha256,
+    canonical_json, json_sha256, require, sha256,
 )
 
 
@@ -30,7 +29,7 @@ class _Archive(torch.nn.Module):
         return self.identity
 
 
-def _manifest(directory, contract, *, pair=True):
+def _manifest(directory, contract):
     directory = Path(directory)
     require(isinstance(contract, dict) and contract.get("format") == 2 and
              contract.get("file") == "weights.pt" and isinstance(contract.get("identity"), str) and
@@ -53,8 +52,7 @@ def _manifest(directory, contract, *, pair=True):
     require(data.get("identity_sha256") == contract["identity"] and
              json_sha256(data.get("identity")) == contract["identity"], "Shared weights identity mismatch")
     entries = data.get("entries", {})
-    if pair:
-        require(set(entries) == {"prefill", "decode"}, "Shared weights manifest requires both package entries")
+    require(set(entries) == {"prefill", "decode"}, "Shared weights manifest requires both package entries")
     for kind, entry in entries.items():
         require(kind in ("prefill", "decode") and isinstance(entry.get("constants"), dict),
                  "Shared weights package mapping is invalid")
@@ -186,94 +184,81 @@ def _register(tensor, data, storages, cache):
     return view_name
 
 
-def compile_shared(exported, package_path, *, identity, inductor_configs, metadata_factory=None):
-    """Compile an entry and publish its archive and complete package metadata.
-
-    metadata_factory receives the temporary compiled package path for its size
-    and checksum fields. The helper supplies the effective compiler options and
-    shared_weights record. When the second entry grows the archive, it also
-    refreshes the already-exported entry's checksum.
-    """
-    package_path = Path(package_path)
-    kind = package_path.stem
-    require(kind in ("prefill", "decode"), "Shared weights entry must be prefill or decode")
-    require(not package_path.exists(), f"Refusing to overwrite {package_path}")
-    directory = package_path.parent
-    directory.mkdir(parents=True, exist_ok=True)
-    identity_sha256 = json_sha256(identity)
-    other_kind = "decode" if kind == "prefill" else "prefill"
-    other_metadata = None
+def _compile_entry(kind, directory, export_entry, data, storages, inductor_configs):
+    """Finish one graph before exporting the next, retaining only CPU tensors."""
+    exported, metadata_factory = export_entry(kind, directory)
+    compiled_path = directory / f"{kind}.pt2"
     options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
-    with (directory / ".weights.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        if (directory / "weights.pt").exists():
-            require((directory / f"{other_kind}.json").is_file(),
-                    f"Shared weights metadata for {other_kind} is missing")
-            other_metadata = read_json(directory / f"{other_kind}.json")
-            other_contract = other_metadata.get("shared_weights", {})
-            require(other_contract.get("identity") == identity_sha256, "Shared weights identity mismatch")
-            data = _manifest(directory, other_contract, pair=False)
-            require(kind not in data["entries"], f"Shared weights entry already exists: {kind}")
-            storages = _archive_storages(directory, data)
-        else:
-            require(not (directory / f"{other_kind}.json").exists(),
-                    f"Shared weights metadata for {other_kind} exists without archive")
-            data = dict(format=2, identity=identity, identity_sha256=identity_sha256,
-                        entries={}, sources={}, storages={}, tensors={})
-            storages = {}
-        with tempfile.TemporaryDirectory(prefix=".weights-", dir=directory) as temporary:
-            temporary = Path(temporary)
-            compiled_path = temporary / f"{kind}.pt2"
-            with _capture_constants() as captured:
-                torch._inductor.aoti_compile_and_package(
-                    exported, package_path=str(compiled_path), inductor_configs=options)
-            compiled = torch._inductor.aoti_load_package(str(compiled_path))
-            names = compiled.get_constant_fqns()
-            require(len(names) == len(set(names)), "Shared weights package has duplicate constant FQNs")
-            values = dict(exported.state_dict)
-            values.update({name: value for name, value in exported.constants.items()
-                           if isinstance(value, torch.Tensor)})
-            cache = {}
-            for name, tensor in exported.state_dict.items():
-                view = _register(tensor, data, storages, cache)
-                require(name not in data["sources"] or data["sources"][name] == view,
-                         f"Shared weights source tensor differs between entries: {name}")
-                data["sources"][name] = view
-            constants = {}
-            for name in names:
-                tensor = values.get(name, captured.get(name))
-                require(isinstance(tensor, torch.Tensor),
-                         f"Shared weights cannot resolve exact constant FQN: {name}")
-                constants[name] = _register(tensor, data, storages, cache)
-            del compiled
-            data["entries"][kind] = dict(constants=constants, package_sha256=sha256(compiled_path))
-            needed_views = {name for entry in data["entries"].values()
-                            for name in entry["constants"].values()}
-            data["tensors"] = {name: data["tensors"][name] for name in needed_views}
-            needed_storages = {descriptor["storage"] for descriptor in data["tensors"].values()}
-            data["storages"] = {name: data["storages"][name] for name in needed_storages}
-            storages = {name: storages[name] for name in needed_storages}
-            archive = _Archive(identity_sha256)
-            for name, tensor in sorted(storages.items()):
-                archive.register_buffer(name, tensor)
-            archive_path = temporary / "weights.pt"
-            torch.jit.save(torch.jit.script(archive), str(archive_path),
-                           _extra_files={"weights.json": canonical_json(data)})
-            contract = dict(format=2, file="weights.pt", identity=identity_sha256,
-                            bytes=archive_path.stat().st_size, sha256=sha256(archive_path))
-            metadata = metadata_factory(compiled_path) if metadata_factory else dict(entry_point=kind)
-            require(isinstance(metadata, dict), "Package metadata factory must return an object")
-            metadata = dict(metadata, shared_weights=contract, inductor_configs=options)
-            metadata_path = temporary / f"{kind}.json"
-            metadata_path.write_text(json.dumps(metadata, indent=2) + "\n")
-            if other_metadata is not None:
-                other_metadata["shared_weights"] = contract
-                (temporary / f"{other_kind}.json").write_text(json.dumps(other_metadata, indent=2) + "\n")
-            # A reader racing publication rejects mixed archive checksums.
-            # All metadata is prepared before replacing any bundle files.
-            os.replace(archive_path, directory / "weights.pt")
-            os.replace(compiled_path, package_path)
-            if other_metadata is not None:
-                os.replace(temporary / f"{other_kind}.json", directory / f"{other_kind}.json")
-            os.replace(metadata_path, directory / f"{kind}.json")
+    with _capture_constants() as captured:
+        torch._inductor.aoti_compile_and_package(
+            exported, package_path=str(compiled_path), inductor_configs=options)
+    compiled = torch._inductor.aoti_load_package(str(compiled_path))
+    names = compiled.get_constant_fqns()
+    require(len(names) == len(set(names)), "Shared weights package has duplicate constant FQNs")
+    values = dict(exported.state_dict)
+    values.update({name: value for name, value in exported.constants.items()
+                   if isinstance(value, torch.Tensor)})
+    cache = {}
+    for name, tensor in exported.state_dict.items():
+        view = _register(tensor, data, storages, cache)
+        require(name not in data["sources"] or data["sources"][name] == view,
+                 f"Shared weights source tensor differs between entries: {name}")
+        data["sources"][name] = view
+    constants = {}
+    for name in names:
+        tensor = values.get(name, captured.get(name))
+        require(isinstance(tensor, torch.Tensor),
+                 f"Shared weights cannot resolve exact constant FQN: {name}")
+        constants[name] = _register(tensor, data, storages, cache)
+    data["entries"][kind] = dict(constants=constants, package_sha256=sha256(compiled_path))
+    metadata = metadata_factory(compiled_path) if metadata_factory else dict(entry_point=kind)
+    require(isinstance(metadata, dict), "Package metadata factory must return an object")
+    return dict(metadata, inductor_configs=options)
+
+
+def compile_shared(directory, export_entry, *, identity, inductor_configs):
+    """Compile both entries and publish one complete shared-weight bundle.
+
+    export_entry(kind, staging_directory) returns an ExportedProgram and an
+    optional metadata_factory(compiled_path). Graph dumps and other auxiliary
+    files can be written to staging_directory. Each graph is compiled and its
+    constants copied to the CPU pool before the next graph is exported.
+    The archive is saved once, then its final checksum is recorded in both
+    metadata files. Only the completed directory is exposed to readers.
+    """
+    directory = Path(directory)
+
+    def check_destination():
+        require(not directory.is_symlink() and
+                 (not directory.exists() or directory.is_dir() and not any(directory.iterdir())),
+                 f"Refusing to overwrite output directory: {directory}")
+
+    check_destination()
+    directory.parent.mkdir(parents=True, exist_ok=True)
+    identity_sha256 = json_sha256(identity)
+    data = dict(format=2, identity=identity, identity_sha256=identity_sha256,
+                entries={}, sources={}, storages={}, tensors={})
+    storages = {}
+    with tempfile.TemporaryDirectory(prefix=f".{directory.name}-", dir=directory.parent) as temporary:
+        staging = Path(temporary) / "bundle"
+        staging.mkdir()
+        metadata = {kind: _compile_entry(kind, staging, export_entry, data, storages, inductor_configs)
+                    for kind in ("prefill", "decode")}
+        needed_views = {name for entry in data["entries"].values() for name in entry["constants"].values()}
+        data["tensors"] = {name: data["tensors"][name] for name in needed_views}
+        needed_storages = {descriptor["storage"] for descriptor in data["tensors"].values()}
+        data["storages"] = {name: data["storages"][name] for name in needed_storages}
+        archive = _Archive(identity_sha256)
+        for name in sorted(needed_storages):
+            archive.register_buffer(name, storages[name])
+        archive_path = staging / "weights.pt"
+        torch.jit.save(torch.jit.script(archive), str(archive_path),
+                       _extra_files={"weights.json": canonical_json(data)})
+        contract = dict(format=2, file="weights.pt", identity=identity_sha256,
+                        bytes=archive_path.stat().st_size, sha256=sha256(archive_path))
+        for kind, entry_metadata in metadata.items():
+            entry_metadata["shared_weights"] = contract
+            (staging / f"{kind}.json").write_text(json.dumps(entry_metadata, indent=2) + "\n")
+        check_destination()
+        os.replace(staging, directory)
     return contract

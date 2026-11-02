@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import weakref
 import zipfile
 
@@ -38,14 +38,19 @@ def inputs(rows):
     return torch.arange(rows * 6, dtype=torch.bfloat16).reshape(rows, 6) / 8
 
 
-def compile_entry(model, directory, kind, identity):
+def export_entry(model, kind, directory):
+    exported = torch.export.export(model, (inputs(1 if kind == "decode" else 3),))
+    (directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
+    return exported, lambda compiled: dict(
+        entry_point=kind, marker="preserved metadata",
+        package_bytes=compiled.stat().st_size, package_sha256=sha256(compiled))
+
+
+def compile_bundle(model, directory, identity):
     with torch.inference_mode():
-        exported = torch.export.export(model, (inputs(1 if kind == "decode" else 3),))
-        return compile_shared(exported, directory / (kind + ".pt2"), identity=identity,
-                              inductor_configs={"emulate_precision_casts": True},
-                              metadata_factory=lambda compiled: dict(
-                                  entry_point=kind, marker="preserved metadata",
-                                  package_bytes=compiled.stat().st_size, package_sha256=sha256(compiled)))
+        return compile_shared(
+            directory, lambda kind, stage: export_entry(model, kind, stage), identity=identity,
+            inductor_configs={"emulate_precision_casts": True})
 
 
 def metadata(directory, kind="decode"):
@@ -67,14 +72,10 @@ class SharedWeightBundle(unittest.TestCase):
         cls.bundle = cls.root / "complete"
         cls.identity = dict(model="cpu-tied-view-fixture", revision="one")
         cls.model = TiedViews().eval()
-        cls.first_contract = compile_entry(cls.model, cls.bundle, "decode", cls.identity)
-        cls.partial = cls.root / "decode-only"
-        shutil.copytree(cls.bundle, cls.partial)
-        other = compile_entry(cls.model, cls.bundle, "prefill", cls.identity)
+        with patch("torch.jit.save", wraps=torch.jit.save) as save_archive:
+            cls.contract = compile_bundle(cls.model, cls.bundle, cls.identity)
+        cls.archive_writes = save_archive.call_count
         cls.metadata = metadata(cls.bundle)
-        cls.contract = cls.metadata["shared_weights"]
-        if other != cls.contract:
-            raise AssertionError("Entry points must describe the same pool")
 
     def copy_bundle(self, source=None):
         temporary = tempfile.TemporaryDirectory(dir=self.root)
@@ -101,24 +102,21 @@ class SharedWeightBundle(unittest.TestCase):
                 (directory / (kind + ".json")).write_text(json.dumps(package))
         return contract
 
-    def test_second_export_refreshes_both_package_checksums_in_either_order(self):
-        self.assertNotEqual(self.first_contract["sha256"], self.contract["sha256"])
-        for directory in (self.bundle, self.root / "prefill-first"):
-            if directory != self.bundle:
-                first = compile_entry(self.model, directory, "prefill", self.identity)
-                compile_entry(self.model, directory, "decode", self.identity)
-                self.assertNotEqual(first["sha256"], metadata(directory)["shared_weights"]["sha256"])
-            prefill, decode = (metadata(directory, kind) for kind in ("prefill", "decode"))
-            self.assertEqual(prefill["shared_weights"], decode["shared_weights"])
-            contract = decode["shared_weights"]
-            self.assertEqual(contract["bytes"], (directory / "weights.pt").stat().st_size)
-            self.assertEqual(contract["sha256"], sha256(directory / "weights.pt"))
-            self.assertFalse((directory / "weights.json").exists())
-            for kind, package in (("prefill", prefill), ("decode", decode)):
-                self.assertEqual(package["entry_point"], kind)
-                self.assertEqual(package["marker"], "preserved metadata")
-                self.assertEqual(package["package_sha256"], sha256(directory / (kind + ".pt2")))
-            validate_shared_weights(directory, prefill, decode)
+    def test_one_export_publishes_complete_pair_with_one_archive(self):
+        self.assertEqual(self.archive_writes, 1)
+        self.assertEqual(set(mapping(self.bundle)["entries"]), {"prefill", "decode"})
+        prefill, decode = (metadata(self.bundle, kind) for kind in ("prefill", "decode"))
+        self.assertEqual(prefill["shared_weights"], decode["shared_weights"])
+        self.assertEqual(self.contract, decode["shared_weights"])
+        self.assertEqual(self.contract["bytes"], (self.bundle / "weights.pt").stat().st_size)
+        self.assertEqual(self.contract["sha256"], sha256(self.bundle / "weights.pt"))
+        self.assertFalse((self.bundle / "weights.json").exists())
+        for kind, package in (("prefill", prefill), ("decode", decode)):
+            self.assertEqual(package["entry_point"], kind)
+            self.assertEqual(package["marker"], "preserved metadata")
+            self.assertEqual(package["package_sha256"], sha256(self.bundle / (kind + ".pt2")))
+            self.assertTrue((self.bundle / (kind + ".graph.txt")).is_file())
+        validate_shared_weights(self.bundle, prefill, decode)
         directory = self.copy_bundle()
         (directory / "weights.json").write_text("unused old sidecar")
         validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
@@ -148,46 +146,124 @@ class SharedWeightBundle(unittest.TestCase):
         directory = self.root / "compile-options"
         requested = {"emulate_precision_casts": True, "aot_inductor.package_constants_in_so": True}
         original = dict(requested)
+
+        def prepare(kind, stage):
+            exported, factory = export_entry(self.model, kind, stage)
+            return exported, lambda path: dict(
+                factory(path), inductor_configs={"always_keep_tensor_constants": False})
+
         with torch.inference_mode(), patch(
                 "torch._inductor.aoti_compile_and_package",
                 wraps=torch._inductor.aoti_compile_and_package) as compile_graph:
-            exported = torch.export.export(self.model, (inputs(1),))
-            compile_shared(
-                exported, directory / "decode.pt2", identity=self.identity,
-                inductor_configs=requested,
-                metadata_factory=lambda _: dict(inductor_configs={"always_keep_tensor_constants": False}))
+            compile_shared(directory, prepare, identity=self.identity, inductor_configs=requested)
         self.assertEqual(requested, original)
-        recorded = metadata(directory)["inductor_configs"]
-        self.assertEqual(recorded, compile_graph.call_args.kwargs["inductor_configs"])
-        for key, value in {**requested, **SHARED_WEIGHT_OPTIONS}.items():
-            self.assertEqual(recorded[key], value)
+        self.assertEqual(compile_graph.call_count, 2)
+        first, second = (call.kwargs["inductor_configs"] for call in compile_graph.call_args_list)
+        self.assertIsNot(first, second)
+        for kind, call in zip(("prefill", "decode"), compile_graph.call_args_list):
+            recorded = metadata(directory, kind)["inductor_configs"]
+            self.assertEqual(recorded, call.kwargs["inductor_configs"])
+            for key, value in {**requested, **SHARED_WEIGHT_OPTIONS}.items():
+                self.assertEqual(recorded[key], value)
 
-    def test_repeated_entry_and_identity_mismatch_preserve_archive(self):
-        directory = self.copy_bundle(self.partial)
-        before = sha256(directory / "weights.pt")
-        with self.assertRaisesRegex(ValueError, "Refusing to overwrite"):
-            compile_entry(self.model, directory, "decode", self.identity)
-        with self.assertRaisesRegex(ValueError, "identity mismatch"):
-            compile_entry(self.model, directory, "prefill", dict(self.identity, revision="other"))
-        self.assertEqual(sha256(directory / "weights.pt"), before)
-        self.assertFalse((directory / "prefill.pt2").exists())
+    def test_populated_and_invalid_destinations_are_rejected_before_export(self):
+        temporary = tempfile.TemporaryDirectory(dir=self.root)
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        populated = self.copy_bundle()
+        file = root / "file"
+        file.write_text("preserve")
+        target = root / "empty"
+        target.mkdir()
+        link = root / "link"
+        link.symlink_to(target, target_is_directory=True)
+        before = {path.name: sha256(path) for path in populated.iterdir() if path.is_file()}
+        for directory in (populated, file, link):
+            with self.subTest(directory=directory):
+                prepare = Mock(side_effect=AssertionError("Export must not run"))
+                with self.assertRaises(ValueError):
+                    compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
+                prepare.assert_not_called()
+        self.assertEqual(before, {path.name: sha256(path) for path in populated.iterdir() if path.is_file()})
+        self.assertEqual(file.read_text(), "preserve")
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(list(target.iterdir()), [])
 
-    def test_changed_parameter_between_exports_is_rejected_atomically(self):
-        directory = self.copy_bundle(self.partial)
-        before = sha256(directory / "weights.pt")
+    def test_empty_output_is_published_only_after_both_entries_succeed(self):
+        directory = self.root / "initially-empty"
+        directory.mkdir()
+        kinds = []
+
+        def prepare(kind, stage):
+            kinds.append(kind)
+            self.assertNotEqual(stage, directory)
+            self.assertEqual(list(directory.iterdir()), [])
+            return export_entry(self.model, kind, stage)
+
+        with torch.inference_mode():
+            compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
+        self.assertEqual(kinds, ["prefill", "decode"])
+        validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
+
+    def test_second_compile_or_metadata_failure_leaves_no_published_bundle(self):
+        real_compile = torch._inductor.aoti_compile_and_package
+        for failure in ("compile", "metadata"):
+            for existing_empty in (False, True):
+                with self.subTest(failure=failure, existing_empty=existing_empty):
+                    temporary = tempfile.TemporaryDirectory(dir=self.root)
+                    self.addCleanup(temporary.cleanup)
+                    root = Path(temporary.name)
+                    directory = root / "bundle"
+                    if existing_empty:
+                        directory.mkdir()
+                    before = set(root.iterdir())
+                    kinds = []
+
+                    def prepare(kind, stage):
+                        kinds.append(kind)
+                        exported, factory = export_entry(self.model, kind, stage)
+                        if failure == "metadata" and kind == "decode":
+                            def factory(_):
+                                raise RuntimeError("decode metadata failed")
+                        return exported, factory
+
+                    def compile_graph(exported, **options):
+                        if failure == "compile" and Path(options["package_path"]).stem == "decode":
+                            raise RuntimeError("decode compile failed")
+                        return real_compile(exported, **options)
+
+                    with torch.inference_mode(), patch(
+                            "torch._inductor.aoti_compile_and_package", side_effect=compile_graph), patch(
+                            "torch.jit.save", wraps=torch.jit.save) as save_archive:
+                        with self.assertRaisesRegex(RuntimeError, f"decode {failure} failed"):
+                            compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
+                    self.assertEqual(kinds, ["prefill", "decode"])
+                    save_archive.assert_not_called()
+                    self.assertEqual(set(root.iterdir()), before, "Staging files must be cleaned up")
+                    if existing_empty:
+                        self.assertEqual(list(directory.iterdir()), [])
+                    else:
+                        self.assertFalse(directory.exists())
+
+    def test_changed_parameter_between_entries_is_rejected_before_publication(self):
+        directory = self.root / "changed-source"
         changed = TiedViews().eval()
         with torch.inference_mode():
             changed.weight.add_(1)
-        with self.assertRaisesRegex(ValueError, "source tensor differs between entries"):
-            compile_entry(changed, directory, "prefill", self.identity)
-        self.assertEqual(sha256(directory / "weights.pt"), before)
-        self.assertFalse((directory / "prefill.pt2").exists())
+        with torch.inference_mode(), self.assertRaisesRegex(
+                ValueError, "source tensor differs between entries"):
+            compile_shared(
+                directory,
+                lambda kind, stage: export_entry(changed if kind == "decode" else self.model, kind, stage),
+                identity=self.identity, inductor_configs={})
+        self.assertFalse(directory.exists())
 
     def test_missing_and_corrupt_bundle_files_are_rejected_without_cuda(self):
         for filename, corrupt, message in (
             ("weights.pt", False, "archive is missing"),
             ("weights.pt", True, "archive checksum mismatch"),
             ("prefill.pt2", True, "package checksum mismatch"),
+            ("prefill.pt2", False, "package checksum mismatch"),
         ):
             with self.subTest(filename=filename, corrupt=corrupt):
                 directory = self.copy_bundle()

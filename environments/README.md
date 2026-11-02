@@ -149,14 +149,13 @@ export AOTI_RUNTIME_CHECK_INPUTS=1
 "$Q3_PY" -m compiler.qwen3.prepare --model-dir "$Q3_MODEL" verify
 
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/$TARGET/cache/$RUN/qwen3"
-"$Q3_PY" -m compiler.qwen3.export decode --model-dir "$Q3_MODEL" --output "$Q3_PACKAGES"
-"$Q3_PY" -m compiler.qwen3.export prefill --model-dir "$Q3_MODEL" --output "$Q3_PACKAGES"
+"$Q3_PY" -m compiler.qwen3.export --model-dir "$Q3_MODEL" --output "$Q3_PACKAGES"
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/$TARGET/cache/$RUN/qwen35"
-"$Q35_PY" -m compiler.qwen35.export decode --model-dir "$Q35_MODEL" --output "$Q35_PACKAGES"
-"$Q35_PY" -m compiler.qwen35.export prefill --model-dir "$Q35_MODEL" --output "$Q35_PACKAGES"
+"$Q35_PY" -m compiler.qwen35.export --model-dir "$Q35_MODEL" --output "$Q35_PACKAGES"
 ```
 
-Serialize compilation and GPU validation. Exports refuse to overwrite packages.
+Serialize compilation and GPU validation. Each export invocation compiles both
+entries sequentially and requires a new or empty output directory.
 The default numerical settings and algorithms are shared across targets; this
 workflow leaves optional Inductor tuning off. Package pairs must have matching
 metadata, compiler settings and source identity. Re-export and rebuild for each
@@ -165,9 +164,10 @@ Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
 files, and one shared `weights.pt`. Deploy all five files together. The archive
 embeds the exact constant mappings and tensor views in `extra/weights.json`;
 there is no separate weight manifest. Both entry metadata files hold the archive
-size and SHA-256 checksum. When the second entry extends the archive, export
-updates both metadata checksums under the same lock. One entry alone is an
-incomplete bundle. Current Python/native runtimes require shared-weight format 2
+size and SHA-256 checksum. Each export writes the archive once, records its
+checksum in both metadata files, and publishes the complete directory after
+both entries succeed. One entry alone is an incomplete bundle. Current
+Python/native runtimes require shared-weight format 2
 and Torch 2.13 or newer; re-export embedded-weight and earlier shared bundles.
 Keep old Torch 2.7 package pairs with their original runtime. Rebuild and
 re-export for Torch 2.13; a version match does not establish compatibility with

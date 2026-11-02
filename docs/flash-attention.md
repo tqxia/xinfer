@@ -56,8 +56,7 @@ the current metadata contract.
   --output artifacts/attention-check-new
 .venv/bin/python -m compiler.qwen3.tests.attention_adapter \
   --output artifacts/adapter-check-new
-.venv/bin/python -m compiler.qwen3.export decode --output artifacts/qwen3-flash
-.venv/bin/python -m compiler.qwen3.export prefill --output artifacts/qwen3-flash
+.venv/bin/python -m compiler.qwen3.export --output artifacts/qwen3-flash
 AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/qwen3-flash --native build/qwen_validate \
   --output artifacts/flash-validation-new

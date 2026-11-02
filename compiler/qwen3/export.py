@@ -1,4 +1,4 @@
-"""Export one Qwen entry point and compile it to a native AOTInductor package."""
+"""Export Qwen prefill and decode as one shared-weight AOTInductor bundle."""
 
 import argparse
 import json
@@ -16,14 +16,12 @@ from compiler.qwen3.prepare import DEFAULT_MODEL
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("kind", choices=("decode", "prefill"))
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
     args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=True)
-    package = args.output / f"{args.kind}.pt2"
-    if package.exists():
-        parser.error(f"Package already exists: {package}")
+    if args.output.is_symlink() or (args.output.exists() and
+            (not args.output.is_dir() or any(args.output.iterdir()))):
+        parser.error(f"Output must be a new or empty directory: {args.output}")
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     from torch.fx.experimental import _config as symbolic_config
@@ -32,8 +30,13 @@ def main():
     export_options = {"backed_size_oblivious": symbolic_config.backed_size_oblivious}
     model = load_model(args.model_dir)
     step = FlashStep(model)
-    with torch.inference_mode():
-        length = 1 if args.kind == "decode" else 16
+    revision = json.loads((args.model_dir / "model_manifest.json").read_text())["revision"]
+    # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
+    options = {"emulate_precision_casts": True}
+    from torch._inductor.runtime.triton_helpers import get_backend_options
+
+    def export_entry(kind, staging_directory):
+        length = 1 if kind == "decode" else 16
         cache = allocate_cache(model.config)
         inputs = (
             torch.ones((1, length), dtype=torch.int64, device="cuda"),
@@ -42,11 +45,11 @@ def main():
             cache_extent(32),
         )
         token_shape = {}
-        if args.kind == "prefill":
+        if kind == "prefill":
             seq = torch.export.Dim("tokens", min=2, max=MAX_PROMPT)
             token_shape = {1: seq}
         extent = torch.export.Dim("kv_extent", min=2, max=CACHE_LENGTH + 1)
-        shapes = (token_shape, {} if args.kind == "decode" else {0: seq},
+        shapes = (token_shape, {} if kind == "decode" else {0: seq},
                   tuple({} for _ in cache), {0: extent})
         start = time.perf_counter()
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
@@ -58,23 +61,19 @@ def main():
         assert torch.ops.aten.scaled_dot_product_attention.default not in targets
         adapter_report = {"name": "qwen3_flash_v1", "replacements": sites, "cache_updates": updates}
         # Text dumps expose mutation/shape behavior without another copy of the weights.
-        (args.output / f"{args.kind}.graph.txt").write_text(exported.graph_module.code)
-        print(f"Exported {args.kind}; compiling...", flush=True)
-        # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
-        options = {"emulate_precision_casts": True}
-        revision = json.loads((args.model_dir / "model_manifest.json").read_text())["revision"]
-        from torch._inductor.runtime.triton_helpers import get_backend_options
+        (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
+        print(f"Exported {kind}; compiling...", flush=True)
 
         def metadata_factory(_compiled_path):
             metadata = {
-                "entry_point": args.kind,
+                "entry_point": kind,
                 "torch_version": torch.__version__,
                 "torch_cuda_version": torch.version.cuda,
                 "cxx11_abi": torch._C._GLIBCXX_USE_CXX11_ABI,
                 "cuda_compute_capability": list(torch.cuda.get_device_capability()),
                 "model_revision": revision,
                 "batch_size": 1,
-                "token_length": [length, length] if args.kind == "decode" else [2, MAX_PROMPT],
+                "token_length": [length, length] if kind == "decode" else [2, MAX_PROMPT],
                 "cache_length": CACHE_LENGTH,
                 "layers": model.config.num_hidden_layers,
                 "kv_heads": model.config.num_key_value_heads,
@@ -102,10 +101,13 @@ def main():
                             model_adapter=adapter_report)
             return metadata
 
+        return exported, metadata_factory
+
+    with torch.inference_mode():
         compile_shared(
-            exported, package, identity=dict(model="qwen3-0.6b", revision=revision),
-            inductor_configs=options, metadata_factory=metadata_factory)
-        print(f"Saved {package} ({package.stat().st_size} bytes)", flush=True)
+            args.output, export_entry, identity=dict(model="qwen3-0.6b", revision=revision),
+            inductor_configs=options)
+    print(f"Saved prefill/decode bundle to {args.output}", flush=True)
 
 
 if __name__ == "__main__":

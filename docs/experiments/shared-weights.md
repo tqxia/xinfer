@@ -17,11 +17,13 @@ names are captured during lowering rather than matched by suffix.
 Each package's JSON metadata contains the archive filename, identity, size and
 SHA-256 checksum. The checksum covers the embedded mappings and weight data;
 the mappings also record the exact package hashes. Mismatched or incomplete
-bundles are rejected before GPU allocation. Separate entry exports must use the
-same checkpoint/packing identity and identical shared source tensors. When the
-second entry extends the archive, the exporter refreshes both package metadata
-checksums under the same lock. An interrupted publication fails validation;
-export a new complete bundle to recover.
+bundles are rejected before GPU allocation. One export invocation loads the
+model once and compiles prefill and decode sequentially with matching settings.
+Their source tensors must agree. The exporter accumulates both constant mappings
+and writes the archive once, then records its final checksum in both metadata
+files. It stages all files in a sibling temporary directory and publishes the
+completed directory only after both entries succeed. Choose a new or empty
+output directory; populated directories are preserved.
 
 Deploy five files: `prefill.pt2`, `decode.pt2`, `prefill.json`, `decode.json` and
 `weights.pt`. Current runtimes require format 2 and Torch 2.13 or newer. Re-export
@@ -76,17 +78,19 @@ also shrank by about 49.8% for each model.
 ## Format 2: archive-only mappings
 
 The sidecar-free run is `artifacts/l20/shared-weights-archive-20261102/`.
+This historical validation used separate export invocations; the current CLI
+exports the complete pair in one invocation. The deployment format is unchanged.
 Both entry metadata files contain the same `shared_weights` descriptor:
 
 ```json
 {"format": 2, "file": "weights.pt", "identity": "...", "bytes": 123, "sha256": "..."}
 ```
 
-`bytes` and `sha256` describe the actual archive. The second export refreshes
-the first entry's descriptor while preserving its other metadata. The exporter
-prepares both complete JSON files before publishing the archive/package files
-under its lock. Readers verify the checksum before reading `extra/weights.json`.
-No standalone mapping file is created or required.
+`bytes` and `sha256` describe the actual archive. In that run, the second export
+refreshed the first entry's descriptor while preserving its other metadata. The
+exporter prepared both complete JSON files before publishing the archive/package
+files under its lock. Readers verify the checksum before reading
+`extra/weights.json`. No standalone mapping file is created or required.
 
 Ten archive tests and 35 environment/cache/packing/benchmark tests passed.
 Both native builds, Python/native full-model comparisons and CLI rejection
@@ -114,11 +118,43 @@ contains its own compiled-package hashes. Within a pair, the complete archive
 descriptor must match. Supplied Qwen3.5 correctness reports must also match the
 current archive descriptor.
 
+## Complete-pair export validation
+
+The pair-export refactor follows commit `1b2f2d6`. One command compiles both
+entry points, with one archive serialization and one completed-directory
+publication. Results are in `artifacts/l20/pair-export-20261102/`.
+
+Twenty-two CPU tests passed, including real AOTI sharing of tied and strided
+weights, fresh compiler options for each entry, and failure of the second
+compilation or metadata factory without publishing a partial bundle. Both CLI
+checks passed: the positional `kind` is rejected and populated outputs are
+preserved before model loading.
+
+Both models were re-exported on the L20 using the retained tuning caches to
+hold compiler choices fixed. Qwen3 passed its full Python/native validator and
+CLI suite. Qwen3.5 passed all 35 native runtime cases, including 5,243 teacher
+tensors and 288 greedy state tensors, plus the input/package rejection checks.
+All 79 Qwen3 validation files and 42 Qwen3.5 runtime files matched the previous
+incremental-export outputs byte for byte. Embedded constant storage/view maps
+were identical. Fresh-process post-decode memory remained 1,626 MiB for Qwen3
+and 1,936 MiB for Qwen3.5.
+
+Qwen3 retained the same 14 HF cache differences, two top-1 differences and no
+greedy differences. The Qwen3.5 full HF numerical suite was not rerun for this
+export-flow change; its previously documented numerical issues remain open.
+Large native state dumps were hashed and removed after parity verification.
+
 ## Reproduce and inspect
 
 Use the versioned environments/build from the [L20 guide](../../environments/l20/README.md).
-Export each model's two entry points into a fresh directory, then run its normal
-Python/native correctness validators. The focused CPU tests are:
+Export each model's complete pair with one command into a fresh directory:
+
+```bash
+"$Q3_PY" -m compiler.qwen3.export --model-dir "$Q3_MODEL" --output "$Q3_PACKAGES"
+"$Q35_PY" -m compiler.qwen35.export --model-dir "$Q35_MODEL" --output "$Q35_PACKAGES"
+```
+
+Run the normal Python/native correctness validators. The focused CPU tests are:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest compiler.common.tests.test_weights

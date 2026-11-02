@@ -127,8 +127,9 @@ Rebuild and re-export on the target GPU and toolchain; compiled SM89 packages
 remain specific to their deployment stack. The shared target guide sets
 `Q35_PY`, `BUILD`, the matching CUDA runtime link flags and build tools.
 
-Run from the repository root. Export refuses to overwrite compiled packages;
-use `--output` to select a fresh package directory for a repeated experiment.
+Run from the repository root. One export invocation compiles both entry points
+sequentially. Choose a new or empty `--output` directory for each experiment;
+export refuses to replace a populated directory.
 
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -139,8 +140,7 @@ export TMPDIR="$PWD/work/qwen35/tmp"
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
 # Prepare once, or copy the prepared text directory including its manifest.
 "$QWEN_PY" -m compiler.qwen35.model
-"$QWEN_PY" -m compiler.qwen35.export prefill
-"$QWEN_PY" -m compiler.qwen35.export decode
+"$QWEN_PY" -m compiler.qwen35.export
 ```
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
@@ -152,8 +152,9 @@ the short/long branch operators and algorithms, `delta_short_threshold=97`,
 plus per-entry conditional graph counts, token ranges, source
 checksums, toolchain and GPU architecture. The archive embeds its mappings in
 `extra/weights.json`; no standalone weight manifest is deployed. Both entry
-metadata files contain the archive size and checksum, and the second export
-updates both checksums under the export lock. Keep all five required files
+metadata files contain the same final archive size and checksum. The exporter
+stages both entries, writes the archive once, and publishes the completed
+directory only after both succeed. Keep all five required files
 (two `.pt2`, two `.json` and `weights.pt`) together. The runtime rejects incompatible pairs and
 missing or mismatched weights; old embedded-weight bundles need re-export.
 
@@ -168,21 +169,19 @@ Both runtimes load the archive to CUDA once and retain that owner for the full
 loader lifetime. They inject each package's constants with
 `load_constants(..., user_managed=True)` (the fourth C++ argument). The native
 loader verifies that its actual constant pointers refer to the shared pool.
-Treat weights as immutable while either loader is running. Export prefill and
-decode sequentially into the same fresh directory; a different checkpoint or
-inconsistent tensor content is rejected instead of replacing the archive.
+Treat weights as immutable while either loader is running. Both exports use one
+loaded model and matching compiler settings. Inconsistent shared tensor content
+is rejected before the bundle is published.
 
 ### Optional compiler optimizations
 
 Pass `--enable-inductor-optimization` to enable the current Inductor optimization
 settings. This generic flag currently sets `combo_kernels=True` and
 `benchmark_combo_kernel=True`; future optimizations can extend the same flag.
-Export both entry points with matching settings into a fresh directory:
+Export the pair with matching settings into a fresh directory:
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.export prefill --enable-inductor-optimization \
-  --output artifacts/qwen35/0.8b/text-optimized
-"$QWEN_PY" -m compiler.qwen35.export decode --enable-inductor-optimization \
+"$QWEN_PY" -m compiler.qwen35.export --enable-inductor-optimization \
   --output artifacts/qwen35/0.8b/text-optimized
 ```
 
@@ -268,8 +267,7 @@ Packing is the default for both prefill and decode. No additional model
 adapters or native libraries are needed.
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.export prefill
-"$QWEN_PY" -m compiler.qwen35.export decode
+"$QWEN_PY" -m compiler.qwen35.export
 "$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
   --packages artifacts/qwen35/0.8b/text \
   --output artifacts/qwen35/0.8b/packing-runtime-new
