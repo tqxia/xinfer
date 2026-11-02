@@ -173,6 +173,13 @@ Treat weights as immutable while either loader is running. Both exports use one
 loaded model and matching compiler settings. Inconsistent shared tensor content
 is rejected before the bundle is published.
 
+Export uses ordinary Inductor fusion and reductions, with
+`emulate_precision_casts=True` and TF32 disabled. There is no `--eager-numerics`
+profile. Floating-point results can differ from HF eager; the existing
+full-model numerical issues and validation limits remain documented in the
+[experiment record](../../docs/experiments/qwen35.md). Legacy packages marked
+`eager_numerics=true` must be re-exported with the current exporter.
+
 ### Optional compiler optimizations
 
 Pass `--enable-inductor-optimization` to enable the current Inductor optimization

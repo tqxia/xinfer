@@ -8,7 +8,7 @@ import torch
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
-from compiler.common.artifacts import sha256, ROOT
+from compiler.common.artifacts import require, sha256, ROOT
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.common.validation import bits_equal
 from compiler.qwen35.tests.common import fixtures, compare, LIMIT
@@ -107,13 +107,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     configure_text()
     metadata = {kind: json.loads((args.packages / f"{kind}.json").read_text()) for kind in ("prefill", "decode")}
+    require(all(not meta.get("eager_numerics", False) for meta in metadata.values()),
+            "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
     for kind, meta in metadata.items():
         assert meta["torch"] == torch.__version__ and meta["cache_length"] == CACHE_LENGTH
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
     for field in ("checkpoint", "state", "source_sha256", "inductor_configs", "attention_backend", "shared_weights"):
         assert metadata["prefill"][field] == metadata["decode"][field], field
-    assert metadata["prefill"].get("eager_numerics", False) == metadata["decode"].get("eager_numerics", False)
     assert metadata["prefill"].get("linear_packing") == metadata["decode"].get("linear_packing")
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["delta_backend"] == "triton_op"

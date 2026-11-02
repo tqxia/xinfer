@@ -8,7 +8,8 @@ Run these original tuning arms from the pinned unpacked control checkout.
 The latest exporter always packs linears and has no packing switch. If tuning
 the latest code instead, keep packing enabled in every arm and record that
 baseline change; its projection count is 97. Compare packed and unpacked
-checkouts separately once a tuning configuration has been selected.
+checkouts separately once a tuning configuration has been selected. The current
+exporter has also retired `--eager-numerics`; the historical control keeps it off.
 
 Host 103 measured about 3.70 ms/token: 187 GEMVs account for about 75% of summed
 GPU kernel time. The 248,320-by-1,024 LM-head matrix contains about 509 MB of

@@ -4,7 +4,6 @@ import argparse
 import importlib.metadata
 import inspect
 import json
-import os
 import time
 from pathlib import Path
 
@@ -73,19 +72,11 @@ def main():
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
     parser.add_argument("--enable-inductor-optimization", action="store_true",
                         help="Enable optional Inductor optimizations (currently combo kernels)")
-    parser.add_argument("--eager-numerics", action="store_true",
-                        help="Keep native mean reductions and disable FP contraction")
     args = parser.parse_args()
     if args.output.is_symlink() or (args.output.exists() and
             (not args.output.is_dir() or any(args.output.iterdir()))):
         parser.error(f"Output must be a new or empty directory: {args.output}")
     configure_text()
-    if args.eager_numerics:
-        os.environ["TRITON_DEFAULT_FP_FUSION"] = "0"
-        from torch._inductor.decomposition import decompositions
-        from torch._inductor.lowering import make_fallback
-        decompositions.pop(torch.ops.aten.mean.dim, None)
-        make_fallback(torch.ops.aten.mean.dim, warn=False)
     model = load_model(args.model_dir)
     install_delta(model)
     config = model.config
@@ -147,7 +138,6 @@ def main():
                 rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
                 tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,
                 strict_export=True, graph_nodes=len(list(exported.graph.nodes)),
-                eager_numerics=args.eager_numerics,
                 enable_inductor_optimization=args.enable_inductor_optimization,
                 export_seconds=export_seconds, compile_seconds=time.perf_counter() - start,
                 package_bytes=compiled_path.stat().st_size, package_sha256=sha256(compiled_path),

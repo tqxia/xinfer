@@ -632,9 +632,12 @@ large per-channel relative errors against FP32. This does not waive the test:
 all raw errors and unchanged limits remain recorded. Worst logits relative L2
 against the independent FP32 reference is 1.3995% for AOTI and 1.3042% for HF.
 
-The diagnostic `--eager-numerics` option retains native `aten.mean.dim` and
-disables FP contraction, as in the Qwen3 experiment. A complete second run still
-fails the same 854 tensors; this option is **not** an accepted correctness fix.
+The historical diagnostic `--eager-numerics` option retained native
+`aten.mean.dim` and disabled FP contraction, as in the Qwen3 experiment. A
+complete second run still failed the same 854 tensors; this option was **not**
+an accepted correctness fix. The current exporter has retired this option and
+uses the ordinary Inductor path. The commands below record the historical run;
+legacy eager-numerics packages require re-export with the current exporter.
 
 ```bash
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/0.8b/inductor-text-eager"

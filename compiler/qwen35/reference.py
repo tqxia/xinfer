@@ -5,6 +5,7 @@ import torch
 from transformers import StaticCache
 
 from compiler.qwen35.config import CACHE_LENGTH
+from compiler.common.artifacts import require
 from compiler.common.weights import SharedWeights, validate_shared_weights
 
 
@@ -52,6 +53,8 @@ class PythonRuntime:
     def __init__(self, packages, specs):
         metadata = json.loads((packages / "prefill.json").read_text())
         decode = json.loads((packages / "decode.json").read_text())
+        require(not metadata.get("eager_numerics", False) and not decode.get("eager_numerics", False),
+                "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
         assert metadata.get("linear_packing") == decode.get("linear_packing"), "Package linear-packing settings differ"
         assert metadata["delta_backend"] == decode["delta_backend"], "Package DeltaNet backends differ"
         for field in ("delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",

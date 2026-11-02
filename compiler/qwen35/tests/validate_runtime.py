@@ -50,7 +50,12 @@ def reject_invalid(args, env, metadata):
     mutations = [
         ("mixed_checkpoint", lambda m: m["prefill"]["checkpoint"].update(revision="different"), "Package metadata differs: checkpoint"),
         ("mixed_state", lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5), "Package metadata differs: state"),
-        ("mixed_numerics", lambda m: m["prefill"].update(eager_numerics=not m["decode"].get("eager_numerics", False)), "Package numerical settings differ"),
+        ("legacy_prefill", lambda m: m["prefill"].update(eager_numerics=True),
+         "Legacy eager-numerics packages are unsupported"),
+        ("legacy_decode", lambda m: m["decode"].update(eager_numerics=True),
+         "Legacy eager-numerics packages are unsupported"),
+        ("legacy_pair", lambda m: [v.update(eager_numerics=True) for v in m.values()],
+         "Legacy eager-numerics packages are unsupported"),
         ("mixed_packing", lambda m: m["prefill"].update(linear_packing={"enabled": "different"}), "Package linear-packing settings differ"),
         ("entry_point", lambda m: m["prefill"].update(tokens=63),
          "Expected dynamic T=2..512/T=1 packages"),

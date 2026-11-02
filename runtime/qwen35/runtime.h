@@ -54,13 +54,13 @@ struct Spec {
   explicit Spec(const fs::path& packages) {
     metadata = read_json(packages / "decode.json");
     const auto prefill = read_json(packages / "prefill.json");
+    require(!metadata.value("eager_numerics", false) && !prefill.value("eager_numerics", false),
+            "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter");
     for (const auto* key : {"checkpoint", "torch", "cuda", "cxx11_abi", "sm", "layer_types", "state",
                            "cache_length", "vocabulary", "hidden_size", "logits", "input_order", "output_order",
                            "input_mutation", "generation_config", "inductor_configs", "attention_backend",
                            "source_sha256", "hf_source_sha256", "tf32", "parameter_dtypes", "rope_frequency_dtype"})
       require(metadata.at(key) == prefill.at(key), std::string("Package metadata differs: ") + key);
-    require(metadata.value("eager_numerics", false) == prefill.value("eager_numerics", false),
-            "Package numerical settings differ");
     require(metadata.value("linear_packing", Json()) == prefill.value("linear_packing", Json()),
             "Package linear-packing settings differ");
     require(metadata.at("kind") == "decode" && metadata.at("tokens") == 1 && prefill.at("kind") == "prefill",
