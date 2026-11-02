@@ -121,9 +121,10 @@ Export-time Torch and native LibTorch must come from the same installation.
 Optional `fla` and `causal_conv1d` must be absent so the surrounding HF operations
 use the validated tensor implementation.
 
-The commands below retain the original **L20 development layout**, including
+The commands below retain the original **Torch 2.7 L20 development layout**, including
 `work/qwen35/venv` and `work/qwen35/build`. For new runs on either target, use the
-target guide's explicit paths. Rebuild and re-export on the target GPU and
+target guide's explicit paths; L20 now selects versioned Torch 2.13 venvs and
+a separate build. Rebuild and re-export on the target GPU and
 toolchain; compiled SM89 packages remain specific to their deployment stack.
 
 Run from the repository root. Export refuses to overwrite compiled packages;

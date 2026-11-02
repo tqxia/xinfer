@@ -27,14 +27,14 @@ checking; the Python implementations and tests also live under `environments/`.
 original L20 environment, including its CUDA packages. It is a historical full
 snapshot, not the GB10 installation recipe.
 
-The commands below retain the original **L20 development layout**: `.venv`,
-`build/`, and `/data/workspace/abo/.venv` on
-`kikoxia-any4.devcloud.woa.com`, port `36000`. That native stack is Python 3.12,
-Torch `2.7.0+cu126`, Triton 3.3.0, CUDA 12.6 and SM89. The project environment
-contains separate HF dependencies and links only the selected native stack.
-Treat those linked packages as read-only; keep ABO's unrelated packages off
-this environment's import path. Use the target guide's explicit paths for new
-L20 or GB10 runs.
+For new L20 runs select the versioned Torch 2.13 environments and build from
+[the L20 guide](../../environments/l20/README.md). The commands below retain the
+original **Torch 2.7 L20 development layout**: `.venv`, `build/`, and
+`/data/workspace/abo/.venv` on `kikoxia-any4.devcloud.woa.com`, port `36000`.
+That historical native stack is Python 3.12, Torch `2.7.0+cu126`, Triton 3.3.0,
+CUDA 12.6 and SM89. Keep its packages with that runtime for rollback. Use the
+target guide's explicit Python, build, cache and output paths for new runs;
+rebuild and re-export packages when changing the native stack.
 
 ## Prepare offline inputs
 

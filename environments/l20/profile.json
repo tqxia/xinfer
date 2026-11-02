@@ -2,8 +2,8 @@
   "system": "Linux",
   "machine": "x86_64",
   "python": "3.12",
-  "torch_runtime": "2.7.0+cu126",
+  "torch_runtime": "2.13.0+cu126",
   "cuda": "12.6",
-  "triton": "3.3.0",
+  "triton": "3.7.1",
   "sm": [8, 9]
 }

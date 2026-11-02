@@ -25,7 +25,7 @@ generated venvs, builds and scratch scripts belong in `work/`. Both are ignored.
 Run Python tools from the repository root as modules, for example:
 
 ```bash
-Q3_PY=work/l20/qwen3-venv/bin/python  # choose the environment for your target
+Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your target
 "$Q3_PY" -m compiler.qwen3.prepare --help
 "$Q3_PY" -m compiler.qwen3.export --help
 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp --help
