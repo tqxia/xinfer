@@ -203,6 +203,13 @@ with `CUDA_VISIBLE_DEVICES`.
 
 `run` compares HF eager with one compiled profile using identical forced tokens.
 `compare` compares two compiled artifact directories for optimization work.
+Both commands default to the first CUDA-visible GPU, honoring
+`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`. Use `--gpu` with an `nvidia-smi`
+physical GPU index or GPU UUID to override that selection, for example `--gpu 1`
+to select physical GPU 1. Workers, idle checks,
+telemetry and GPU records all use the selected GPU; `environment.json` records
+its `gpu_uuid`.
+
 Both preserve rotated process order, warmups, source/package hashes, memory and
 GPU telemetry. Use the [development tools guide](../../docs/development-tools.md)
 for paired comparisons and the optional NVTX profiler. Shared-GPU smoke timings

@@ -11,7 +11,7 @@ import time
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
-    wait_idle as check_idle, run_worker,
+    wait_idle as check_idle, run_worker, resolve_gpu,
 )
 from compiler.common.artifacts import read_json, write_json, sha256 as digest
 
@@ -26,8 +26,8 @@ PACKAGE_FIELDS = (
 )
 
 
-def wait_idle(allow_busy):
-    return check_idle(allow_busy=allow_busy)
+def wait_idle(device, allow_busy=False):
+    return check_idle(device=device, allow_busy=allow_busy)
 
 
 def eager_worker(args):
@@ -160,6 +160,7 @@ def run(args):
             not label.replace('_', '').isalnum() or label == 'eager'
             for label in (args.baseline_label, args.candidate_label))):
         raise ValueError('Provide distinct alphanumeric/underscore labels; eager is reserved')
+    gpu = resolve_gpu(args.gpu)
     packages = ({args.baseline_label: args.baseline_packages.resolve(),
                  args.candidate_label: args.candidate_packages.resolve()}
                 if paired else dict(aoti=args.packages.resolve()))
@@ -197,10 +198,10 @@ def run(args):
                                       for p in sorted(source.rglob('*')) if p.is_file()},
                        binary_sha256=digest(binary), workload_sha256=digest(out/'workload.json'),
                        model_manifest=read_json(args.model_dir/'model_manifest.json'),
-                       allow_busy=args.allow_busy, cpu_threads=1, packages={}, shared_weights={})
+                       allow_busy=args.allow_busy, cpu_threads=1, gpu_uuid=gpu, packages={}, shared_weights={})
     environment['attention_library'] = dict(path=str(library), sha256=digest(library))
     environment['gpu'] = subprocess.check_output([
-        'nvidia-smi', '-i', '0', '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
+        'nvidia-smi', '-i', gpu, '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
         '--format=csv'], text=True)
     for label, directory in packages.items():
         environment['packages'][label] = {kind: dict(metadata=read_json(directory/(kind+'.json')),
@@ -220,14 +221,14 @@ def run(args):
     env = {k: v for k, v in os.environ.items()
            if k not in ('VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME', 'LD_LIBRARY_PATH')}
     env.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
-               PYTHONDONTWRITEBYTECODE='1')
+               PYTHONDONTWRITEBYTECODE='1', CUDA_VISIBLE_DEVICES=gpu)
     records = []
     labels = list(packages) if paired else ['eager', 'aoti']
     for round_index in range(args.rounds):
         order = labels[round_index % len(labels):]+labels[:round_index % len(labels)]
         for label in order:
             stem = f'round-{round_index+1}-{label}'
-            idle = wait_idle(args.allow_busy)
+            idle = wait_idle(gpu, args.allow_busy)
             write_json(out/(stem+'.idle.json'), idle)
             result = out/(stem+'.json')
             if label == 'eager':
@@ -238,11 +239,11 @@ def run(args):
                 command = [str(binary), str(packages[label]), str(out/'workload.json'), str(result)]
                 child_env = env | {'PATH': '/usr/bin:/bin', 'PYTHONHOME': '/nonexistent-python-home'}
             print(stem, 'starting', flush=True)
-            elapsed = run_worker(command, child_env, "0", out/(stem+".gpu.csv"), out/(stem+".log"), 900)
+            elapsed = run_worker(command, child_env, gpu, out/(stem+".gpu.csv"), out/(stem+".log"), 900)
             records.append(dict(round=round_index+1, profile=label, result=str(result),
                                 process_ms=elapsed, host_loadavg=os.getloadavg()))
             write_json(out/'runs.json', records)
-            write_json(out/(stem+'.after-idle.json'), wait_idle(args.allow_busy))
+            write_json(out/(stem+'.after-idle.json'), wait_idle(gpu, args.allow_busy))
             print(stem, 'finished', flush=True)
     summary = dict(status='provisional_shared_gpu' if args.allow_busy else 'idle_boundaries_checked',
                    rounds=args.rounds, warmup=args.warmup, repeats=args.repeats, decode_steps=args.decode_steps,
@@ -274,6 +275,8 @@ def main():
         else:
             runner.add_argument('--packages', type=Path, default=Path('artifacts/aoti'))
         runner.add_argument('--output', type=Path, required=True)
+        runner.add_argument('--gpu', help='nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 '
+                            'under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER')
         runner.add_argument('--lengths', type=int, nargs='+', default=[25, 128, 512])
         runner.add_argument('--decode-steps', type=int, default=64)
         runner.add_argument('--warmup', type=int, default=2)

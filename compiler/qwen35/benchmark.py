@@ -11,13 +11,13 @@ import time
 
 from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
-    wait_idle as check_idle, run_worker,
+    wait_idle as check_idle, run_worker, resolve_gpu,
 )
 from compiler.common.artifacts import sha256, read_json, write_json
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 
 
-def wait_idle(path, device="0", allow_busy=False):
+def wait_idle(path, device, allow_busy=False):
     return check_idle(device=device, allow_busy=allow_busy, output=path)
 
 
@@ -97,12 +97,9 @@ def benchmark(args):
         raise ValueError("Counts must be positive")
     if not args.lengths or len(set(args.lengths)) != len(args.lengths) or any(n < 1 or n > 512 or n + args.decode_steps > 1024 for n in args.lengths):
         raise ValueError("Provide distinct prompt lengths within the prompt/context limits")
+    gpu = resolve_gpu(args.gpu)
     args.output.mkdir(parents=True, exist_ok=False)
     out = args.output.resolve()
-    # Use the same physical device for CUDA logical device 0 and telemetry.
-    gpu = subprocess.check_output(["nvidia-smi", "-i", args.gpu, "--query-gpu=uuid", "--format=csv,noheader"], text=True).strip()
-    if not gpu.startswith("GPU-") or "\n" in gpu:
-        raise ValueError("Select one physical GPU by nvidia-smi index or UUID")
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     prompt = encode_prompt(tokenizer, "What is the capital of France? Answer briefly.")
     continuation = tokenizer.encode("Paris is the capital of France. ", add_special_tokens=False)
@@ -193,14 +190,16 @@ def main():
     worker_parser.add_argument("--output", type=Path, required=True)
     idle = commands.add_parser("check-idle", help="Test the idle guard without launching a model")
     idle.add_argument("--output", type=Path, required=True)
-    idle.add_argument("--gpu", default="0", help="nvidia-smi physical GPU index or UUID")
+    idle.add_argument("--gpu", help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
+                      "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER")
     runner = commands.add_parser("run")
     runner.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     runner.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
     runner.add_argument("--native", type=Path, default=Path("work/qwen35/build/qwen35_benchmark"))
     runner.add_argument("--validation", type=Path, default=ARTIFACT_DIR / "end-to-end/summary.json")
     runner.add_argument("--output", type=Path, required=True)
-    runner.add_argument("--gpu", default="0", help="nvidia-smi physical GPU index or UUID; workers use it as CUDA device 0")
+    runner.add_argument("--gpu", help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
+                        "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER")
     runner.add_argument("--lengths", type=int, nargs="+", default=[22, 64, 65, 128, 511, 512])
     runner.add_argument("--decode-steps", type=int, default=64)
     runner.add_argument("--warmup", type=int, default=2)
@@ -211,8 +210,9 @@ def main():
     if args.command == "check-idle":
         if args.output.exists():
             parser.error("Output already exists")
+        gpu = resolve_gpu(args.gpu)
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        wait_idle(args.output, args.gpu)
+        wait_idle(args.output, gpu)
     else:
         (worker if args.command == "worker" else benchmark)(args)
 

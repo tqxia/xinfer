@@ -1,10 +1,42 @@
-"""Shared timing and worker mechanics; model scripts own profiles and comparisons."""
+"""Shared GPU selection, timing and worker mechanics for model benchmarks."""
 
 import statistics
 import subprocess
+import sys
 import time
 
 from compiler.common.artifacts import write_json
+
+
+def resolve_gpu(device=None):
+    """Resolve one physical GPU without creating a CUDA context in this process."""
+    cuda_uuid = None
+    try:
+        if device is None:
+            # CUDA ordinals can differ from nvidia-smi indices. Let CUDA resolve
+            # its logical device 0 under the caller's visibility/order settings.
+            cuda_uuid = subprocess.check_output([
+                sys.executable, '-c',
+                'import torch; print("GPU-" + str(torch.cuda.get_device_properties(0).uuid))',
+            ], text=True).strip()
+            if not cuda_uuid.startswith('GPU-') or '\n' in cuda_uuid:
+                raise ValueError('CUDA device 0 did not resolve to one physical GPU UUID')
+            device = cuda_uuid
+        else:
+            device = device.strip()
+            if not (device.isdecimal() or device.startswith('GPU-')):
+                raise ValueError('Select one physical GPU by nvidia-smi index or UUID')
+        gpu = subprocess.check_output([
+            'nvidia-smi', '-i', device, '--query-gpu=uuid', '--format=csv,noheader',
+        ], text=True).strip()
+    except (subprocess.CalledProcessError, OSError) as error:
+        raise ValueError('Cannot resolve the benchmark GPU; check CUDA_VISIBLE_DEVICES or pass '
+                         '--gpu with one nvidia-smi physical GPU index or UUID') from error
+    if not gpu.startswith('GPU-') or '\n' in gpu:
+        raise ValueError('Select one physical GPU by nvidia-smi index or UUID')
+    if cuda_uuid is not None and gpu != cuda_uuid:
+        raise ValueError('CUDA device 0 UUID does not match the selected physical GPU')
+    return gpu
 
 
 def memory_stats():

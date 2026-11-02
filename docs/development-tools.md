@@ -24,6 +24,16 @@ The Qwen3 build always links `libxinfer_attention_ops.so`. Deploy that library
 with the native executable and matching LibTorch. Previously exported efficient
 packages must be re-exported using the current exporter.
 
+Both `run` and `compare` default to CUDA logical device 0 under the current
+`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` settings. To select a physical GPU
+explicitly, pass an `nvidia-smi` index or GPU UUID with `--gpu`; for example,
+`--gpu 1` overrides the inherited visibility mask. Every worker uses that GPU as
+CUDA device 0. Idle checks, telemetry and recorded GPU information use the same
+UUID, stored as `gpu_uuid` in `environment.json`.
+
+The [Qwen3.5 `run` and `check-idle` commands](../compiler/qwen35/README.md#benchmark)
+follow the same GPU selection policy.
+
 ## Compare two compiled profiles
 
 `compiler/qwen3/benchmark.py compare` runs two package directories through the same

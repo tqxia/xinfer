@@ -315,10 +315,18 @@ use an unpacked control checkout with the same selected Inductor configuration.
 ## Benchmark
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.benchmark run --gpu 0 \
+"$QWEN_PY" -m compiler.qwen35.benchmark run \
   --validation artifacts/qwen35/0.8b/end-to-end-new/summary.json \
   --output artifacts/qwen35/0.8b/benchmark-new
 ```
+
+Both `run` and `check-idle` default to the first CUDA-visible GPU, honoring
+`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`. To select a physical GPU
+explicitly, pass an `nvidia-smi` index or GPU UUID with `--gpu`; for example,
+`--gpu 1` selects physical GPU 1 and overrides the inherited visibility mask.
+Benchmark workers, idle checks, telemetry and GPU records use the same selected
+UUID, recorded as `gpu_uuid` in `environment.json`. Qwen3 uses the same selection
+policy.
 
 Profiles compare HF full-prompt eager with native AOTI using identical fixed
 tokens. EOS is data during timing. Reports retain numerical acceptance,
