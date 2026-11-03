@@ -25,6 +25,9 @@ Tests and focused diagnostics live beside their model. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 generated venvs, builds and scratch scripts belong in `work/`. Both are ignored.
 
+Use the pinned Ruff and clang-format tools with the repository settings; see
+[formatting commands](docs/development-tools.md#formatting).
+
 Both exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
 Model-specific extras live under `model_specific`; common fields have identical
 names and validation for both families. Retained unversioned sidecars need

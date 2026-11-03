@@ -3,6 +3,33 @@
 Run these commands from the repository root with the matching Python/LibTorch
 environment and previously exported packages. Use fresh output directories.
 
+## Formatting
+
+Use Python 3.12 to install the pinned formatters in an isolated environment:
+
+```bash
+python3.12 -m venv work/format-venv
+work/format-venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt` pins Ruff 0.17.3 and clang-format 23.1.3. `ruff.toml`
+formats Python with four-space indentation, double quotes and 100-column lines;
+`.clang-format` uses LLVM style with two-space indentation and the same column
+limit. Import and include order are retained. Run these commands from the
+repository root to format tracked source files:
+
+```bash
+git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format
+git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format -i
+```
+
+Check formatting without changing files:
+
+```bash
+git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
+git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
+```
+
 ## Shared native executables
 
 Both models use `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` from one

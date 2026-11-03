@@ -1,0 +1,11 @@
+required-version = "==0.17.3"
+target-version = "py312"
+line-length = 100
+indent-width = 4
+include = ["*.py"]
+extend-exclude = ["artifacts", "work", "build"]
+
+[format]
+indent-style = "space"
+quote-style = "double"
+line-ending = "lf"
