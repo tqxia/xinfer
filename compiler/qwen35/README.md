@@ -200,6 +200,9 @@ Without that variable Python defaults to `build/libxinfer_attention_ops.so`.
 Native full-model targets link the library directly. Deploy it with the native
 executable and matching LibTorch/CUDA; it is not embedded in the `.pt2` files.
 The standalone GDN validation targets do not depend on the attention library.
+The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)
+covers the installed native runtime, prefix relocation and selecting its
+attention library for Python export or validation.
 
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1

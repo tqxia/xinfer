@@ -22,6 +22,8 @@ numerical checks and historical output comparisons remain usable.
 
 The [common runtime record](experiments/common-runtime.md) describes the runner,
 state-policy boundaries, compatibility behavior and validation evidence.
+See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
+for the CMake `Runtime` component, installed layout and prefix relocation.
 
 ## Shared Python benchmark and validation support
 

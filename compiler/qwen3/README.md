@@ -100,6 +100,9 @@ selects another build directory. Native binaries link the library directly and
 must be deployed with it and their matching LibTorch/CUDA libraries. A `.pt2`
 package does not bundle this external operator. Native linkage must remain free
 of `libpython` and `libtorch_python`.
+The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)
+covers installing and moving the native prefix, and selecting the installed
+attention library for Python.
 
 Both models use `compiler/common/attention.py` for operator loading and export
 shape registration. Qwen3-specific package checks live in `packages.py`.

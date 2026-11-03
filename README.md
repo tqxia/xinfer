@@ -44,6 +44,8 @@ Use a target's native stack and each model's isolated HF environment, following 
 compilation profile and always links its native attention library. Existing efficient Qwen3 packages must be re-exported;
 see its guide for the fixed package contract. Build from the repository root
 with CMake. Each model retains its own compiler environment and numerical policy.
+The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
+shows how to install and move the native runtime prefix with its attention library.
 
 Both exporters now produce weightless prefill/decode packages and one shared
 `weights.pt` archive containing the constant mappings. Both package metadata

@@ -184,6 +184,45 @@ older generated code. The old 2.7 loader extracts Qwen3.5's libraries into `/tmp
 regardless of `TMPDIR`, so retain about 3 GB plus margin there for rollback runs,
 in addition to compile-cache space.
 
+## Install and relocate the runtime
+
+After building, install the project's runtime component into a fresh prefix.
+GNUInstallDirs selects executable and library directories, typically `bin/`
+and `lib/` or `lib64/`. `xinfer_aoti` is always included;
+`xinfer_benchmark` and `xinfer_validate` are included when their build options
+are enabled. Focused helpers `qwen35_fused` and `qwen_runtime_contract` remain
+build-only targets. `CMAKE_INSTALL_BINDIR` and `CMAKE_INSTALL_LIBDIR` can customize
+the layout and must be relative paths. The following commands read the configured
+library directory from the build cache and use the default `bin/` directory.
+
+```bash
+PREFIX="$PWD/work/$TARGET/runtime-install"
+MOVED_PREFIX="$PWD/work/$TARGET/runtime-relocated"
+INSTALL_LIBDIR=$(sed -n 's/^CMAKE_INSTALL_LIBDIR:[^=]*=//p' "$BUILD/CMakeCache.txt")
+"$CMAKE" --install "$BUILD" --prefix "$PREFIX" --component Runtime
+mv "$PREFIX" "$MOVED_PREFIX"
+"$MOVED_PREFIX/bin/xinfer_aoti" --help
+
+"$Q3_PY" -m compiler.qwen3.prepare --model-dir "$Q3_MODEL" encode \
+  --prompt "What is the capital of France?" --output "$Q3_ROOT/install-prompt.ids"
+"$MOVED_PREFIX/bin/xinfer_aoti" "$Q3_PACKAGES" \
+  "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-new-tokens 8
+
+# Python export/validation can use the installed attention library too.
+export XINFER_ATTENTION_OPS_LIBRARY="$MOVED_PREFIX/$INSTALL_LIBDIR/libxinfer_attention_ops.so"
+```
+
+Installed executables find the attention library relative to `$ORIGIN`, so the
+prefix can move on the same compatible native stack. The selected LibTorch and
+CUDA libraries remain external; the installed RPATH retains their configured
+runtime paths. `XINFER_INSTALL_RUNTIME_DIRS` can override these paths at configure
+time with a semicolon-separated list; its defaults are the selected Torch library
+and CUDA runtime directories. CMake also retains external linked-library
+directories. A different host must provide a compatible GPU/package contract and
+the matching native stack at those library paths; relocating that external
+stack is a separate step. Deploy each complete five-file model package directory
+alongside the installed runtime.
+
 ## Validation matrix
 
 Run the following on both targets for each new package pair. Use a GPU-idle
