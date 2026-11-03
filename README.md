@@ -50,6 +50,10 @@ with CMake. Each model retains its own compiler environment and numerical policy
 The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
 shows how to install and move the native runtime prefix with its attention library.
 
+CPU portability remains a known limitation: AOTI package wrappers inherit the build
+host's instruction set (including AVX-512 on L20), and the project does not enforce
+CPU compatibility. Use a compatible CPU or re-export on the destination host.
+
 Both exporters now produce weightless prefill/decode packages and one shared
 `weights.pt` archive containing the constant mappings. Both package metadata
 files record its checksum. Deploy the complete five-file package directory. The Python and C++ runtimes retain one weight pool and lend its
