@@ -170,6 +170,66 @@ for name, message in package_cases:
     assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
     report['rejections'].append(name)
 
+
+def package_fixture(name, metadata, with_weights=False):
+    directory = out / name
+    directory.mkdir()
+    for kind, item in metadata.items():
+        (directory / f'{kind}.json').write_text(json.dumps(item))
+        (directory / f'{kind}.pt2').symlink_to((packages / f'{kind}.pt2').resolve())
+    if with_weights:
+        (directory / 'weights.pt').symlink_to((packages / 'weights.pt').resolve())
+    return directory
+
+
+def metadata_with_sizes():
+    return {kind: dict(json.loads((packages / f'{kind}.json').read_text()),
+                       package_bytes=(packages / f'{kind}.pt2').stat().st_size)
+            for kind in ('prefill', 'decode')}
+
+
+# Declared sizes must fail before archive validation, even with CUDA hidden.
+for name, kind, missing in (('wrong_prefill_size', 'prefill', False),
+                            ('wrong_decode_size', 'decode', False),
+                            ('missing_prefill_size', 'prefill', True),
+                            ('missing_decode_size', 'decode', True)):
+    metadata = metadata_with_sizes()
+    if missing:
+        del metadata[kind]['package_bytes']
+    else:
+        metadata[kind]['package_bytes'] += 1
+    directory = package_fixture(name, metadata)
+    output = directory / 'generated.ids'
+    message = 'Package size metadata differs' if missing else 'Package file size mismatch'
+    result = run_native([directory, args.reference / 'capital/prompt.ids', output], name,
+                        environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+    assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
+    assert not output.exists(), name
+    report['rejections'].append(name)
+
+# Valid size metadata must still pass complete loading and native/Python parity.
+directory = package_fixture('declared_package_sizes', metadata_with_sizes(), with_weights=True)
+prompt_path = args.reference / 'capital/prompt.ids'
+ids_path, trace_path = directory / 'generated.ids', directory / 'logits.f32'
+result = run_native([directory, prompt_path, ids_path, '--max-new-tokens', '1',
+                     '--trace', trace_path], 'declared_package_sizes')
+assert result.returncode == 0, failure_detail(result, 'declared_package_sizes')
+generated = ids_from(ids_path)
+entry = dict(contract='declared_package_sizes', tokens=len(generated))
+report.setdefault('package_controls', []).append(entry)
+native_traces.append((entry, ids_from(prompt_path), generated, trace_path, 1))
+
+# The complete, checksum-valid bundle must reject an incompatible actual GPU.
+metadata = metadata_with_sizes()
+for item in metadata.values():
+    item['cuda_compute_capability'] = [99, 0]
+directory = package_fixture('gpu_architecture', metadata, with_weights=True)
+output = directory / 'generated.ids'
+result = run_native([directory, prompt_path, output, '--max-new-tokens', '1'], 'gpu_architecture')
+assert result.returncode != 0 and 'GPU architecture mismatch' in result.stderr, failure_detail(result, 'gpu_architecture')
+assert not output.exists()
+report['rejections'].append('gpu_architecture')
+
 weight_cases = (
     ('missing_shared_weights_contract', 'Shared weights metadata is required'),
     ('mixed_shared_weights_contract', 'Shared weights contracts differ'),

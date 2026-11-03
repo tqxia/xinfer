@@ -6,6 +6,7 @@
 #include "../common/attention.h"
 
 #include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
 #include <c10/core/InferenceMode.h>
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <torch/cuda.h>
@@ -36,6 +37,7 @@ using xinfer::write_logits;
 struct Spec {
   int64_t layers, cache_length, max_prompt, vocab;
   std::vector<int64_t> cache_shape, cache_stride, eos;
+  std::vector<int64_t> compute_capability;
   Json shared_weights;
 
   explicit Spec(const fs::path& directory) {
@@ -83,6 +85,7 @@ struct Spec {
     vocab = decode.at("vocab_size");
     cache_shape = decode.at("cache_shape").get<std::vector<int64_t>>();
     cache_stride = decode.at("cache_stride").get<std::vector<int64_t>>();
+    compute_capability = decode.at("cuda_compute_capability").get<std::vector<int64_t>>();
     require(prefill.at("export_options") == decode.at("export_options"), "Package export settings differ");
     require(decode.at("export_options") == Json({{"backed_size_oblivious", false}}),
             "Unsupported Flash export settings");
@@ -104,10 +107,27 @@ struct Spec {
     require(decode.at("flat_input_count") == 3 + 2 * layers, "Invalid native input count");
     require(!eos.empty() && std::all_of(eos.begin(), eos.end(), [this](int64_t id) { return id >= 0 && id < vocab; }),
             "Invalid EOS token IDs");
+    require(prefill.contains("package_bytes") == decode.contains("package_bytes"), "Package size metadata differs");
+    // Earlier bundles omit sizes; their mandatory archive SHA checks still apply.
+    if (decode.contains("package_bytes")) {
+      for (const auto* kind : {"prefill", "decode"}) {
+        const auto& metadata = std::string(kind) == "prefill" ? prefill : decode;
+        require(fs::file_size(directory / (std::string(kind) + ".pt2")) == metadata.at("package_bytes").get<uintmax_t>(),
+                "Package file size mismatch");
+      }
+    }
     xinfer::validate_shared_weights(directory, prefill, decode);
     shared_weights = decode.at("shared_weights");
   }
 };
+
+inline c10::Device checked_device(const Spec& spec) {
+  require(torch::cuda::is_available(), "CUDA device 0 is required");
+  const auto* properties = at::cuda::getDeviceProperties(0);
+  require(spec.compute_capability == std::vector<int64_t>{properties->major, properties->minor},
+          "GPU architecture mismatch");
+  return {c10::kCUDA, 0};
+}
 
 inline std::vector<int64_t> read_ids(const fs::path& path, const Spec& spec) {
   std::ifstream file(path);
@@ -127,15 +147,15 @@ inline std::vector<int64_t> read_ids(const fs::path& path, const Spec& spec) {
 class Runtime {
  public:
   Runtime(const fs::path& directory, const Spec& spec)
-      : spec_(spec), weights_(directory, spec.shared_weights), prefill_((directory / "prefill.pt2").string()),
+      : spec_(spec), device_(checked_device(spec_)), weights_(directory, spec_.shared_weights), prefill_((directory / "prefill.pt2").string()),
         decode_((directory / "decode.pt2").string()) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
     // LibTorch allocations are aligned; keep these exact buffers for both loaders.
-    for (int64_t i = 0; i < 2 * spec.layers; ++i)
-      cache_.push_back(at::zeros(spec.cache_shape,
+    for (int64_t i = 0; i < 2 * spec_.layers; ++i)
+      cache_.push_back(at::zeros(spec_.cache_shape,
           at::TensorOptions().device(device_).dtype(at::kBFloat16)));
-    extent_ = at::empty({spec.cache_length + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
+    extent_ = at::empty({spec_.cache_length + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
   }
 
   void reset(double fill = 0) {
@@ -178,8 +198,8 @@ class Runtime {
   }
 
  private:
-  const Spec& spec_;
-  const c10::Device device_{c10::kCUDA, 0};
+  const Spec spec_;
+  const c10::Device device_;
   xinfer::SharedWeights weights_;
   Loader prefill_, decode_;
   std::vector<at::Tensor> cache_;

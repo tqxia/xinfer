@@ -173,11 +173,11 @@ class Runtime {
  public:
   Runtime(const fs::path& packages, const Spec& spec)
       : spec_(spec),
-        weights_(packages, spec.metadata.at("shared_weights")),
+        weights_(packages, spec_.metadata.at("shared_weights")),
         prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
-    extent_ = at::empty({spec.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
+    extent_ = at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();
   }
 
@@ -227,7 +227,7 @@ class Runtime {
   const std::vector<at::Tensor>& state() const { return state_; }
 
  private:
-  const Spec& spec_;
+  const Spec spec_;
   // The shared CUDA tensors must outlive both borrowing loaders.
   xinfer::SharedWeights weights_;
   Loader prefill_, decode_;

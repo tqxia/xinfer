@@ -64,9 +64,10 @@ def main():
         (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
         print(f"Exported {kind}; compiling...", flush=True)
 
-        def metadata_factory(_compiled_path):
+        def metadata_factory(compiled_path):
             metadata = {
                 "entry_point": kind,
+                "package_bytes": compiled_path.stat().st_size,
                 "torch_version": torch.__version__,
                 "torch_cuda_version": torch.version.cuda,
                 "cxx11_abi": torch._C._GLIBCXX_USE_CXX11_ABI,

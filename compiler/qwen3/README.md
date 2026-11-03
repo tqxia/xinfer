@@ -141,6 +141,11 @@ Prefill accepts 2–512 tokens; decode accepts one token, including a one-token
 prompt at position zero. Total context capacity is 1,024. Earlier positions
 must already be populated. Runtime checks reject invalid IDs, nonpositive or
 oversized budgets, incompatible metadata and cache overflow before model work.
+The runtime also checks the actual CUDA device against the package's compute
+capability before loading GPU weights. New exports record `package_bytes` for
+each entry, and both declared file sizes are checked before archive loading.
+Earlier shared-weight bundles without either size field remain supported;
+the embedded SHA-256 checks still verify both packages in every bundle.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
 masks, training and attention-weight requests are unsupported.
 

@@ -6,7 +6,7 @@ using namespace qwen35;
 int main(int argc, char** argv) {
   try {
     require(argc == 4, "Usage: qwen35_validate PACKAGE_DIR CASES_JSON OUTPUT_DIR");
-    Spec spec(argv[1]);
+    const Spec spec(argv[1]);
     const auto cases = read_json(argv[2]).at("cases");
     const fs::path output(argv[3]);
     require(!fs::exists(output), "Output already exists");
@@ -14,19 +14,23 @@ int main(int argc, char** argv) {
     configure(spec);
     Runtime runtime(argv[1], spec);
     fs::create_directories(output);
-    const auto original_eos = spec.eos;
     Json report = {{"cases", Json::array()}, {"loader_pairs", 1}};
     for (const auto& item : cases) {
       const auto name = item.at("name").get<std::string>();
       require(!name.empty() && name != "." && name != ".." && fs::path(name).filename() == name, "Invalid case name");
-      spec.eos = item.value("eos", original_eos);  // A test-only override exercises stopping deterministically.
+      const auto eos = item.value("eos", spec.eos);
       Json row = {{"name", name}};
       std::ofstream states(output / (name + ".states"), std::ios::binary);
       if (item.contains("prompt")) {
         std::ofstream logits(output / (name + ".f32"), std::ios::binary);
-        const auto ids = runtime.generate(item.at("prompt").get<std::vector<int64_t>>(), item.at("limit"), &logits);
+        const auto prompt = item.at("prompt").get<std::vector<int64_t>>();
+        const int64_t limit = item.at("limit");
+        spec.check_request(prompt, limit);
+        // Exercise a test-only stop set through the same production loop.
+        const auto ids = item.contains("eos") ? xinfer::generate(runtime, prompt, limit, eos, &logits)
+                                              : runtime.generate(prompt, limit, &logits);
         row["ids"] = ids;
-        row["stop"] = std::find(spec.eos.begin(), spec.eos.end(), ids.back()) != spec.eos.end() ? "eos" : "limit";
+        row["stop"] = std::find(eos.begin(), eos.end(), ids.back()) != eos.end() ? "eos" : "limit";
         for (const auto& state : runtime.state()) write_tensor(states, state);
       } else {
         runtime.reset();
