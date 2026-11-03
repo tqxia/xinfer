@@ -16,7 +16,7 @@ from compiler.qwen3.tests.numerics import ids_from
 
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument('--native', type=Path, default=Path('build/qwen_aoti'))
+parser.add_argument('--native', type=Path, default=Path('build/xinfer_aoti'))
 parser.add_argument('--reference', type=Path, default=Path('artifacts/reference'))
 parser.add_argument('--packages', type=Path, default=Path('artifacts/aoti'))
 parser.add_argument('--output', type=Path, default=Path('artifacts/native-smoke'))
@@ -98,15 +98,15 @@ for case in sorted(args.reference.iterdir()):
 
 bad = out / 'invalid.ids'
 cases = [
-    ('empty', '', [], 'Prompt must not be empty'),
+    ('empty', '', [], 'Expected 1..512 input tokens'),
     ('negative', '-1', [], 'Token ID out of range'),
     ('vocab', '151936', [], 'Token ID out of range'),
     ('fraction', '1.5', [], 'Invalid integer'),
     ('overflow', '999999999999999999999999999999', [], 'Invalid integer'),
-    ('long_prompt', '1 ' * 513, [], 'Prompt exceeds'),
-    ('zero_budget', '1', ['--max-new-tokens', '0'], 'max-new-tokens must'),
-    ('negative_budget', '1', ['--max-new-tokens', '-1'], 'max-new-tokens must'),
-    ('context_budget', '1 ' * 512, ['--max-new-tokens', '513'], 'must fit the KV cache'),
+    ('long_prompt', '1 ' * 513, [], 'Expected 1..512 input tokens'),
+    ('zero_budget', '1', ['--max-new-tokens', '0'], 'Generation budget'),
+    ('negative_budget', '1', ['--max-new-tokens', '-1'], 'Generation budget'),
+    ('context_budget', '1 ' * 512, ['--max-new-tokens', '513'], 'Generation budget'),
     ('unknown_flag', '1', ['--unknown', '1'], 'Unknown option'),
     ('missing_value', '1', ['--trace'], 'Missing option value'),
     ('trace_collision', '1', ['--trace', str(out / 'invalid-output.ids')], 'Trace path must differ'),
@@ -117,6 +117,15 @@ for name, content, extra, message in cases:
                         environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
     assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
     report['rejections'].append(name)
+
+# Both models use the same no-overwrite policy.
+existing = out / 'existing-output.ids'
+existing.write_text('keep existing output\n')
+result = run_native([packages, args.reference / 'capital/prompt.ids', existing], 'existing_output',
+                    environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+assert result.returncode != 0 and 'Output already exists' in result.stderr, failure_detail(result, 'existing_output')
+assert existing.read_text() == 'keep existing output\n'
+report['rejections'].append('existing_output')
 
 # All invalid package contracts must fail before CUDA or weight loading.
 mixed = out / 'invalid-packages'
@@ -136,6 +145,7 @@ package_cases = (
 for name, message in package_cases:
     for kind in ('prefill', 'decode'):
         metadata = json.loads((packages / (kind + '.json')).read_text())
+        metadata.setdefault('model_type', 'qwen3')
         if name == 'mixed_numerical_settings' and kind == 'prefill':
             metadata['triton_enable_fp_fusion'] = not metadata['triton_enable_fp_fusion']
         elif name == 'legacy_eager_numerics':
@@ -175,6 +185,7 @@ def package_fixture(name, metadata, with_weights=False):
     directory = out / name
     directory.mkdir()
     for kind, item in metadata.items():
+        item.setdefault('model_type', 'qwen3')
         (directory / f'{kind}.json').write_text(json.dumps(item))
         (directory / f'{kind}.pt2').symlink_to((packages / f'{kind}.pt2').resolve())
     if with_weights:
@@ -187,6 +198,28 @@ def metadata_with_sizes():
                        package_bytes=(packages / f'{kind}.pt2').stat().st_size)
             for kind in ('prefill', 'decode')}
 
+
+# Dispatch failures must not require CUDA or an archive.
+for name, tags, message in (
+    ('mixed_model_types', ('qwen3', 'qwen35'), 'Package model types differ'),
+    ('missing_prefill_model_type', (None, 'qwen3'), 'Package model types differ'),
+    ('missing_decode_model_type', ('qwen3', None), 'Package model types differ'),
+    ('unknown_model_type', ('unknown', 'unknown'), 'Unsupported model type'),
+):
+    directory = out / name
+    directory.mkdir()
+    for kind, tag in zip(('prefill', 'decode'), tags):
+        metadata = json.loads((packages / f'{kind}.json').read_text())
+        metadata.pop('model_type', None)
+        if tag is not None:
+            metadata['model_type'] = tag
+        (directory / f'{kind}.json').write_text(json.dumps(metadata))
+    output = directory / 'generated.ids'
+    result = run_native([directory, args.reference / 'capital/prompt.ids', output], name,
+                        environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+    assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
+    assert not output.exists()
+    report['rejections'].append(name)
 
 # Declared sizes must fail before archive validation, even with CUDA hidden.
 for name, kind, missing in (('wrong_prefill_size', 'prefill', False),
@@ -244,6 +277,8 @@ for name, message in weight_cases:
     damaged.mkdir()
     metadata = {kind: json.loads((packages / (kind + '.json')).read_text())
                 for kind in ('prefill', 'decode')}
+    for item in metadata.values():
+        item.setdefault('model_type', 'qwen3')
     if name == 'missing_shared_weights_contract':
         for item in metadata.values():
             del item['shared_weights']

@@ -5,6 +5,10 @@ The target is **Qwen/Qwen3.5-0.8B**, pinned to
 experiment. Python prepares the model and tokenizes/decodes offline; C++ loads
 the compiled packages and performs generation.
 
+Generation, fixed-token timing and native validation use the shared
+`xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executables. Package
+metadata selects Qwen3.5 and its mixed-state policy; no model CLI flag is needed.
+
 Prefill is always dynamic: each input of 2–512 tokens uses one prefill call.
 A single token uses the decode package. Batch size is one and context capacity
 is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
@@ -42,8 +46,10 @@ No timing result is claimed on the busy development GPU.
   owns shared layer-0 checkpoint fixtures and their preparation command.
 - `diagnostics/`: the retained Q35-NUM-001 rounding reproducer.
 
-Native sources live in `runtime/qwen35/`; small shared helpers live in
-`compiler/common/` and `runtime/common/`.
+`runtime/qwen35/runtime.h` owns the model-specific metadata checks and state
+policy. The runner and shared preflight live in `runtime/common/`; the native
+entry points are `runtime/main.cpp`, `runtime/benchmark.cpp` and
+`runtime/validate.cpp`. Standalone GDN probes remain in `runtime/qwen35/`.
 
 ## Prefix attention and caller-owned KV
 
@@ -212,7 +218,7 @@ Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shar
 `artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`,
 the short/long branch operators and algorithms, `delta_short_threshold=97`,
 `delta_chunk_size=64`, `delta_transform_tile=32` and `delta_dot_precision=ieee`,
-plus per-entry conditional graph counts, token ranges, source
+plus `model_type="qwen35"`, per-entry conditional graph counts, token ranges, source
 checksums, toolchain and GPU architecture. Attention metadata records the Flash
 operator contract, shape-only extent input and KV-only mutation policy.
 The archive embeds its mappings in
@@ -269,7 +275,7 @@ change floating-point results.
 ```bash
 "$QWEN_PY" -m compiler.qwen35.prepare encode \
   --prompt "What is 17 + 25?" --output work/prompt.ids
-work/qwen35/build/qwen35_aoti artifacts/qwen35/0.8b/text \
+work/qwen35/build/xinfer_aoti artifacts/qwen35/0.8b/text \
   work/prompt.ids work/generated.ids
 "$QWEN_PY" -m compiler.qwen35.prepare decode --input work/generated.ids
 

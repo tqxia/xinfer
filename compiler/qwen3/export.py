@@ -67,6 +67,7 @@ def main():
         def metadata_factory(compiled_path):
             metadata = {
                 "entry_point": kind,
+                "model_type": "qwen3",
                 "package_bytes": compiled_path.stat().st_size,
                 "torch_version": torch.__version__,
                 "torch_cuda_version": torch.version.cuda,

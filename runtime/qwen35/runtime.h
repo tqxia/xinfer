@@ -1,65 +1,31 @@
 #pragma once
-#include "../common/io.h"
-#include "../common/generation.h"
-#include "../common/weights.h"
 #include "../common/attention.h"
+#include "../common/runner.h"
 
-#include <ATen/ATen.h>
-#include <ATen/Parallel.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/core/InferenceMode.h>
-#include <torch/csrc/inductor/aoti_package/model_package_loader.h>
-#include <torch/cuda.h>
-#include <torch/version.h>
-#include <nlohmann/json.hpp>
-
-#include <algorithm>
-#include <charconv>
-#include <filesystem>
-#include <fstream>
 #include <limits>
-#include <memory>
-#include <stdexcept>
-#include <string>
-#include <vector>
 
 namespace qwen35 {
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
-using Loader = torch::inductor::AOTIModelPackageLoader;
-constexpr int64_t max_prompt = 512;
-
 using xinfer::require;
 using xinfer::integer;
-inline Json read_json(const fs::path& path) {
-  return xinfer::read_json(path, "Cannot open ");
-}
+using xinfer::read_json;
+using xinfer::read_ids;
+using xinfer::configure;
+constexpr int64_t max_prompt = 512;
 
-inline void write_tensor(std::ostream& file, const at::Tensor& value) {
-  const auto cpu = value.cpu().contiguous();
-  file.write(static_cast<const char*>(cpu.const_data_ptr()), cpu.nbytes());
-  require(bool(file), "Failed to write tensor");
-}
-
-struct TensorSpec {
-  std::vector<int64_t> shape;
-  at::ScalarType dtype;
-};
-
-struct Spec {
+struct Spec : xinfer::SpecBase {
   Json metadata;
-  int64_t capacity, vocab;
-  std::vector<int64_t> eos;
-  std::vector<TensorSpec> state;
 
-  explicit Spec(const fs::path& packages) {
+  explicit Spec(const fs::path& packages) : SpecBase(xinfer::ModelType::Qwen35) {
     metadata = read_json(packages / "decode.json");
     const auto prefill = read_json(packages / "prefill.json");
+    xinfer::check_model_type(prefill, metadata, model_type);
     require(!metadata.value("eager_numerics", false) && !prefill.value("eager_numerics", false),
             "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter");
-    for (const auto* key : {"attention_backend", "input_mutation", "cache_input", "kv_extent", "custom_attention", "export_options"})
-      require(metadata.value(key, Json()) == prefill.value(key, Json()),
-              std::string("Package metadata differs: ") + key);
+    xinfer::check_optional_pair(prefill, metadata,
+                                {"attention_backend", "input_mutation", "cache_input", "kv_extent",
+                                 "custom_attention", "export_options"});
     const Json attention = {{"name", "xinfer::flash_attention"}, {"abi_version", 1}, {"read_only", true}};
     const Json extent = {{"device", "cpu"}, {"dtype", "uint8"}, {"shape", "[valid_length + 1]"}, {"data_read", false}};
     require(metadata.value("attention_backend", Json()) == "flash" && metadata.value("input_mutation", Json()) == "kv_only" &&
@@ -68,11 +34,11 @@ struct Spec {
             metadata.value("export_options", Json()) == Json({{"backed_size_oblivious", false}}),
             "Legacy attention or state contract is unsupported; re-export Qwen3.5 packages with the current exporter");
     require(xinfer::attention_ops_abi_version() == 1, "Unsupported native attention ABI");
-    for (const auto* key : {"checkpoint", "torch", "cuda", "cxx11_abi", "sm", "layer_types", "state",
-                           "cache_length", "vocabulary", "hidden_size", "logits", "input_order", "output_order",
-                           "input_mutation", "generation_config", "inductor_configs", "attention_backend",
-                           "source_sha256", "hf_source_sha256", "tf32", "parameter_dtypes", "rope_frequency_dtype"})
-      require(metadata.at(key) == prefill.at(key), std::string("Package metadata differs: ") + key);
+    xinfer::check_pair(prefill, metadata,
+                       {"checkpoint", "torch", "cuda", "cxx11_abi", "sm", "layer_types", "state",
+                        "cache_length", "vocabulary", "hidden_size", "logits", "input_order", "output_order",
+                        "generation_config", "inductor_configs", "source_sha256", "hf_source_sha256",
+                        "tf32", "parameter_dtypes", "rope_frequency_dtype"});
     require(metadata.value("linear_packing", Json()) == prefill.value("linear_packing", Json()),
             "Package linear-packing settings differ");
     require(metadata.at("kind") == "decode" && metadata.at("tokens") == 1 && prefill.at("kind") == "prefill",
@@ -81,18 +47,17 @@ struct Spec {
     require(metadata.at("delta_backend") == "triton_op", "Unsupported DeltaNet backend");
     // Graph counts differ by entry; the dispatch policy must match across a pair.
     // Missing fields on both sides retain support for earlier package pairs.
-    for (const auto* key : {"delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",
-                           "delta_chunk_size", "delta_transform_tile", "delta_dot_precision"})
-      require(metadata.value(key, Json()) == prefill.value(key, Json()),
-              std::string("Package DeltaNet policy differs: ") + key);
+    xinfer::check_optional_pair(prefill, metadata,
+                                {"delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",
+                                 "delta_chunk_size", "delta_transform_tile", "delta_dot_precision"},
+                                "Package DeltaNet policy differs: ");
     require(prefill.at("tokens").is_null() && prefill.at("token_range") == Json::array({2, max_prompt}) &&
             metadata.at("token_range") == Json::array({1, 1}), "Expected dynamic T=2..512/T=1 packages");
-    const auto version = metadata.at("torch").get<std::string>();
-    require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
-    require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
+    xinfer::check_toolchain(metadata, "torch");
     require(metadata.at("tf32") == false, "Unsupported numerical contract");
     capacity = metadata.at("cache_length");
     vocab = metadata.at("vocabulary");
+    compute_capability = metadata.at("sm").get<std::vector<int64_t>>();
     require(capacity == 1024 && vocab > 0, "Unsupported context capacity or vocabulary");
     require(metadata.at("logits") == Json({{"shape", {1, vocab}}, {"dtype", "bfloat16"}}),
             "Unsupported logits contract");
@@ -117,7 +82,7 @@ struct Spec {
       }
       require(linear || shape[2] == capacity, "KV capacity mismatch");
       if (!linear && i % 2) require(shape == state.back().shape, "K/V shapes differ");
-      state.push_back({std::move(shape), fp32 ? at::kFloat : at::kBFloat16});
+      state.push_back({name, kind, std::move(shape), fp32 ? at::kFloat : at::kBFloat16, !linear});
       inputs.push_back(name);
       outputs.push_back(name);
     }
@@ -125,115 +90,47 @@ struct Spec {
     require(metadata.at("input_order") == inputs && metadata.at("output_order") == outputs, "Invalid tensor ABI order");
     const auto stop = metadata.at("generation_config").at("eos_token_id");
     eos = stop.is_array() ? stop.get<std::vector<int64_t>>() : std::vector<int64_t>{stop.get<int64_t>()};
-    require(!eos.empty(), "Missing EOS tokens");
-    for (auto id : eos) require(id >= 0 && id < vocab, "Invalid EOS token");
-    for (const auto* kind : {"prefill", "decode"}) {
-      const auto& meta = std::string(kind) == "prefill" ? prefill : metadata;
-      require(fs::file_size(packages / (std::string(kind) + ".pt2")) == meta.at("package_bytes").get<uintmax_t>(),
-              "Package file size mismatch");
-    }
-    xinfer::validate_shared_weights(packages, prefill, metadata);
-  }
-
-  void check_tokens(const std::vector<int64_t>& ids) const {
-    require(!ids.empty() && ids.size() <= max_prompt, "Expected 1..512 input tokens");
-    for (auto id : ids) require(id >= 0 && id < vocab, "Token ID out of range");
-  }
-
-  void check_request(const std::vector<int64_t>& ids, int64_t limit) const {
-    check_tokens(ids);
-    require(limit > 0 && limit <= capacity - static_cast<int64_t>(ids.size()),
-            "Generation budget must be positive and prompt + budget must fit the context");
+    check_eos();
+    xinfer::check_package_files(packages, prefill, metadata, true, model_type);
+    shared_weights = metadata.at("shared_weights");
   }
 };
 
-inline std::vector<int64_t> read_ids(const fs::path& path, const Spec& spec) {
-  std::ifstream file(path);
-  require(file.is_open(), "Cannot open token IDs");
-  std::vector<int64_t> ids;
-  for (std::string word; file >> word;) {
-    ids.push_back(integer(word));
-    require(ids.size() <= max_prompt, "Expected 1..512 input tokens");
-  }
-  require(file.eof(), "Failed to read token IDs");
-  spec.check_tokens(ids);
-  return ids;
-}
-
-inline void configure(const Spec& spec) {
-  require(torch::cuda::is_available(), "CUDA device 0 is required");
-  const auto* device = at::cuda::getDeviceProperties(0);
-  require(spec.metadata.at("sm") == Json::array({device->major, device->minor}), "GPU architecture mismatch");
-  at::set_num_threads(1);
-  at::globalContext().setAllowTF32CuBLAS(false);
-  at::globalContext().setAllowTF32CuDNN(false);
-}
-
-class Runtime {
+class StatePolicy {
  public:
-  Runtime(const fs::path& packages, const Spec& spec)
-      : spec_(spec),
-        weights_(packages, spec_.metadata.at("shared_weights")),
-        prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()) {
-    weights_.load(prefill_, "prefill");
-    weights_.load(decode_, "decode");
-    extent_ = at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
-    reset();
+  using Spec = qwen35::Spec;
+
+  StatePolicy(const Spec& spec, c10::Device device) : specs_(spec.state), device_(device) {}
+
+  void reset(double fill = 0) {
+    tensors_.clear();
+    for (const auto& item : specs_) {
+      auto tensor = at::zeros(item.shape, at::TensorOptions().device(device_).dtype(item.dtype));
+      if (item.inplace && fill != 0) tensor.fill_(fill);
+      tensors_.push_back(std::move(tensor));
+    }
   }
 
-  void reset() {
-    state_.clear();
-    for (const auto& item : spec_.state)
-      state_.push_back(at::zeros(item.shape, at::TensorOptions().device(at::Device(at::kCUDA, 0)).dtype(item.dtype)));
-    position_ = 0;
-    prefill_calls_ = decode_calls_ = 0;
-  }
+  const std::vector<at::Tensor>& tensors() const { return tensors_; }
 
-  at::Tensor step(const std::vector<int64_t>& tokens) {
-    spec_.check_tokens(tokens);
-    require(static_cast<int64_t>(tokens.size()) <= spec_.capacity - position_, "Context capacity exceeded");
-    const int64_t length = tokens.size();
-    const auto options = at::TensorOptions().device(at::Device(at::kCUDA, 0)).dtype(at::kLong);
-    std::vector<at::Tensor> inputs{at::tensor(tokens, at::kLong).view({1, length}).to(options),
-                                   at::arange(position_, position_ + length, options)};
-    inputs.insert(inputs.end(), state_.begin(), state_.end());
-    inputs.push_back(extent_.slice(0, 0, position_ + length + 1));
-    auto result = (length > 1 ? prefill_ : decode_).run(inputs);
-    ++(length > 1 ? prefill_calls_ : decode_calls_);
-    require(result.size() == 1 + state_.size(), "Incorrect package output count");
-    require(result[0].sizes() == at::IntArrayRef({1, spec_.vocab}) && result[0].scalar_type() == at::kBFloat16,
-            "Incorrect logits shape/dtype");
-    for (size_t i = 0; i < state_.size(); ++i) {
-      require(result[i + 1].sizes() == state_[i].sizes() && result[i + 1].scalar_type() == state_[i].scalar_type(),
-              "Incorrect state shape/dtype");
-      const auto kind = spec_.metadata.at("state").at(i).at("kind");
-      if (kind == "key" || kind == "value")
-        require(result[i + 1].data_ptr() == state_[i].data_ptr() && result[i + 1].strides() == state_[i].strides(),
+  void accept(const std::vector<at::Tensor>& outputs) {
+    require(outputs.size() == 1 + tensors_.size(), "Incorrect package output count");
+    for (size_t i = 0; i < tensors_.size(); ++i) {
+      const auto& next = outputs[i + 1];
+      require(next.sizes() == tensors_[i].sizes() && next.scalar_type() == tensors_[i].scalar_type() &&
+                  next.device() == device_, "Incorrect state shape/dtype/device");
+      if (specs_[i].inplace)
+        require(next.data_ptr() == tensors_[i].data_ptr() && next.strides() == tensors_[i].strides(),
                 "KV outputs must alias caller-owned buffers");
     }
-    state_.assign(result.begin() + 1, result.end());
-    position_ += length;
-    return result[0];
+    tensors_.assign(outputs.begin() + 1, outputs.end());
   }
-
-  std::vector<int64_t> generate(const std::vector<int64_t>& prompt, int64_t limit, std::ostream* trace = nullptr) {
-    spec_.check_request(prompt, limit);
-    return xinfer::generate(*this, prompt, limit, spec_.eos, trace);
-  }
-
-  int64_t position() const { return position_; }
-  int64_t prefill_calls() const { return prefill_calls_; }
-  int64_t decode_calls() const { return decode_calls_; }
-  const std::vector<at::Tensor>& state() const { return state_; }
 
  private:
-  const Spec spec_;
-  // The shared CUDA tensors must outlive both borrowing loaders.
-  xinfer::SharedWeights weights_;
-  Loader prefill_, decode_;
-  std::vector<at::Tensor> state_;
-  at::Tensor extent_;
-  int64_t position_ = 0;
-  int64_t prefill_calls_ = 0, decode_calls_ = 0;
+  std::vector<xinfer::StateSpec> specs_;
+  c10::Device device_;
+  std::vector<at::Tensor> tensors_;
 };
+
+using Runtime = xinfer::Runner<StatePolicy>;
 }  // namespace qwen35

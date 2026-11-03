@@ -5,7 +5,7 @@ import torch
 from transformers import StaticCache
 
 from compiler.qwen35.config import CACHE_LENGTH
-from compiler.common.artifacts import require
+from compiler.common.artifacts import require, validate_model_type
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.attention import OPERATOR_CONTRACT, cache_extent, load_attention_ops
 
@@ -54,6 +54,7 @@ class PythonRuntime:
     def __init__(self, packages, specs):
         metadata = json.loads((packages / "prefill.json").read_text())
         decode = json.loads((packages / "decode.json").read_text())
+        validate_model_type(metadata, decode, "qwen35")
         require(not metadata.get("eager_numerics", False) and not decode.get("eager_numerics", False),
                 "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
         for field in ("attention_backend", "input_mutation", "cache_input", "kv_extent", "custom_attention", "export_options"):

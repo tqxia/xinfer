@@ -15,7 +15,7 @@ const std::vector<at::Tensor>& state(const qwen::Runtime& runtime) { return runt
 const std::vector<at::Tensor>& state(const qwen35::Runtime& runtime) { return runtime.state(); }
 
 void mutate(qwen::Spec& spec) {
-  spec.max_prompt = spec.cache_length = spec.vocab = spec.layers = 0;
+  spec.max_prompt = spec.capacity = spec.vocab = spec.layers = 0;
   spec.eos = {-1};
   spec.cache_shape.clear();
   spec.cache_stride.clear();

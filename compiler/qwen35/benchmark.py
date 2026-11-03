@@ -13,7 +13,7 @@ from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
     wait_idle as check_idle, run_worker, resolve_gpu,
 )
-from compiler.common.artifacts import sha256, read_json, write_json
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, read_json, write_json, validate_model_type
 from compiler.common.attention import native_attention_library
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 
@@ -114,9 +114,10 @@ def benchmark(args):
     sources += ["compiler/qwen35/adapters/attention.py", "compiler/common/attention.py",
                 "runtime/common/attention.cpp", "runtime/common/attention.h"]
     sources += ["compiler/common/passes/pack_linears.py"]
-    sources += ["runtime/qwen35/benchmark.cpp", "runtime/qwen35/runtime.h", "runtime/qwen35/CMakeLists.txt", "runtime/CMakeLists.txt", "CMakeLists.txt"]
+    sources += list(NATIVE_RUNTIME_SOURCES)
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "compiler/common/weights.py", "runtime/common/io.h",
                 "runtime/common/generation.h", "runtime/common/benchmark.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    sources = list(dict.fromkeys(sources))
     for name in sources:
         target = out / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +141,7 @@ def benchmark(args):
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"] == environment["model_manifest"]
         environment["packages"][kind] = meta
+    validate_model_type(environment["packages"]["prefill"], environment["packages"]["decode"], "qwen35")
     environment["shared_weights"] = validate_shared_weights(
         args.packages, environment["packages"]["prefill"], environment["packages"]["decode"])
     correctness = dict(passed=None, reason="No matching end-to-end report supplied")
@@ -202,7 +204,7 @@ def main():
     runner = commands.add_parser("run")
     runner.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     runner.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
-    runner.add_argument("--native", type=Path, default=Path("work/qwen35/build/qwen35_benchmark"))
+    runner.add_argument("--native", type=Path, default=Path("work/qwen35/build/xinfer_benchmark"))
     runner.add_argument("--validation", type=Path, default=ARTIFACT_DIR / "end-to-end/summary.json")
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument("--gpu", help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "

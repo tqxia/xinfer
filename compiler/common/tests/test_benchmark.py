@@ -234,7 +234,7 @@ class GpuBenchmarkRouting(unittest.TestCase):
                 model = root / 'model'
                 model.mkdir()
                 (model / 'model_manifest.json').write_text('{}')
-                native = root / 'qwen_benchmark'
+                native = root / 'xinfer_benchmark'
                 native.write_bytes(b'native benchmark fixture')
                 library = root / 'attention.so'
                 library.write_bytes(b'attention fixture')
@@ -312,7 +312,7 @@ class Qwen35GpuRouting(unittest.TestCase):
                 model.mkdir()
                 manifest = dict(revision='fixture-revision')
                 (model / 'manifest.json').write_text(json.dumps(manifest))
-                native = root / 'qwen35_benchmark'
+                native = root / 'xinfer_benchmark'
                 native.write_bytes(b'native benchmark fixture')
                 library = root / 'libxinfer_attention_ops.so'
                 library.write_bytes(b'attention fixture')

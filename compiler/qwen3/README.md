@@ -5,6 +5,11 @@ FlashAttention and native GQA. The original HF model supplies the weights and
 independent eager/FP32 references. The runtime performs inference and generation
 in C++ without Python.
 
+The native executables are shared with Qwen3.5: `xinfer_aoti` for generation,
+`xinfer_benchmark` for fixed-token timing and `xinfer_validate` for native
+validation. Package metadata selects the model; model-specific checks and KV
+state handling remain in `runtime/qwen3/runtime.h`.
+
 The former eager-numerics compilation profile and efficient-attention export
 backend are retired. Existing efficient packages must be re-exported. Known HF
 cache/token differences are documented in [numerical history](../../docs/experiments/qwen3-numerics.md);
@@ -144,6 +149,7 @@ oversized budgets, incompatible metadata and cache overflow before model work.
 The runtime also checks the actual CUDA device against the package's compute
 capability before loading GPU weights. New exports record `package_bytes` for
 each entry, and both declared file sizes are checked before archive loading.
+New exports include `model_type="qwen3"` in both entry metadata files.
 Earlier shared-weight bundles without either size field remain supported;
 the embedded SHA-256 checks still verify both packages in every bundle.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
@@ -158,10 +164,10 @@ masks, training and attention-weight requests are unsupported.
   --output artifacts/qwen3-adapter-check
 "$Q3_PY" -m compiler.qwen3.tests.validate_aoti --packages artifacts/qwen3-flash
 AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
-  --packages artifacts/qwen3-flash --native "$BUILD/qwen_validate" \
+  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
   --output artifacts/qwen3-validation
 "$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
-  --packages artifacts/qwen3-flash --native "$BUILD/qwen_aoti" \
+  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_aoti" \
   --output artifacts/qwen3-native-smoke
 ```
 
@@ -186,7 +192,7 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 ## Generate in C++
 
 ```bash
-"$BUILD/qwen_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
+"$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
   --max-new-tokens 64 --trace work/native-logits.f32
 "$Q3_PY" -m compiler.qwen3.prepare decode --input work/generated.ids
 ```
@@ -202,7 +208,7 @@ with `CUDA_VISIBLE_DEVICES`.
 
 ```bash
 "$Q3_PY" -m compiler.qwen3.benchmark run \
-  --packages artifacts/qwen3-flash --native "$BUILD/qwen_benchmark" \
+  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_benchmark" \
   --output artifacts/qwen3-benchmark
 ```
 

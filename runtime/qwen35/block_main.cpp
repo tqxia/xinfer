@@ -1,4 +1,5 @@
 // DeltaNet fixture runner. State crosses package calls as ordinary LibTorch tensors.
+#include "../common/io.h"
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
 #include <c10/core/InferenceMode.h>
@@ -18,15 +19,9 @@ namespace fs = std::filesystem;
 using Json = nlohmann::json;
 using Loader = torch::inductor::AOTIModelPackageLoader;
 
-void require(bool ok, const std::string& message) {
-  if (!ok) throw std::runtime_error(message);
-}
-
-Json read_json(const fs::path& path) {
-  std::ifstream file(path);
-  require(file.is_open(), "Cannot open " + path.string());
-  return Json::parse(file);
-}
+using xinfer::require;
+using xinfer::read_json;
+using xinfer::write_tensor;
 
 // Package inputs are contiguous: hidden BF16, convolution BF16, recurrent FP32.
 std::vector<std::vector<int64_t>> input_shapes(const Json& meta) {
@@ -59,14 +54,6 @@ at::Tensor read_hidden(const fs::path& path, const std::vector<int64_t>& shape) 
   file.read(static_cast<char*>(cpu.mutable_data_ptr()), cpu.nbytes());
   require(bool(file), "Failed to read " + path.string());
   return cpu.to(at::kCUDA);
-}
-
-void write_tensor(const fs::path& path, const at::Tensor& tensor) {
-  auto cpu = tensor.to(at::kCPU).contiguous();
-  std::ofstream file(path, std::ios::binary);
-  file.write(static_cast<const char*>(cpu.const_data_ptr()), cpu.nbytes());
-  file.close();
-  require(bool(file), "Failed to write " + path.string());
 }
 
 // Never pad hidden tokens: padding can change the convolution and recurrent state.

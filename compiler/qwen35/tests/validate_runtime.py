@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
-from compiler.common.artifacts import sha256, ROOT
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
 from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.model import configure_text
@@ -23,6 +23,9 @@ from compiler.common.artifacts import run
 
 
 def reject_invalid(args, env, metadata):
+    metadata = copy.deepcopy(metadata)
+    for item in metadata.values():
+        item.setdefault("model_type", "qwen35")
     directory = args.output / "rejections"
     directory.mkdir()
     cases = [("empty", "", "1", "Expected 1..512"),
@@ -49,6 +52,10 @@ def reject_invalid(args, env, metadata):
     assert prompt.read_text() == "42\n"
     passed.append("overwrite")
     mutations = [
+        ("mixed_model_types", lambda m: m["prefill"].update(model_type="qwen3"), "Package model types differ"),
+        ("missing_prefill_model_type", lambda m: m["prefill"].pop("model_type"), "Package model types differ"),
+        ("missing_decode_model_type", lambda m: m["decode"].pop("model_type"), "Package model types differ"),
+        ("unknown_model_type", lambda m: [v.update(model_type="unknown") for v in m.values()], "Unsupported model type"),
         ("mixed_checkpoint", lambda m: m["prefill"]["checkpoint"].update(revision="different"), "Package metadata differs: checkpoint"),
         ("mixed_state", lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5), "Package metadata differs: state"),
         ("legacy_prefill", lambda m: m["prefill"].update(eager_numerics=True),
@@ -158,8 +165,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
-    parser.add_argument("--binary", type=Path, default=Path("work/qwen35/build/qwen35_validate"))
-    parser.add_argument("--cli", type=Path, default=Path("work/qwen35/build/qwen35_aoti"))
+    parser.add_argument("--binary", type=Path, default=Path("work/qwen35/build/xinfer_validate"))
+    parser.add_argument("--cli", type=Path, default=Path("work/qwen35/build/xinfer_aoti"))
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "runtime-validation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -283,11 +290,13 @@ def main():
                   dispatch_counts_checked=True)
     root = ROOT
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
-               Path("runtime/qwen35/runtime.h"), Path("runtime/qwen35/main.cpp"),
-               Path("runtime/qwen35/tests/text_validate.cpp")]
+               Path("runtime/qwen35/runtime.h"), Path("runtime/main.cpp"),
+               Path("runtime/validate.cpp")]
     sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    sources += list(NATIVE_RUNTIME_SOURCES)
     sources += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
                 "runtime/common/attention.cpp", "runtime/common/attention.h"]
+    sources = list(dict.fromkeys(sources))
     report["source_sha256"] = {str(p): sha256(root / p) for p in sources}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("native_runtime_passed", "teacher_tensors", "greedy_logit_rows",

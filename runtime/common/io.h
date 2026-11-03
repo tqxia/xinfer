@@ -42,4 +42,17 @@ inline void write_logits(std::ostream& stream, const at::Tensor& logits) {
   require(bool(stream), "Failed to write logits trace");
 }
 
+inline void write_tensor(std::ostream& stream, const at::Tensor& tensor) {
+  const auto cpu = tensor.to(at::kCPU).contiguous();
+  stream.write(static_cast<const char*>(cpu.const_data_ptr()), cpu.nbytes());
+  require(bool(stream), "Failed to write tensor");
+}
+
+inline void write_tensor(const fs::path& path, const at::Tensor& tensor) {
+  auto file = output_file(path, true);
+  write_tensor(file, tensor);
+  file.close();
+  require(bool(file), "Failed to write tensor: " + path.string());
+}
+
 }  // namespace xinfer

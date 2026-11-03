@@ -9,14 +9,16 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns package contracts and state management. Shared file,
+`runtime/<model>/` owns model-specific package contracts and state policies. Shared file,
 validation and benchmark helpers live in `compiler/common/`.
 `environments/` owns project setup, native-stack checks and target profiles;
 its Bash entry points are `setup.sh` and `check.sh`.
-`runtime/common/` provides file helpers, greedy generation and fixed-token
-benchmark loops. Each runtime exposes `reset()`, `step(tokens)` and `position()`;
-it retains its own state ownership and dispatch. Generation validates through
-the model runtime, then stops at EOS or the token budget. Benchmark requests
+`runtime/common/` owns the runner, device and package preflight, positions,
+prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
+One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
+both models, selected from package metadata. State policies retain persistent KV
+buffers and, for Qwen3.5, replace functional conv/recurrent state. Generation
+stops at EOS or the token budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
 Tests and focused diagnostics live beside their model. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
@@ -35,7 +37,7 @@ Use a target's native stack and each model's isolated HF environment, following 
 [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
 compilation profile and always links its native attention library. Existing efficient Qwen3 packages must be re-exported;
 see its guide for the fixed package contract. Build from the repository root
-with CMake. Qwen3.5 retains its separate configuration and validation policy.
+with CMake. Each model retains its own compiler environment and numerical policy.
 
 Both exporters now produce weightless prefill/decode packages and one shared
 `weights.pt` archive containing the constant mappings. Both package metadata
@@ -45,7 +47,7 @@ and re-export existing embedded-weight packages before using the current runtime
 
 Benchmark measurement boundaries are unchanged: reset, prefill, decode and
 whole request. Both model workers record reset-plus-prefill and consumed
-positions; report headers/profile comparisons remain model-specific. Warmup
+positions; the native report schema is shared. Warmup
 predictions are checked as well as measured repeats. Source snapshots include
 the shared implementation. Qwen3 keeps HF eager/FP32 references for validation, with bounded HF logit error
 and separate cache/token drift diagnostics. CUDA Graph integration is deferred.

@@ -79,7 +79,7 @@ build provenance as well.
 
 ## Build one native runtime set per target
 
-Both model venvs use the same selected LibTorch. CMake derives the C++ standard
+Both model venvs use the same selected LibTorch and native executables. CMake derives the C++ standard
 from that Torch build. Use a fresh build directory when changing native stacks.
 The host also needs CMake 3.24 or newer, Ninja, a C++ compiler and a compatible
 CUDA toolkit. The setup helper does not install these executables.
@@ -100,10 +100,9 @@ fi
   -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
   "${CUDA_RUNTIME_FLAGS[@]}" \
   -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
-  -DQWEN_BUILD_QWEN35=ON -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
+  -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
 "$CMAKE" --build "$BUILD" --target \
-  qwen_aoti qwen_validate qwen_benchmark \
-  qwen35_aoti qwen35_validate qwen35_fused qwen35_benchmark -j2
+  xinfer_aoti xinfer_validate xinfer_benchmark qwen35_fused qwen_runtime_contract -j2
 
 export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 for MODEL in qwen3 qwen35; do
@@ -113,10 +112,15 @@ for MODEL in qwen3 qwen35; do
 done
 ```
 
+The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for both
+model families. Model selection comes from the package metadata; there is no
+separate full-model build switch. `qwen35_fused` and the optional `qwen35_block`
+remain focused GDN validation tools.
+
 `--build` verifies that CMake selected the active environment's LibTorch, resolving
 symlinks to the shared native installation. Build before either full-model
 export so Python can register the shared native FlashAttention operator. Deploy
-`libxinfer_attention_ops.so` with both Qwen3 and Qwen3.5 full-model executables.
+`libxinfer_attention_ops.so` with the shared full-model executables.
 Qwen3.5 packages its GDN kernels and needs no separate GDN custom-op library;
 its standalone GDN validation targets do not use the attention library.
 
@@ -200,20 +204,20 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   --model-dir "$Q3_MODEL" --output "$Q3_ROOT/reference"
 AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
   --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
-  --native "$BUILD/qwen_validate" --output "$Q3_ROOT/runtime-validation"
+  --native "$BUILD/xinfer_validate" --output "$Q3_ROOT/runtime-validation"
 "$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
   --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
-  --native "$BUILD/qwen_aoti" --output "$Q3_ROOT/native-smoke"
+  --native "$BUILD/xinfer_aoti" --output "$Q3_ROOT/native-smoke"
 
 "$Q35_PY" -m compiler.qwen35.tests.validate_model \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" --output "$Q35_ROOT/model-validation"
 "$Q35_PY" -m compiler.qwen35.tests.validate_runtime \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
-  --binary "$BUILD/qwen35_validate" --cli "$BUILD/qwen35_aoti" \
+  --binary "$BUILD/xinfer_validate" --cli "$BUILD/xinfer_aoti" \
   --output "$Q35_ROOT/runtime-validation"
 "$Q35_PY" -m compiler.qwen35.tests.validate_end_to_end \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
-  --native "$BUILD/qwen35_validate" --output "$Q35_ROOT/end-to-end"
+  --native "$BUILD/xinfer_validate" --output "$Q35_ROOT/end-to-end"
 ```
 
 The standalone GDN suite uses synthetic inputs and adds a checkpoint case when

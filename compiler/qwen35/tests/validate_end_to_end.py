@@ -13,7 +13,7 @@ import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
-from compiler.common.artifacts import sha256, ROOT
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
 from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.reference import HFRuntime
@@ -110,7 +110,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
-    parser.add_argument("--native", type=Path, default=Path("work/qwen35/build/qwen35_validate"))
+    parser.add_argument("--native", type=Path, default=Path("work/qwen35/build/xinfer_validate"))
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "end-to-end")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -255,13 +255,14 @@ def main():
     root = ROOT
     names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
-    names += ["runtime/qwen35/runtime.h", "runtime/qwen35/tests/text_validate.cpp"]
+    names += ["runtime/qwen35/runtime.h", "runtime/validate.cpp"]
     names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
               "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]
     names += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
               "runtime/common/attention.cpp", "runtime/common/attention.h"]
+    names = list(dict.fromkeys([*names, *NATIVE_RUNTIME_SOURCES]))
     for name in names:
         target = args.output / "source" / name
         target.parent.mkdir(parents=True, exist_ok=True)

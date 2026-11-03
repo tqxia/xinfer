@@ -3,6 +3,26 @@
 Run these commands from the repository root with the matching Python/LibTorch
 environment and previously exported packages. Use fresh output directories.
 
+## Shared native executables
+
+Both models use `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` from one
+native build. Each reads the package metadata to select the model-specific
+contract and state policy. New exports set `model_type` to `qwen3` or `qwen35`
+in both entry JSON files. Existing shared-weight bundles remain supported through
+the model identity embedded in `weights.pt`; filenames and tensor counts are
+not used to guess the model.
+
+The common runner owns package loaders, shared weights, device checks, token
+validation, positions and prefill/decode dispatch. Model policies handle KV
+buffer ownership and Qwen3.5's functional conv/recurrent outputs. The generation
+CLI refuses existing output/trace files and path aliases. Native benchmarks use
+the same report header and timing boundaries for both models. The validation
+binary retains the existing model-specific trace layouts so current Python
+numerical checks and historical output comparisons remain usable.
+
+The [common runtime record](experiments/common-runtime.md) describes the runner,
+state-policy boundaries, compatibility behavior and validation evidence.
+
 ## Compare HF eager with compiled Qwen3
 
 `run` compares the unmodified HF eager reference with one FlashAttention AOTI
@@ -13,10 +33,10 @@ measured workload.
 
 ```bash
 cmake -S . -B build -DQWEN_BUILD_BENCHMARK=ON
-cmake --build build --target qwen_benchmark -j2
+cmake --build build --target xinfer_benchmark -j2
 .venv/bin/python -m compiler.qwen3.benchmark run \
   --packages artifacts/aoti \
-  --native build/qwen_benchmark \
+  --native build/xinfer_benchmark \
   --output artifacts/benchmark-new
 ```
 
@@ -51,7 +71,7 @@ reported separately from steady-state latency.
   --baseline-packages artifacts/aoti-baseline \
   --candidate-packages artifacts/aoti-candidate \
   --baseline-label baseline --candidate-label candidate \
-  --native build/qwen_benchmark \
+  --native build/xinfer_benchmark \
   --output artifacts/comparison-new
 ```
 

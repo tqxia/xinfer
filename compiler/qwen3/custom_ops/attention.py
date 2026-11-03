@@ -4,6 +4,8 @@ from compiler.common.attention import OPERATOR_CONTRACT, load_attention_ops, nat
 
 
 def load_package_attention_ops(metadata, native=None):
+    if 'model_type' in metadata and metadata['model_type'] != 'qwen3':
+        raise ValueError('Unsupported model type')
     if metadata.get('attention_backend', 'efficient') != 'flash':
         raise ValueError('Legacy efficient packages are unsupported; re-export Qwen3 packages with the current exporter')
     if metadata.get('eager_numerics', False):

@@ -13,7 +13,7 @@ from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
     wait_idle as check_idle, run_worker, resolve_gpu,
 )
-from compiler.common.artifacts import read_json, write_json, sha256 as digest
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, read_json, write_json, validate_model_type, sha256 as digest
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_FIELDS = (
@@ -122,6 +122,7 @@ def validate_packages(packages):
         if metadata.get('entry_point') != kind:
             raise ValueError(f'Incorrect {kind} package entry point')
     prefill, decode = (packages[kind]['metadata'] for kind in ('prefill', 'decode'))
+    validate_model_type(prefill, decode, 'qwen3')
     for key in PACKAGE_FIELDS:
         if prefill[key] != decode[key]:
             raise ValueError(f'Package metadata differs: {key}')
@@ -166,7 +167,7 @@ def run(args):
                 if paired else dict(aoti=args.packages.resolve()))
     binary = args.native.resolve()
     if not binary.is_file():
-        raise ValueError('Build qwen_benchmark with -DQWEN_BUILD_BENCHMARK=ON first')
+        raise ValueError('Build xinfer_benchmark with -DQWEN_BUILD_BENCHMARK=ON first')
     library = native_attention_library(binary)
     if library is None:
         raise ValueError('Native benchmark must link libxinfer_attention_ops.so; rebuild Qwen3')
@@ -181,14 +182,11 @@ def run(args):
     write_json(out/'workload.json', workload)
     source = out/'source'
     source.mkdir()
-    for name in ('compiler/qwen3/benchmark.py', 'runtime/qwen3/benchmark.cpp', 'runtime/qwen3/runtime.h', 'compiler/qwen3/model.py',
-                 'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'CMakeLists.txt', 'runtime/CMakeLists.txt',
-                 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/common/attention.py',
+    for name in (*NATIVE_RUNTIME_SOURCES, 'compiler/qwen3/benchmark.py', 'compiler/qwen3/model.py',
+                 'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'compiler/common/attention.py',
                  'compiler/qwen3/custom_ops/attention.py', 'compiler/qwen3/custom_ops/__init__.py',
                  'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
-                 'runtime/common/io.h', 'runtime/common/generation.h', 'runtime/common/benchmark.h',
-                 'runtime/common/weights.h', 'runtime/common/sha256.h', 'compiler/common/weights.py',
-                 'compiler/common/benchmark.py', 'runtime/qwen3/CMakeLists.txt'):
+                 'compiler/common/weights.py', 'compiler/common/benchmark.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT/name, source/name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),
@@ -266,7 +264,7 @@ def main():
         runner = commands.add_parser(name)
         runner.add_argument('--model-dir', type=Path, default=DEFAULT_MODEL)
         runner.add_argument('--reference', type=Path, default=Path('artifacts/reference'))
-        runner.add_argument('--native', type=Path, default=Path('build/qwen_benchmark'))
+        runner.add_argument('--native', type=Path, default=Path('build/xinfer_benchmark'))
         if name == 'compare':
             runner.add_argument('--baseline-packages', type=Path, default=Path('artifacts/aoti-baseline'))
             runner.add_argument('--candidate-packages', type=Path, default=Path('artifacts/aoti-candidate'))

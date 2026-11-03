@@ -52,7 +52,7 @@ inline Json shared_weights_manifest(const fs::path& directory, const Json& contr
   return data;
 }
 
-inline void validate_shared_weights(const fs::path& directory, const Json& prefill, const Json& decode) {
+inline Json validate_shared_weights(const fs::path& directory, const Json& prefill, const Json& decode) {
   require(prefill.contains("shared_weights") && decode.contains("shared_weights"),
           "Shared weights metadata is required; re-export both packages");
   require(prefill.at("shared_weights") == decode.at("shared_weights"), "Shared weights contracts differ");
@@ -63,7 +63,7 @@ inline void validate_shared_weights(const fs::path& directory, const Json& prefi
                 options.contains("always_keep_tensor_constants") && options.at("always_keep_tensor_constants") == true,
             "Shared weights require weightless package compiler options");
   }
-  shared_weights_manifest(directory, decode.at("shared_weights"));
+  return shared_weights_manifest(directory, decode.at("shared_weights"));
 }
 
 inline at::ScalarType shared_weights_dtype(const std::string& name) {

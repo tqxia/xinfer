@@ -23,6 +23,8 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
 - Run C++ prefill/decode, cache management, greedy selection and EOS stopping
   without loading Python. No serving API, native tokenizer or concurrency is
   introduced by this cleanup.
+- Share the package runner and generation/benchmark/validation executables
+  across models. Keep strict model-specific metadata and state policies.
 
 ## Validation and acceptance
 

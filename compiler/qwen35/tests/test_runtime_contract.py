@@ -72,6 +72,17 @@ class PythonRuntimeContract(unittest.TestCase):
                     value.pop(field)
                 self.reject(metadata, LEGACY_ATTENTION)
 
+    def test_explicit_model_tags_are_checked_before_loading(self):
+        for tags, message in ((("qwen3", "qwen3"), "Unsupported model type"),
+                              (("unknown", "unknown"), "Unsupported model type"),
+                              ((None, None), "Unsupported model type"),
+                              (("qwen3", "qwen35"), "Package model types differ")):
+            with self.subTest(tags=tags):
+                metadata = self.metadata()
+                for kind, tag in zip(("prefill", "decode"), tags):
+                    metadata[kind]["model_type"] = tag
+                self.reject(metadata, message)
+
     def test_invalid_matching_contracts_are_rejected_before_loading(self):
         for field, invalid in INVALID_VALUES.items():
             with self.subTest(field=field):
@@ -105,9 +116,14 @@ class PythonRuntimeContract(unittest.TestCase):
                 self.reject(metadata, LEGACY_EAGER)
 
     def test_valid_contract_reaches_archive_validation_with_absent_or_false_eager_flag(self):
-        for prefill, decode in ((None, None), (False, None), (None, False), (False, False)):
-            with self.subTest(prefill=prefill, decode=decode):
+        for prefill, decode, tagged in ((None, None, False), (False, None, False),
+                                       (None, False, False), (False, False, False),
+                                       (None, None, True)):
+            with self.subTest(prefill=prefill, decode=decode, tagged=tagged):
                 metadata = self.metadata()
+                if tagged:
+                    for value in metadata.values():
+                        value["model_type"] = "qwen35"
                 for kind, eager in (("prefill", prefill), ("decode", decode)):
                     if eager is not None:
                         metadata[kind]["eager_numerics"] = eager

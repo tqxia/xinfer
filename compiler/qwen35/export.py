@@ -117,6 +117,7 @@ def main():
         def metadata_factory(compiled_path):
             metadata = dict(
                 kind=kind, tokens=None if dynamic else length, token_range=[2, 512] if dynamic else [length, length],
+                model_type="qwen35",
                 delta_backend="triton_op", delta_preparation="triton", delta_operator=DELTA_OPERATORS,
                 delta_algorithm=dict(prefill="shape_cond", short="fused_recurrent", long="chunked_fp32", decode="fused_recurrent"),
                 delta_short_threshold=SHORT_THRESHOLD, delta_chunk_size=CHUNK_SIZE,
