@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
-from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
+from compiler.common.artifacts import run, sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
@@ -21,7 +21,6 @@ from compiler.qwen35.model import configure_text
 from compiler.qwen35.tests.common import fixtures
 from compiler.qwen35.reference import PythonRuntime
 from compiler.common.tests.validation import cpu_copy, compare_file
-from compiler.common.artifacts import run
 
 
 def reject_invalid(args, env, metadata):
@@ -287,16 +286,6 @@ def main():
     report["rejections"] = reject_invalid(args, env, metadata)
     report.update(native_runtime_passed=True, no_python_library=True, repeated_requests_bitwise=True, cli_bitwise=True,
                   dispatch_counts_checked=True)
-    root = ROOT
-    sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
-               Path("runtime/qwen35/runtime.h"), Path("runtime/main.cpp"),
-               Path("runtime/validate.cpp")]
-    sources += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/tests/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
-    sources += list(NATIVE_RUNTIME_SOURCES)
-    sources += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
-                "runtime/common/attention.cpp", "runtime/common/attention.h"]
-    sources = list(dict.fromkeys(sources))
-    report["source_sha256"] = {str(p): sha256(root / p) for p in sources}
     (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({k: report[k] for k in ("native_runtime_passed", "teacher_tensors", "greedy_logit_rows",
                                            "greedy_state_tensors", "hf_numerical_acceptance")}, indent=2))

@@ -52,59 +52,6 @@ class BenchmarkContract(unittest.TestCase):
         self.assertEqual(result['consumed_positions'], 4)
         self.assertEqual([result[key] for key in benchmark.TIMING_FIELDS], [1000, 2000, 3000, 6000, 3000, 9000])
 
-    def test_git_provenance_restores_tracked_text_and_binary_changes(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            repository = root / 'repository'
-            repository.mkdir()
-
-            def git(*args):
-                return subprocess.run(['git', *args], cwd=repository, check=True,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
-
-            git('init', '--quiet')
-            (repository / '.gitignore').write_text('ignored.tmp\n')
-            text = repository / 'tracked.py'
-            text.write_text('baseline\n')
-            binary = repository / 'tracked.bin'
-            binary.write_bytes(bytes(range(256)))
-            git('add', '.')
-            git('-c', 'user.name=Benchmark Test', '-c', 'user.email=benchmark@example.invalid',
-                'commit', '--quiet', '-m', 'baseline')
-            commit = git('rev-parse', 'HEAD').decode().strip()
-            clean = root / 'clean-report'
-            clean.mkdir()
-            with patch.object(benchmark, 'ROOT', repository):
-                provenance = benchmark.git_provenance(clean)
-            self.assertEqual(provenance['git_commit'], commit)
-            self.assertFalse(provenance['git_dirty'])
-            self.assertEqual(provenance['git_status'], [])
-            self.assertEqual((clean / 'source.patch').read_bytes(), b'')
-
-            text.write_text('staged\nbaseline\n')
-            git('add', 'tracked.py')
-            text.write_text('staged\nunstaged\n')
-            binary.write_bytes(bytes(reversed(range(256))))
-            (repository / 'helper.py').write_text('untracked helper contents\n')
-            (repository / 'ignored.tmp').write_text('ignored scratch\n')
-            out = root / 'dirty-report'
-            out.mkdir()
-            with patch.object(benchmark, 'ROOT', repository):
-                provenance = benchmark.git_provenance(out)
-            self.assertEqual(provenance['git_commit'], commit)
-            self.assertTrue(provenance['git_dirty'])
-            self.assertIn('MM tracked.py', provenance['git_status'])
-            self.assertIn('?? helper.py', provenance['git_status'])
-            self.assertFalse(any('ignored.tmp' in line for line in provenance['git_status']))
-            self.assertEqual(provenance['git_diff'], dict(file='source.patch', sha256=sha256(out / 'source.patch')))
-
-            restored = root / 'restored'
-            git('clone', '--quiet', str(repository), str(restored))
-            git('-C', str(restored), 'apply', str(out / 'source.patch'))
-            self.assertEqual((restored / 'tracked.py').read_bytes(), text.read_bytes())
-            self.assertEqual((restored / 'tracked.bin').read_bytes(), binary.read_bytes())
-            self.assertFalse((restored / 'helper.py').exists())
-
     def test_first_request_and_warmup_excluded(self):
         requests, reset_after = [], []
         case = dict(name='case', prompt=[1], decode_tokens=[2])
@@ -361,13 +308,6 @@ class ControllerContract(unittest.TestCase):
         workers, gpu_records = [], []
 
         def query(command, **options):
-            if command[0] == 'git':
-                if command[1] == 'rev-parse':
-                    return 'fixture-commit\n'
-                if command[1] == 'status':
-                    return ' M compiler/common/benchmark.py\n?? helper.py\n'
-                self.assertEqual(command[1], 'diff')
-                return b'fixture tracked diff\n'
             if command[0] == 'ldd':
                 self.assertEqual(options['env']['PYTHONHOME'], '/nonexistent-python-home')
                 return 'libtorch_cpu.so => /fixture/libtorch_cpu.so\n'
@@ -428,13 +368,8 @@ class ControllerContract(unittest.TestCase):
                     environment = json.loads((args.output / 'environment.json').read_text())
                     self.assertEqual(environment['gpu_uuid'], GpuSelection.GPU)
                     self.assertEqual(environment['attention_library']['sha256'], sha256(library))
-                    self.assertEqual(environment['git_commit'], 'fixture-commit')
-                    self.assertTrue(environment['git_dirty'])
-                    self.assertEqual(environment['git_status'], [' M compiler/common/benchmark.py', '?? helper.py'])
-                    self.assertEqual(environment['git_diff'],
-                                     dict(file='source.patch', sha256=sha256(args.output / 'source.patch')))
-                    self.assertFalse((args.output / 'source').exists())
-                    self.assertNotIn('source_sha256', environment)
+                    self.assertEqual(environment['binary_sha256'], sha256(args.native))
+                    self.assertEqual(environment['workload_sha256'], sha256(args.output / 'workload.json'))
                     self.assertTrue((args.output / 'native.ldd').is_file())
                     summary = json.loads((args.output / 'summary.json').read_text())
                     labels = ({'baseline', 'candidate'} if mode == 'compare' else

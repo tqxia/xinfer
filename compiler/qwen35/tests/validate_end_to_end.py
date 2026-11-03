@@ -7,13 +7,12 @@ import json
 import math
 import os
 from pathlib import Path
-import shutil
 
 import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
-from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
+from compiler.common.artifacts import run, sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
@@ -23,7 +22,6 @@ from compiler.qwen35.model import configure_text, load_model
 from compiler.common.tests.validation import bits_equal
 from compiler.qwen35.reference import PythonRuntime
 from compiler.common.tests.validation import compare_file, cpu_copy
-from compiler.common.artifacts import run
 from compiler.qwen35.tests.common import compare, end_to_end_passed, policy
 
 
@@ -254,22 +252,6 @@ def main():
         report["greedy"].append(row)
     report["failure_counts"] = dict(Counter(f["comparison"] + "/" + f["tensor"].split(".")[-1] for f in report["failures"]))
     report["passed"] = end_to_end_passed(report)
-    root = ROOT
-    names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
-                      "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
-    names += ["runtime/qwen35/runtime.h", "runtime/validate.cpp"]
-    names += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/tests/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
-    names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
-              "compiler/qwen35/kernels/chunked.py",
-              "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]
-    names += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
-              "runtime/common/attention.cpp", "runtime/common/attention.h"]
-    names = list(dict.fromkeys([*names, *NATIVE_RUNTIME_SOURCES]))
-    for name in names:
-        target = args.output / "source" / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(root / name, target)
-    report["source_sha256"] = {n: sha256(root / n) for n in names}
     final_states = {"hf": reference, "aoti": aoti, "fp32": fp32}
     torch.save({label: tuple(t.clone() for t in values[("context_end", 3)])
                 for label, values in final_states.items()}, args.output / "context_end.pt")

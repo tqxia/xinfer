@@ -313,6 +313,7 @@ same-input JIT/AOTI/C++ comparisons retain their bitwise requirements.
 
 Use `--packages` and `--binary`/`--native`/`--cli` to select other artifact and
 build directories. Validation output directories must be fresh.
+Runtime and end-to-end reports include package and native binary checksums.
 The focused fused suite checks preparation, core output and both carried states
 through the `qwen35_fused` native target. Its 83 cases / 400 calls cover BF16/FP32, T=1..512
 boundaries, mixed prefill/decode continuations, whole versus partitioned inputs
@@ -402,10 +403,8 @@ policy.
 
 Profiles compare HF full-prompt eager with native AOTI using identical fixed
 tokens. EOS is data during timing. Reports retain numerical acceptance,
-reset/prefill/decode timings, memory, workload, provenance and telemetry.
-`environment.json` records `git_commit`, `git_status`, `git_dirty` and
-package/binary/workload hashes. `source.patch` combines staged and unstaged
-tracked changes as a Git binary patch. Untracked file contents are not captured.
+reset/prefill/decode timings, memory, workload and telemetry.
+`environment.json` records package, binary and workload checksums.
 `--allow-busy` is for functional checks and marks timings provisional. Final
 measurements require an idle environment.
 

@@ -53,10 +53,9 @@ and re-export existing embedded-weight packages before using the current runtime
 
 Benchmark measurement boundaries are unchanged: reset, prefill, decode and
 whole request. Both model workers record reset-plus-prefill and consumed
-positions. The Python benchmark controller shares provenance capture, rotated
+positions. The Python benchmark controller shares environment capture, rotated
 process order, failure handling and summaries across models. Warmup predictions
-are checked as well as measured repeats. Benchmark provenance records the Git
-commit, tracked file status and dirty flag, plus `source.patch` with staged and
-unstaged tracked changes. Untracked file contents are not captured. Qwen3 keeps
-HF eager/FP32 references for validation, with bounded HF logit error
-and separate cache/token drift diagnostics. CUDA Graph integration is deferred.
+are checked as well as measured repeats. Benchmark reports include package,
+binary and workload checksums. Qwen3 keeps HF eager/FP32 references for
+validation, with bounded HF logit error and separate cache/token drift
+diagnostics. CUDA Graph integration is deferred.

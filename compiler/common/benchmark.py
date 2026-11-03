@@ -1,7 +1,6 @@
 """Fixed-token benchmark measurement, provenance, orchestration and reports."""
 
 import os
-from pathlib import Path
 import platform
 import statistics
 import subprocess
@@ -43,7 +42,6 @@ def resolve_gpu(device=None):
     return gpu
 
 
-ROOT = Path(__file__).resolve().parents[2]
 TIMING_FIELDS = ("reset_ms", "prefill_ms", "first_prediction_ms", "decode_ms",
                  "decode_ms_per_token", "request_ms")
 COMPARISON_FIELDS = tuple(field for field in METADATA_FIELDS if field not in COMPARISON_EXCLUDED_FIELDS)
@@ -241,20 +239,6 @@ def validate_comparison(baseline, candidate, baseline_weights, candidate_weights
         require(baseline_weights[key] == candidate_weights[key], f"Incomparable shared weights: {key}")
 
 
-def git_provenance(out):
-    """Record tracked changes against HEAD; status also lists untracked paths."""
-    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    status = subprocess.check_output([
-        "git", "status", "--porcelain=v1", "--untracked-files=all",
-    ], cwd=ROOT, text=True).splitlines()
-    patch = out / "source.patch"
-    patch.write_bytes(subprocess.check_output([
-        "git", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--binary", "HEAD", "--",
-    ], cwd=ROOT))
-    return dict(git_commit=commit, git_dirty=bool(status), git_status=status,
-                git_diff=dict(file=patch.name, sha256=sha256(patch)))
-
-
 def worker_environment(gpu, native=False):
     env = {k: v for k, v in os.environ.items()
            if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")}
@@ -278,7 +262,7 @@ def capture_environment(args, out, gpu, model_type, packages, manifest_name, val
     require(library is not None, "Native benchmark is missing libxinfer_attention_ops.so; rebuild the runtime")
     manifest = read_json(args.model_dir / manifest_name)
     environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(), affinity=sorted(os.sched_getaffinity(0)),
-                       **git_provenance(out), binary_sha256=sha256(binary),
+                       binary_sha256=sha256(binary),
                        workload_sha256=sha256(out / "workload.json"), model_manifest=manifest,
                        allow_busy=args.allow_busy, cpu_threads=1, gpu_uuid=gpu, packages={}, shared_weights={},
                        attention_library=dict(path=str(library), sha256=sha256(library)))

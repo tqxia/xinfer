@@ -25,8 +25,8 @@ state-policy boundaries, compatibility behavior and validation evidence.
 
 ## Shared Python benchmark and validation support
 
-Both Python benchmark entry points use `compiler/common/benchmark.py` for Git
-provenance, environment and package records, rotated process order, idle checks,
+Both Python benchmark entry points use `compiler/common/benchmark.py` for
+environment and package records, rotated process order, idle checks,
 worker execution, failure reports and summaries. Model modules provide prompts,
 checkpoint manifests, package checks and eager reset/step hooks. Qwen3 retains
 paired compiled-profile comparisons; Qwen3.5 attaches its matching end-to-end
@@ -38,11 +38,9 @@ retain the CLI's profile labels; each case stores prediction agreement as
 use `packages[profile][entry_point]` for metadata, size and checksum, and
 `shared_weights[profile]` for the archive identity checks.
 
-For benchmark source provenance, `environment.json` records `git_commit`,
-`git_status` and `git_dirty`. `source.patch` is a Git binary patch containing both
-staged and unstaged changes to tracked files relative to that commit. Untracked
-file contents are not captured. Package, binary and workload hashes remain in
-the environment record.
+Benchmark environment records include package, binary and workload checksums.
+Qwen3.5 runtime and end-to-end validation reports retain package and native
+binary checksums.
 
 Both summaries include reset, prefill, reset-plus-prefill (`first_prediction_ms`),
 decode, per-token decode and whole-request distributions. Memory records include
@@ -124,9 +122,9 @@ Labels name the measurements; they do not select another execution backend.
 continuation; it defaults to `artifacts/reference`.
 
 Results include per-request timings, latency distributions, predicted-token
-agreement, memory samples, GPU telemetry, Git provenance and package/binary
-hashes. Prediction agreement is diagnostic; use the correctness validator for
-numerical acceptance. GPU-idle checks run before and after each worker. Use
+agreement, memory samples, GPU telemetry and package/binary/workload hashes.
+Prediction agreement is diagnostic; use the correctness validator for numerical
+acceptance. GPU-idle checks run before and after each worker. Use
 `--allow-busy` only for harness checks; its timings are marked provisional.
 
 ## Validate runtime correctness and report HF differences

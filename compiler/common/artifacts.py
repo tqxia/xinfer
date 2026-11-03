@@ -7,17 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-NATIVE_RUNTIME_SOURCES = (
-    "CMakeLists.txt", "runtime/CMakeLists.txt", "runtime/qwen35/CMakeLists.txt",
-    "runtime/main.cpp", "runtime/benchmark.cpp", "runtime/validate.cpp",
-    "runtime/qwen3/runtime.h", "runtime/qwen35/runtime.h",
-    "runtime/common/spec.h", "runtime/common/runner.h", "runtime/common/model.h",
-    "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/benchmark.h",
-    "runtime/common/weights.h", "runtime/common/sha256.h",
-    "runtime/common/attention.cpp", "runtime/common/attention.h",
-)
-
-
 def canonical_json(value):
     """Encode metadata deterministically for hashing and archive records."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
