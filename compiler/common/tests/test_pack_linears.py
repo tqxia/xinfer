@@ -71,8 +71,12 @@ def linear_count(exported):
 def dynamic_export(model):
     length = torch.export.Dim("tokens", min=2, max=17)
     dtype = next(model.parameters()).dtype
-    return torch.export.export(model, (torch.randn(1, 4, 8, dtype=dtype), torch.randn(1, 4)),
-                               dynamic_shapes=({1: length}, None), strict=True)
+    return torch.export.export(
+        model,
+        (torch.randn(1, 4, 8, dtype=dtype), torch.randn(1, 4)),
+        dynamic_shapes=({1: length}, None),
+        strict=True,
+    )
 
 
 class PackingContract(unittest.TestCase):
@@ -97,8 +101,10 @@ class PackingContract(unittest.TestCase):
         call_spec, ranges = exported.call_spec, dict(exported.range_constraints)
         self.assertEqual(linear_count(exported), 3)
         report = pack_linears(exported)
-        self.assertEqual((report["linear_calls_before"], report["linear_calls_after"], report["saved_linears"]),
-                         (3, 1, 2))
+        self.assertEqual(
+            (report["linear_calls_before"], report["linear_calls_after"], report["saved_linears"]),
+            (3, 1, 2),
+        )
         self.assertEqual(len(report["groups"]), 1)
         json.dumps(report)  # The report is embedded in package provenance.
         self.assertEqual(linear_count(exported), 1)
@@ -107,7 +113,7 @@ class PackingContract(unittest.TestCase):
         self.assert_no_runtime_packing(exported)
         self.assertEqual(len(exported.state_dict), 1)
         self.assertFalse(set(exported.state_dict) & set(original))
-        packed, = exported.state_dict.values()
+        (packed,) = exported.state_dict.values()
         self.assertEqual(packed.shape, (10, 8))
         self.assertFalse(packed.requires_grad)
         for name, value in model.state_dict().items():
@@ -164,12 +170,22 @@ class PackingContract(unittest.TestCase):
         self.assert_no_runtime_packing(exported)
 
     def test_unsupported_or_shared_parameters_are_not_rewritten(self):
-        for kind in ("single", "bias", "trainable", "different_inputs", "mixed_dtype",
-                     "reused_weight", "shared_storage", "weight_consumer"):
+        for kind in (
+            "single",
+            "bias",
+            "trainable",
+            "different_inputs",
+            "mixed_dtype",
+            "reused_weight",
+            "shared_storage",
+            "weight_consumer",
+        ):
             with self.subTest(kind=kind):
                 model = ExcludedPair(kind).eval()
                 x = torch.randn(4, 8)
-                y = torch.randn(4, 8, dtype=torch.bfloat16 if kind == "mixed_dtype" else torch.float32)
+                y = torch.randn(
+                    4, 8, dtype=torch.bfloat16 if kind == "mixed_dtype" else torch.float32
+                )
                 exported = torch.export.export(model, (x, y), strict=True)
                 code, targets = exported.graph_module.code, tuple(exported.state_dict)
                 pack_linears(exported)

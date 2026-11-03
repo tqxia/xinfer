@@ -11,11 +11,10 @@ using Json = nlohmann::json;
 using xinfer::require;
 using Trace = std::vector<at::Tensor>;
 
-const std::vector<at::Tensor>& state(const qwen::Runtime& runtime) { return runtime.cache(); }
-const std::vector<at::Tensor>& state(const qwen35::Runtime& runtime) { return runtime.state(); }
+const std::vector<at::Tensor> &state(const qwen::Runtime &runtime) { return runtime.cache(); }
+const std::vector<at::Tensor> &state(const qwen35::Runtime &runtime) { return runtime.state(); }
 
-template <class Spec>
-void mutate(Spec& spec) {
+template <class Spec> void mutate(Spec &spec) {
   spec.max_prompt = spec.capacity = spec.vocab = 0;
   spec.eos = {-1};
   spec.state.clear();
@@ -23,28 +22,28 @@ void mutate(Spec& spec) {
   spec.metadata = Json();
 }
 
-template <class Runtime>
-Trace trace(Runtime& runtime) {
+template <class Runtime> Trace trace(Runtime &runtime) {
   runtime.reset();
   Trace result;
-  for (const auto& tokens : {std::vector<int64_t>{42, 13}, std::vector<int64_t>{42}}) {
+  for (const auto &tokens : {std::vector<int64_t>{42, 13}, std::vector<int64_t>{42}}) {
     result.push_back(runtime.step(tokens).cpu());
-    for (const auto& tensor : state(runtime)) result.push_back(tensor.cpu());
+    for (const auto &tensor : state(runtime))
+      result.push_back(tensor.cpu());
   }
   require(runtime.position() == 3, "Incorrect position after prefill and decode");
-  for (const auto& tensor : result)
+  for (const auto &tensor : result)
     require(at::isfinite(tensor).all().template item<bool>(), "Non-finite runtime output");
   return result;
 }
 
-void compare(const Trace& actual, const Trace& expected) {
+void compare(const Trace &actual, const Trace &expected) {
   require(actual.size() == expected.size(), "Runtime trace length differs");
   for (size_t i = 0; i < actual.size(); ++i)
     require(at::equal(actual[i], expected[i]), "Spec ownership changed logits or state");
 }
 
 template <class Spec, class Runtime>
-void check_ownership(const std::filesystem::path& packages, const Spec& validated, Json& report) {
+void check_ownership(const std::filesystem::path &packages, const Spec &validated, Json &report) {
   Trace expected;
   std::vector<int64_t> expected_ids;
   {
@@ -81,7 +80,7 @@ void check_ownership(const std::filesystem::path& packages, const Spec& validate
   report["generated_ids"] = expected_ids;
 }
 
-void check_gpu_preflight(const std::filesystem::path& packages, const qwen::Spec& validated) {
+void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec &validated) {
   auto wrong_gpu = validated;
   require(wrong_gpu.compute_capability.size() == 2, "Invalid test compute capability");
   wrong_gpu.compute_capability[0] = 99;
@@ -89,15 +88,16 @@ void check_gpu_preflight(const std::filesystem::path& packages, const qwen::Spec
   // proving that rejection occurs before weight construction/package loading.
   wrong_gpu.shared_weights = Json();
   bool rejected = false;
-  try { qwen::Runtime runtime(packages, wrong_gpu); }
-  catch (const std::runtime_error& error) {
+  try {
+    qwen::Runtime runtime(packages, wrong_gpu);
+  } catch (const std::runtime_error &error) {
     rejected = std::string(error.what()) == "GPU architecture mismatch";
   }
   require(rejected, "GPU architecture was not checked before loading weights");
 }
-}  // namespace
+} // namespace
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   try {
     require(argc == 4, "Usage: qwen_runtime_contract qwen3|qwen35 PACKAGE_DIR OUTPUT_JSON");
     c10::InferenceMode inference;
@@ -105,8 +105,11 @@ int main(int argc, char** argv) {
     at::globalContext().setAllowTF32CuBLAS(false);
     at::globalContext().setAllowTF32CuDNN(false);
     const std::string model(argv[1]);
-    Json report = {{"model", model}, {"packages", std::filesystem::absolute(argv[2]).string()},
-                   {"torch", TORCH_VERSION}, {"cases", Json::array()}, {"passed", false}};
+    Json report = {{"model", model},
+                   {"packages", std::filesystem::absolute(argv[2]).string()},
+                   {"torch", TORCH_VERSION},
+                   {"cases", Json::array()},
+                   {"passed", false}};
     if (model == "qwen3") {
       const qwen::Spec spec(argv[2]);
       check_gpu_preflight(argv[2], spec);
@@ -126,7 +129,7 @@ int main(int argc, char** argv) {
     require(bool(file), "Failed to write runtime contract report");
     std::cout << report.dump(2) << '\n';
     return 0;
-  } catch (const std::exception& error) {
+  } catch (const std::exception &error) {
     std::cerr << error.what() << '\n';
     return 1;
   }

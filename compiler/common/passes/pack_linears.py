@@ -32,10 +32,18 @@ def pack_linears(exported):
     parameters = {s.arg.name: s for s in signature.input_specs if s.kind == InputKind.PARAMETER}
     storage_counts = Counter(_storage_key(t) for t in exported.state_dict.values())
     target_counts = Counter(s.target for s in parameters.values())
-    linears = [n for n in graph.nodes if n.op == "call_function" and n.target == torch.ops.aten.linear.default]
+    linears = [
+        n
+        for n in graph.nodes
+        if n.op == "call_function" and n.target == torch.ops.aten.linear.default
+    ]
     candidates = defaultdict(list)
     for node in linears:
-        if len(node.args) not in (2, 3) or node.kwargs or (len(node.args) == 3 and node.args[2] is not None):
+        if (
+            len(node.args) not in (2, 3)
+            or node.kwargs
+            or (len(node.args) == 3 and node.args[2] is not None)
+        ):
             continue
         hidden, weight = node.args[:2]
         if not isinstance(hidden, torch.fx.Node) or not isinstance(weight, torch.fx.Node):
@@ -45,8 +53,15 @@ def pack_linears(exported):
             continue
         value = exported.state_dict[spec.target]
         key = _storage_key(value)
-        if (key is None or storage_counts[key] != 1 or value.requires_grad or value.ndim != 2
-                or min(value.shape) <= 0 or "val" not in hidden.meta or "val" not in weight.meta):
+        if (
+            key is None
+            or storage_counts[key] != 1
+            or value.requires_grad
+            or value.ndim != 2
+            or min(value.shape) <= 0
+            or "val" not in hidden.meta
+            or "val" not in weight.meta
+        ):
             continue
         candidates[hidden, value.shape[1], value.dtype, value.device].append(node)
 
@@ -80,7 +95,9 @@ def pack_linears(exported):
             linear = graph.call_function(torch.ops.aten.linear.default, (hidden, weights[0]))
             linear.meta = dict(nodes[0].meta, val=fake_output)
             linear.meta.pop("tensor_meta", None)
-            split = graph.call_function(torch.ops.aten.split_with_sizes.default, (linear, widths, -1))
+            split = graph.call_function(
+                torch.ops.aten.split_with_sizes.default, (linear, widths, -1)
+            )
             split.meta["val"] = fake_parts
         for index, node in enumerate(nodes):
             with graph.inserting_before(node):
@@ -98,13 +115,28 @@ def pack_linears(exported):
             assert not weight.users
             removed_inputs.add(weight.name)
             graph.erase_node(weight)
-        groups.append(dict(packed_parameter=name, source_parameters=sources,
-                           output_widths=widths, input=hidden.name, outputs=[node.name for node in nodes]))
+        groups.append(
+            dict(
+                packed_parameter=name,
+                source_parameters=sources,
+                output_widths=widths,
+                input=hidden.name,
+                outputs=[node.name for node in nodes],
+            )
+        )
 
-    signature.input_specs[:] = [s for s in signature.input_specs if s.arg.name not in removed_inputs]
+    signature.input_specs[:] = [
+        s for s in signature.input_specs if s.arg.name not in removed_inputs
+    ]
     graph.lint()
     exported.graph_module.recompile()
     exported.validate()
-    after = sum(n.op == "call_function" and n.target == torch.ops.aten.linear.default for n in graph.nodes)
-    return dict(groups=groups, linear_calls_before=len(linears), linear_calls_after=after,
-                saved_linears=len(linears) - after)
+    after = sum(
+        n.op == "call_function" and n.target == torch.ops.aten.linear.default for n in graph.nodes
+    )
+    return dict(
+        groups=groups,
+        linear_calls_before=len(linears),
+        linear_calls_after=after,
+        saved_linears=len(linears) - after,
+    )

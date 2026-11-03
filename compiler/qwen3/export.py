@@ -21,12 +21,14 @@ def main():
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
     args = parser.parse_args()
-    if args.output.is_symlink() or (args.output.exists() and
-            (not args.output.is_dir() or any(args.output.iterdir()))):
+    if args.output.is_symlink() or (
+        args.output.exists() and (not args.output.is_dir() or any(args.output.iterdir()))
+    ):
         parser.error(f"Output must be a new or empty directory: {args.output}")
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     from torch.fx.experimental import _config as symbolic_config
+
     if symbolic_config.backed_size_oblivious:
         raise ValueError("Flash must export with backed_size_oblivious disabled")
     model = load_model(args.model_dir)
@@ -52,8 +54,12 @@ def main():
             seq = torch.export.Dim("tokens", min=2, max=MAX_PROMPT)
             token_shape = {1: seq}
         extent = torch.export.Dim("kv_extent", min=2, max=CACHE_LENGTH + 1)
-        shapes = (token_shape, {} if kind == "decode" else {0: seq},
-                  tuple({} for _ in cache), {0: extent})
+        shapes = (
+            token_shape,
+            {} if kind == "decode" else {0: seq},
+            tuple({} for _ in cache),
+            {0: extent},
+        )
         start = time.perf_counter()
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
         exported.validate()
@@ -68,37 +74,74 @@ def main():
         print(f"Exported {kind}; compiling...", flush=True)
 
         def metadata_factory(_compiled_path):
-            state = [state_spec(layer, name, list(cache[0].shape), "bfloat16", "inplace")
-                     for layer in range(model.config.num_hidden_layers) for name in ("key", "value")]
+            state = [
+                state_spec(layer, name, list(cache[0].shape), "bfloat16", "inplace")
+                for layer in range(model.config.num_hidden_layers)
+                for name in ("key", "value")
+            ]
             return make_metadata(
-                model_type="qwen3", entry_point=kind,
+                model_type="qwen3",
+                entry_point=kind,
                 token_range=[1, 1] if kind == "decode" else [2, MAX_PROMPT],
-                checkpoint=checkpoint, torch_version=torch.__version__, torch_cuda_version=torch.version.cuda,
+                checkpoint=checkpoint,
+                torch_version=torch.__version__,
+                torch_cuda_version=torch.version.cuda,
                 cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                 cuda_compute_capability=list(torch.cuda.get_device_capability()),
-                cache_length=CACHE_LENGTH, vocab_size=model.config.vocab_size,
-                eos_token_ids=model.generation_config.eos_token_id, state=state,
+                cache_length=CACHE_LENGTH,
+                vocab_size=model.config.vocab_size,
+                eos_token_ids=model.generation_config.eos_token_id,
+                state=state,
                 triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-                model_specific=dict(layers=model.config.num_hidden_layers,
-                                    kv_heads=model.config.num_key_value_heads, head_dim=model.config.head_dim,
-                                    cache_shape=list(cache[0].shape), cache_stride=list(cache[0].stride()),
-                                    cache_padding=0, flash_implementation="adapter", model_adapter=adapter_report),
+                model_specific=dict(
+                    layers=model.config.num_hidden_layers,
+                    kv_heads=model.config.num_key_value_heads,
+                    head_dim=model.config.head_dim,
+                    cache_shape=list(cache[0].shape),
+                    cache_stride=list(cache[0].stride()),
+                    cache_padding=0,
+                    flash_implementation="adapter",
+                    model_adapter=adapter_report,
+                ),
                 provenance=dict(
                     strict_export=False,
-                    versions={name: importlib.metadata.version(name) for name in
-                              ("transformers", "triton", "safetensors", "tokenizers", "huggingface-hub")},
-                    source_sha256={name: sha256(ROOT / name) for name in (
-                        "compiler/qwen3/export.py", "compiler/qwen3/model.py", "compiler/qwen3/adapters/qwen3_flash.py",
-                        "compiler/common/metadata.py", "compiler/common/attention.py", "compiler/common/weights.py")}),
-                diagnostics=dict(graph_nodes=len(list(exported.graph.nodes)),
-                                 export_and_compile_seconds=time.perf_counter() - start))
+                    versions={
+                        name: importlib.metadata.version(name)
+                        for name in (
+                            "transformers",
+                            "triton",
+                            "safetensors",
+                            "tokenizers",
+                            "huggingface-hub",
+                        )
+                    },
+                    source_sha256={
+                        name: sha256(ROOT / name)
+                        for name in (
+                            "compiler/qwen3/export.py",
+                            "compiler/qwen3/model.py",
+                            "compiler/qwen3/adapters/qwen3_flash.py",
+                            "compiler/common/metadata.py",
+                            "compiler/common/attention.py",
+                            "compiler/common/weights.py",
+                        )
+                    },
+                ),
+                diagnostics=dict(
+                    graph_nodes=len(list(exported.graph.nodes)),
+                    export_and_compile_seconds=time.perf_counter() - start,
+                ),
+            )
 
         return exported, metadata_factory
 
     with torch.inference_mode():
         compile_shared(
-            args.output, export_entry, identity=dict(model="qwen3-0.6b", revision=revision),
-            inductor_configs=options)
+            args.output,
+            export_entry,
+            identity=dict(model="qwen3-0.6b", revision=revision),
+            inductor_configs=options,
+        )
     print(f"Saved prefill/decode bundle to {args.output}", flush=True)
 
 

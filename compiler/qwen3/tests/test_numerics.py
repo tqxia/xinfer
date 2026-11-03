@@ -12,9 +12,9 @@ class NumericalPolicyTest(unittest.TestCase):
         hf = torch.tensor([[1.0, 0.99]])
         compiled = torch.tensor([[0.99, 1.0]])
         compare(compiled, hf)
-        difference, = token_differences(compiled, hf)
-        self.assertEqual((difference['reference_id'], difference['actual_id']), (0, 1))
-        self.assertGreater(difference['reference_selected_token_gap'], 0)
+        (difference,) = token_differences(compiled, hf)
+        self.assertEqual((difference["reference_id"], difference["actual_id"]), (0, 1))
+        self.assertGreater(difference["reference_selected_token_gap"], 0)
 
     def test_large_logit_drift_still_fails_with_matching_top1(self):
         hf = torch.tensor([[1.0, 0.5]])
@@ -25,12 +25,12 @@ class NumericalPolicyTest(unittest.TestCase):
         hf = torch.ones(1, 128)
         compiled = hf.clone()
         compiled[0, 0] += 0.06
-        self.assertLess(error_metrics(compiled, hf)['relative_l2'], 0.05)
+        self.assertLess(error_metrics(compiled, hf)["relative_l2"], 0.05)
         with self.assertRaises(AssertionError):
             compare(compiled, hf)
 
     def test_nonfinite_values_cannot_be_reported_as_accepted_drift(self):
-        for value in (float('nan'), float('inf'), -float('inf')):
+        for value in (float("nan"), float("inf"), -float("inf")):
             with self.subTest(value=value), self.assertRaises(AssertionError):
                 error_metrics(torch.tensor([[value, 1.0]]), torch.ones(1, 2))
 
@@ -39,5 +39,5 @@ class NumericalPolicyTest(unittest.TestCase):
             compare(torch.tensor([[0.0, 1.0]]), torch.tensor([[-0.0, 1.0]]), exact=True)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

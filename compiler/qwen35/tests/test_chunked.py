@@ -13,8 +13,11 @@ class TransformTileContract(unittest.TestCase):
         q = torch.empty(1, 2, 2, 128)
         other = torch.empty(0)
         for tile in (0, -16, 8, 24, 48, 256, True, 32.0):
-            with self.subTest(tile=tile), patch.object(chunked, "TRANSFORM_TILE", tile), \
-                    patch.object(chunked.torch, "empty") as allocate:
+            with (
+                self.subTest(tile=tile),
+                patch.object(chunked, "TRANSFORM_TILE", tile),
+                patch.object(chunked.torch, "empty") as allocate,
+            ):
                 with self.assertRaisesRegex(ValueError, "TRANSFORM_TILE must"):
                     chunked.launch_chunked(q, q, q, other, other, other, other, other)
                 allocate.assert_not_called()
@@ -27,7 +30,9 @@ class TransformTiles(unittest.TestCase):
         c, heads, dim = chunked.CHUNK_SIZE, 2, 128
         for tokens in (c, c + 1):
             chunks = (tokens + c - 1) // c
-            key = torch.arange(tokens * heads * dim, device="cuda", dtype=torch.float32).reshape(1, tokens, heads, dim)
+            key = torch.arange(tokens * heads * dim, device="cuda", dtype=torch.float32).reshape(
+                1, tokens, heads, dim
+            )
             value = key + 17
             beta = torch.ones(1, tokens, heads, device="cuda")
             inverse = torch.eye(c, device="cuda").expand(chunks, heads, c, c).contiguous()
@@ -42,8 +47,20 @@ class TransformTiles(unittest.TestCase):
                     shape = (chunks, heads, c, dim)
                     u, w = (torch.full(shape, float("nan"), device="cuda") for _ in range(2))
                     chunked._transforms[(chunks, heads, dim // tile)](
-                        key, value, beta, inverse, prefix, u, w, tokens,
-                        heads, dim, c, tile, **chunked.OPTIONS)
+                        key,
+                        value,
+                        beta,
+                        inverse,
+                        prefix,
+                        u,
+                        w,
+                        tokens,
+                        heads,
+                        dim,
+                        c,
+                        tile,
+                        **chunked.OPTIONS,
+                    )
                     torch.testing.assert_close(u, expected[0], rtol=0, atol=0)
                     torch.testing.assert_close(w, expected[1], rtol=0, atol=0)
 

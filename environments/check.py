@@ -41,8 +41,12 @@ def native_tool(name):
     result = dict(path=path)
     if path:
         try:
-            process = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=10)
-            result.update(version=(process.stdout + process.stderr).strip(), exit_code=process.returncode)
+            process = subprocess.run(
+                [path, "--version"], capture_output=True, text=True, timeout=10
+            )
+            result.update(
+                version=(process.stdout + process.stderr).strip(), exit_code=process.returncode
+            )
         except (OSError, subprocess.TimeoutExpired) as error:
             result["error"] = str(error)
     return result
@@ -58,9 +62,11 @@ def configured_build(directory):
         if not line.startswith(("#", "//")) and ":" in line and "=" in line:
             key, value = line.split("=", 1)
             values[key.split(":", 1)[0]] = value
-    result.update(torch_dir=values.get("Torch_DIR"),
-                  cxx_compiler=values.get("CMAKE_CXX_COMPILER"),
-                  cuda_compiler=values.get("CMAKE_CUDA_COMPILER"))
+    result.update(
+        torch_dir=values.get("Torch_DIR"),
+        cxx_compiler=values.get("CMAKE_CXX_COMPILER"),
+        cuda_compiler=values.get("CMAKE_CUDA_COMPILER"),
+    )
     return result
 
 
@@ -68,7 +74,9 @@ def collect(model=None, build=None):
     actual = dict(
         python=dict(version=platform.python_version(), executable=sys.executable),
         platform=dict(system=platform.system(), machine=platform.machine()),
-        packages={name: package_version(name) for name in model_requirements(model)} if model else {},
+        packages={name: package_version(name) for name in model_requirements(model)}
+        if model
+        else {},
         triton=package_version("triton"),
         native_tools={name: native_tool(name) for name in ("c++", "nvcc")},
     )
@@ -83,15 +91,20 @@ def collect(model=None, build=None):
 
         torch_dir = Path(torch.__file__).resolve().parent / "share/cmake/Torch"
         actual["torch"] = dict(
-            runtime_version=torch.__version__, distribution_version=package_version("torch"),
-            git_version=torch.version.git_version, cuda=torch.version.cuda,
+            runtime_version=torch.__version__,
+            distribution_version=package_version("torch"),
+            git_version=torch.version.git_version,
+            cuda=torch.version.cuda,
             cxx11_abi=bool(torch._C._GLIBCXX_USE_CXX11_ABI),
-            path=str(Path(torch.__file__).resolve()), torch_dir=str(torch_dir),
+            path=str(Path(torch.__file__).resolve()),
+            torch_dir=str(torch_dir),
             cmake_prefix_path=torch.utils.cmake_prefix_path,
         )
         if torch.cuda.is_available():
-            actual["gpu"] = dict(name=torch.cuda.get_device_name(0),
-                                 capability=list(torch.cuda.get_device_capability(0)))
+            actual["gpu"] = dict(
+                name=torch.cuda.get_device_name(0),
+                capability=list(torch.cuda.get_device_capability(0)),
+            )
         else:
             actual["gpu"] = dict(error="CUDA device 0 is unavailable")
     except Exception as error:
@@ -113,7 +126,9 @@ def validate(actual, profile, requirements):
             issues.append(f"{label}: expected {expected!r}, found {observed!r}")
 
     expect("Operating system", actual["platform"]["system"], profile["system"])
-    expect("CPU architecture", normalized_machine(actual["platform"]["machine"]), profile["machine"])
+    expect(
+        "CPU architecture", normalized_machine(actual["platform"]["machine"]), profile["machine"]
+    )
     expect("Python", ".".join(actual["python"]["version"].split(".")[:2]), profile["python"])
     expect("Triton", actual["triton"], profile["triton"])
     for name, version in requirements.items():
@@ -136,10 +151,15 @@ def validate(actual, profile, requirements):
         if "error" in build:
             issues.append(build["error"] + ": " + build["directory"])
         elif not build["torch_dir"]:
-            issues.append("Build has no Torch_DIR; configure with this Python's torch.utils.cmake_prefix_path")
+            issues.append(
+                "Build has no Torch_DIR; configure with this Python's torch.utils.cmake_prefix_path"
+            )
         elif "error" not in torch:
-            expect("Build Torch_DIR", str(Path(build["torch_dir"]).resolve()),
-                   str(Path(torch["torch_dir"]).resolve()))
+            expect(
+                "Build Torch_DIR",
+                str(Path(build["torch_dir"]).resolve()),
+                str(Path(torch["torch_dir"]).resolve()),
+            )
     return issues
 
 
@@ -147,15 +167,26 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("l20", "gb10"), required=True)
     parser.add_argument("--model", choices=("qwen3", "qwen35"), required=True)
-    parser.add_argument("--build", type=Path, help="Also check this configured CMake build's Torch_DIR")
-    parser.add_argument("--output", type=Path, help="Save the same JSON printed to stdout, including failures")
+    parser.add_argument(
+        "--build", type=Path, help="Also check this configured CMake build's Torch_DIR"
+    )
+    parser.add_argument(
+        "--output", type=Path, help="Save the same JSON printed to stdout, including failures"
+    )
     args = parser.parse_args(argv)
     profile = json.loads((ROOT / "environments" / args.target / "profile.json").read_text())
     requirements = model_requirements(args.model)
     actual = collect(args.model, args.build)
     issues = validate(actual, profile, requirements)
-    report = dict(target=args.target, model=args.model, expected=profile,
-                  model_requirements=requirements, actual=actual, issues=issues, passed=not issues)
+    report = dict(
+        target=args.target,
+        model=args.model,
+        expected=profile,
+        model_requirements=requirements,
+        actual=actual,
+        issues=issues,
+        passed=not issues,
+    )
     text = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -11,14 +11,23 @@ def row_errors(actual, expected):
     assert actual.shape == expected.shape
     assert torch.isfinite(actual).all() and torch.isfinite(expected).all()
     delta = actual - expected
-    return dict(max_abs=delta.abs().max().item(),
-                relative_l2=(delta.norm(dim=-1) / expected.norm(dim=-1).clamp_min(1e-12)).max().item(),
-                peak_relative=(delta.abs().amax(dim=-1) / expected.abs().amax(dim=-1).clamp_min(1e-12)).max().item())
+    return dict(
+        max_abs=delta.abs().max().item(),
+        relative_l2=(delta.norm(dim=-1) / expected.norm(dim=-1).clamp_min(1e-12)).max().item(),
+        peak_relative=(delta.abs().amax(dim=-1) / expected.abs().amax(dim=-1).clamp_min(1e-12))
+        .max()
+        .item(),
+    )
 
 
 def bits_equal(actual, expected):
-    return actual.shape == expected.shape and actual.dtype == expected.dtype and torch.equal(
-        actual.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8))
+    return (
+        actual.shape == expected.shape
+        and actual.dtype == expected.dtype
+        and torch.equal(
+            actual.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8)
+        )
+    )
 
 
 def tensor_metrics(actual, expected, *, rows=None, logits=False):
@@ -27,8 +36,10 @@ def tensor_metrics(actual, expected, *, rows=None, logits=False):
     error = row_errors(*(rows if rows is not None else (actual, expected)))
     error["bitwise_equal"] = bits_equal(actual, expected)
     if logits:
-        error.update(top1_agreement=(actual.argmax(-1) == expected.argmax(-1)).sum().item(),
-                     rows=actual.shape[0])
+        error.update(
+            top1_agreement=(actual.argmax(-1) == expected.argmax(-1)).sum().item(),
+            rows=actual.shape[0],
+        )
     return error
 
 
@@ -48,8 +59,9 @@ def record_failure(failures, metrics, *, limit=DEFAULT_RELATIVE_LIMIT, required=
     return failed
 
 
-def compare_tensors(actual, expected, *, limit=DEFAULT_RELATIVE_LIMIT, exact=False,
-                    rows=None, logits=False):
+def compare_tensors(
+    actual, expected, *, limit=DEFAULT_RELATIVE_LIMIT, exact=False, rows=None, logits=False
+):
     metrics = tensor_metrics(actual, expected, rows=rows, logits=logits)
     assert metrics["bitwise_equal"] if exact else within_limits(metrics, limit), metrics
     return metrics
@@ -59,12 +71,19 @@ def token_differences(actual, expected):
     """Explain top-1 drift for logits produced with identical input tokens."""
     row_errors(actual, expected)
     assert actual.ndim == 2 and actual.shape[-1] >= 2
-    return [dict(row=i, reference_id=expected[i].argmax().item(),
-                 actual_id=actual[i].argmax().item(),
-                 reference_top2_margin=expected[i].float().topk(2).values.diff().abs().item(),
-                 reference_selected_token_gap=(expected[i].float().max() - expected[i, actual[i].argmax()].float()).item(),
-                 actual_top2_margin=actual[i].float().topk(2).values.diff().abs().item())
-            for i in torch.where(actual.argmax(-1) != expected.argmax(-1))[0].tolist()]
+    return [
+        dict(
+            row=i,
+            reference_id=expected[i].argmax().item(),
+            actual_id=actual[i].argmax().item(),
+            reference_top2_margin=expected[i].float().topk(2).values.diff().abs().item(),
+            reference_selected_token_gap=(
+                expected[i].float().max() - expected[i, actual[i].argmax()].float()
+            ).item(),
+            actual_top2_margin=actual[i].float().topk(2).values.diff().abs().item(),
+        )
+        for i in torch.where(actual.argmax(-1) != expected.argmax(-1))[0].tolist()
+    ]
 
 
 def cpu_copy(tensors):

@@ -8,9 +8,19 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 from transformers import Qwen3_5ForCausalLM
-from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextConfig, Qwen3_5TextRotaryEmbedding
+from transformers.models.qwen3_5.modeling_qwen3_5 import (
+    Qwen3_5TextConfig,
+    Qwen3_5TextRotaryEmbedding,
+)
 
-from compiler.qwen35.config import CACHE_LENGTH, MODEL_ID, REVISIONS, TEXT_DIR, configure, deltanet_state_shapes
+from compiler.qwen35.config import (
+    CACHE_LENGTH,
+    MODEL_ID,
+    REVISIONS,
+    TEXT_DIR,
+    configure,
+    deltanet_state_shapes,
+)
 from compiler.common.artifacts import sha256
 from compiler.common.metadata import state_spec
 
@@ -45,8 +55,13 @@ def prepare(directory):
     files = ["config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja"]
     for name in files:
         (directory / name).write_bytes(download(name).read_bytes())
-    manifest = dict(model=MODEL_ID, revision=revision, text_parameters=len(weights), source_shards=shards,
-                    files={name: sha256(directory / name) for name in files + ["text.safetensors"]})
+    manifest = dict(
+        model=MODEL_ID,
+        revision=revision,
+        text_parameters=len(weights),
+        source_shards=shards,
+        files={name: sha256(directory / name) for name in files + ["text.safetensors"]},
+    )
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2), flush=True)
 
@@ -62,7 +77,9 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
         raise ValueError("This probe expects tied embeddings and default RoPE")
     with torch.device("meta"):
         model = Qwen3_5ForCausalLM(config)
-    weights = {name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()}
+    weights = {
+        name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()
+    }
     weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
     model.load_state_dict(weights, strict=True, assign=True)
     model.lm_head.weight = model.model.embed_tokens.weight
@@ -82,14 +99,20 @@ def state_specs(config):
             tensors = (("key", kv_shape, "bfloat16"), ("value", kv_shape, "bfloat16"))
         else:
             raise ValueError(f"Unsupported layer type: {kind}")
-        specs.extend(state_spec(layer, name, shape, dtype,
-                                "inplace" if kind == "full_attention" else "replace")
-                     for name, shape, dtype in tensors)
+        specs.extend(
+            state_spec(
+                layer, name, shape, dtype, "inplace" if kind == "full_attention" else "replace"
+            )
+            for name, shape, dtype in tensors
+        )
     return specs
 
 
 def zero_state(config):
-    return [torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"])) for s in state_specs(config)]
+    return [
+        torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"]))
+        for s in state_specs(config)
+    ]
 
 
 class LayerState:
@@ -112,7 +135,7 @@ class TextCache:
         self.kinds = kinds
         self.layers = []
         for i, kind in enumerate(kinds):
-            a, b = state[2 * i:2 * i + 2]
+            a, b = state[2 * i : 2 * i + 2]
             self.layers.append(LayerState(kind, a, b))
 
     def has_previous_state(self, layer_idx, state_idx=0):
@@ -137,8 +160,11 @@ class TextCache:
     def tensors(self):
         result = []
         for kind, layer in zip(self.kinds, self.layers):
-            result.extend((layer.conv_states[0], layer.recurrent_states[0]) if kind == "linear_attention"
-                          else layer.kv)
+            result.extend(
+                (layer.conv_states[0], layer.recurrent_states[0])
+                if kind == "linear_attention"
+                else layer.kv
+            )
         return result
 
 
@@ -146,6 +172,7 @@ class TextStep(torch.nn.Module):
     def __init__(self, model):
         super().__init__()
         from compiler.qwen35.adapters.attention import install_attention
+
         install_attention(model)
         self.original = model
 
@@ -156,9 +183,14 @@ class TextStep(torch.nn.Module):
         positions = cache_position.view(1, 1, -1).expand(3, 1, -1)
         rotary = model.rotary_emb(hidden, positions)
         for kind, layer in zip(model.config.layer_types, model.layers):
-            hidden = layer(hidden, position_embeddings=rotary,
-                           attention_mask=None,
-                           position_ids=cache_position[None, :], past_key_values=cache, use_cache=True)
+            hidden = layer(
+                hidden,
+                position_embeddings=rotary,
+                attention_mask=None,
+                position_ids=cache_position[None, :],
+                past_key_values=cache,
+                use_cache=True,
+            )
         hidden = model.norm(hidden)
         logits = self.original.lm_head(hidden[:, -1:, :])[:, 0, :]
         return (logits, *cache.tensors())

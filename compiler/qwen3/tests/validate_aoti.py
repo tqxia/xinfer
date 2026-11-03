@@ -15,7 +15,14 @@ from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_e
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.common.tests.validation import record_failure
 from compiler.qwen3.tests.numerics import (
-    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, model_passed, policy, reference_limits_passed, token_differences,
+    MAX_RELATIVE_ERROR,
+    compare,
+    error_metrics,
+    ids_from,
+    model_passed,
+    policy,
+    reference_limits_passed,
+    token_differences,
 )
 
 
@@ -89,12 +96,24 @@ def main():
         return wrapper(ids, positions, kv)
 
     def hf_static(ids, positions, cache, extent):
-        return model(input_ids=ids, cache_position=positions, past_key_values=cache,
-                     use_cache=True, logits_to_keep=1).logits[:, -1]
+        return model(
+            input_ids=ids,
+            cache_position=positions,
+            past_key_values=cache,
+            use_cache=True,
+            logits_to_keep=1,
+        ).logits[:, -1]
 
-    report = dict(fixtures=[], boundaries=[], context_end=[], numerical_policy=policy(),
-                  failures=[], hf_cache_differences=[], hf_token_differences=[],
-                  hf_greedy_differences=[])
+    report = dict(
+        fixtures=[],
+        boundaries=[],
+        context_end=[],
+        numerical_policy=policy(),
+        failures=[],
+        hf_cache_differences=[],
+        hf_token_differences=[],
+        hf_greedy_differences=[],
+    )
     report["numerical_policy"]["native_python_aoti"] = "checked_by_validate_cpp"
     hf_parity = True
 
@@ -114,10 +133,15 @@ def main():
         for index, (a, b) in enumerate(zip(actual, expected)):
             error = error_metrics(a.flatten(1).float(), b.flatten(1).float())
             error.pop("top1_agreement")
-            error.update(layer=index // 2, kind="K" if index % 2 == 0 else "V",
-                         bitwise_equal=bits_equal(a, b))
+            error.update(
+                layer=index // 2,
+                kind="K" if index % 2 == 0 else "V",
+                bitwise_equal=bits_equal(a, b),
+            )
             hf_parity &= error["bitwise_equal"]
-            record_failure(report["hf_cache_differences"], error, limit=MAX_RELATIVE_ERROR, case=name)
+            record_failure(
+                report["hf_cache_differences"], error, limit=MAX_RELATIVE_ERROR, case=name
+            )
             metrics.append(error)
         return metrics
 
@@ -140,13 +164,23 @@ def main():
         metrics = compare_logits(actual, eager, case.name)
         assert pointers == [tensor.data_ptr() for tensor in aoti_kv]
         cache_metrics = compare_cache(aoti_kv, eager_kv, case.name)
-        generated = generate(compiled, prompt, aoti_kv, meta["eos_token_ids"], meta["max_new_tokens"])
+        generated = generate(
+            compiled, prompt, aoti_kv, meta["eos_token_ids"], meta["max_new_tokens"]
+        )
         compiled_sequences[case.name] = generated
         if generated != continuation:
-            report["hf_greedy_differences"].append(dict(case=case.name, hf_ids=continuation, compiled_ids=generated))
-        report["fixtures"].append(dict(name=case.name, aoti_vs_static=metrics,
-                                       cache_metrics=cache_metrics, hf_static_exact=True,
-                                       compiled_generated_ids=generated))
+            report["hf_greedy_differences"].append(
+                dict(case=case.name, hf_ids=continuation, compiled_ids=generated)
+            )
+        report["fixtures"].append(
+            dict(
+                name=case.name,
+                aoti_vs_static=metrics,
+                cache_metrics=cache_metrics,
+                hf_static_exact=True,
+                compiled_generated_ids=generated,
+            )
+        )
         precision_cases.append((prompt, continuation, eager, actual))
         print(dict(name=case.name, aoti_vs_static=metrics), flush=True)
 
@@ -168,22 +202,36 @@ def main():
         expected = call(eager_wrapper, [token], length, expected_kv)
         actual = check_write(compiled, [token], length, reused)
         handoff = compare_logits(actual, expected, f"length_{length}_decode")
-        report["boundaries"].append(dict(prompt_length=length, prefill=metrics, decode=handoff,
-                                         address_and_write_region_pass=True, future_mask_pass=True))
+        report["boundaries"].append(
+            dict(
+                prompt_length=length,
+                prefill=metrics,
+                decode=handoff,
+                address_and_write_region_pass=True,
+                future_mask_pass=True,
+            )
+        )
 
     full = (seed * (CACHE_LENGTH // len(seed) + 1))[:CACHE_LENGTH]
     eager_kv = allocate_cache(model.config)
     for tensor in reused:
         tensor.zero_()
     for start, count in ((0, 512), (512, 510), (1022, 1), (1023, 1)):
-        expected = call(eager_wrapper, full[start:start + count], start, eager_kv)
-        actual = check_write(compiled, full[start:start + count], start, reused)
-        report["context_end"].append(dict(position=start, tokens=count,
-                                           **compare_logits(actual, expected, f"context_{start}")))
+        expected = call(eager_wrapper, full[start : start + count], start, eager_kv)
+        actual = check_write(compiled, full[start : start + count], start, reused)
+        report["context_end"].append(
+            dict(
+                position=start, tokens=count, **compare_logits(actual, expected, f"context_{start}")
+            )
+        )
     report["full_cache_aoti_vs_hf"] = compare_cache(reused, eager_kv, "context_end")
     capital_meta = json.loads((args.reference / "capital" / "metadata.json").read_text())
-    assert generate(compiled, seed, reused, capital_meta["eos_token_ids"],
-                    capital_meta["max_new_tokens"]) == compiled_sequences["capital"]
+    assert (
+        generate(
+            compiled, seed, reused, capital_meta["eos_token_ids"], capital_meta["max_new_tokens"]
+        )
+        == compiled_sequences["capital"]
+    )
     report["reset_after_full_context_pass"] = True
     model.float()
     for fixture, (prompt, continuation, eager, actual) in zip(report["fixtures"], precision_cases):
@@ -196,9 +244,14 @@ def main():
     report["hf_reference_limits_passed"] = reference_limits_passed(report)
     (args.packages / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
     if not report["passed"]:
-        raise SystemExit(f"FAIL: {len(report['failures'])} logit comparisons exceed {MAX_RELATIVE_ERROR:.0%}; "
-                         f"see {args.packages / 'validation.json'}")
-    print("PASS: bounded logits, Flash handoff, cache state/reuse and FP32 controls; HF drift recorded", flush=True)
+        raise SystemExit(
+            f"FAIL: {len(report['failures'])} logit comparisons exceed {MAX_RELATIVE_ERROR:.0%}; "
+            f"see {args.packages / 'validation.json'}"
+        )
+    print(
+        "PASS: bounded logits, Flash handoff, cache state/reuse and FP32 controls; HF drift recorded",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

@@ -21,8 +21,9 @@ class HFRuntime:
         self.position = 0
         if poison:
             config = self.model.config
-            sample = torch.zeros((1, config.num_key_value_heads, 1, config.head_dim),
-                                 device="cuda", dtype=self.dtype)
+            sample = torch.zeros(
+                (1, config.num_key_value_heads, 1, config.head_dim), device="cuda", dtype=self.dtype
+            )
             for kind, layer in zip(config.layer_types, self.cache.layers):
                 if kind == "full_attention":
                     layer.lazy_initialization(sample, sample)
@@ -33,8 +34,11 @@ class HFRuntime:
     def state(self):
         tensors = []
         for kind, layer in zip(self.model.config.layer_types, self.cache.layers):
-            tensors.extend((layer.conv_states[0], layer.recurrent_states[0]) if kind == "linear_attention"
-                           else (layer.keys, layer.values))
+            tensors.extend(
+                (layer.conv_states[0], layer.recurrent_states[0])
+                if kind == "linear_attention"
+                else (layer.keys, layer.values)
+            )
         return tensors
 
     def step(self, tokens):
@@ -42,11 +46,20 @@ class HFRuntime:
         length = len(tokens)
         ids = torch.tensor([tokens], device="cuda")
         positions = torch.arange(self.position, self.position + length, device="cuda")
-        mask = torch.full((1, 1, length, CACHE_LENGTH), torch.finfo(self.dtype).min,
-                          device="cuda", dtype=self.dtype).triu(self.position + 1)
-        logits = self.model(ids, position_ids=positions[None, :],
-                            attention_mask={"full_attention": mask, "linear_attention": None},
-                            past_key_values=self.cache, use_cache=True, logits_to_keep=1).logits[:, 0, :]
+        mask = torch.full(
+            (1, 1, length, CACHE_LENGTH),
+            torch.finfo(self.dtype).min,
+            device="cuda",
+            dtype=self.dtype,
+        ).triu(self.position + 1)
+        logits = self.model(
+            ids,
+            position_ids=positions[None, :],
+            attention_mask={"full_attention": mask, "linear_attention": None},
+            past_key_values=self.cache,
+            use_cache=True,
+            logits_to_keep=1,
+        ).logits[:, 0, :]
         self.position += length
         return logits
 
@@ -66,7 +79,10 @@ class PythonRuntime:
 
     def reset(self):
         self.position = 0
-        self.state = [torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"])) for s in self.specs]
+        self.state = [
+            torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"]))
+            for s in self.specs
+        ]
 
     def step(self, tokens):
         assert 1 <= len(tokens) <= 512 and self.position + len(tokens) <= CACHE_LENGTH
@@ -74,11 +90,14 @@ class PythonRuntime:
         ids = torch.tensor([tokens], device="cuda")
         positions = torch.arange(self.position, self.position + length, device="cuda")
         result = self.functions["prefill" if length > 1 else "decode"](
-            ids, positions, self.state, cache_extent(self.position + length))
+            ids, positions, self.state, cache_extent(self.position + length)
+        )
         for before, after, spec in zip(self.state, result[1:], self.specs):
             if spec["kind"] in ("key", "value"):
-                require(before.data_ptr() == after.data_ptr() and before.stride() == after.stride(),
-                        "KV outputs must alias caller-owned buffers")
+                require(
+                    before.data_ptr() == after.data_ptr() and before.stride() == after.stride(),
+                    "KV outputs must alias caller-owned buffers",
+                )
         self.state = list(result[1:])
         self.position += length
         return result[0]

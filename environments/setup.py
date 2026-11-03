@@ -13,7 +13,7 @@ from environments.check import validate
 
 # Run dependency-marker evaluation and RECORD lookup in the supplied interpreter.
 # Never expose its complete site-packages directory to the new environment.
-PROBE = r'''
+PROBE = r"""
 import importlib.metadata as metadata
 import json
 from pathlib import Path
@@ -58,7 +58,7 @@ while pending:
             raise RuntimeError(f"Conflicting native namespace: {first}")
         links[first] = str(source)
 print(json.dumps(dict(actual=actual, versions=versions, links=links)))
-'''
+"""
 
 
 def link_packages(site, links):
@@ -79,9 +79,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("l20", "gb10"), required=True)
     parser.add_argument("--model", choices=("qwen3", "qwen35"), required=True)
-    parser.add_argument("--native-python", type=Path, required=True,
-                        help="Existing Python with this target's Torch, Triton and CUDA packages")
-    parser.add_argument("--output", type=Path, help="Fresh venv; defaults to work/<target>/<model>-venv")
+    parser.add_argument(
+        "--native-python",
+        type=Path,
+        required=True,
+        help="Existing Python with this target's Torch, Triton and CUDA packages",
+    )
+    parser.add_argument(
+        "--output", type=Path, help="Fresh venv; defaults to work/<target>/<model>-venv"
+    )
     args = parser.parse_args(argv)
     output = (args.output or ROOT / "work" / args.target / f"{args.model}-venv").absolute()
     if output.exists() or output.is_symlink():
@@ -90,9 +96,15 @@ def main(argv=None):
     if not native.is_file():
         parser.error(f"Native Python does not exist: {native}")
     try:
-        probe = subprocess.run([str(native), "-c", PROBE], cwd=ROOT, check=True,
-                               env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
-                               capture_output=True, text=True, timeout=60)
+        probe = subprocess.run(
+            [str(native), "-c", PROBE],
+            cwd=ROOT,
+            check=True,
+            env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         data = json.loads(probe.stdout)
     except (subprocess.SubprocessError, ValueError) as error:
         detail = getattr(error, "stderr", None) or str(error)
@@ -108,13 +120,22 @@ def main(argv=None):
     site = Path(subprocess.check_output([str(python), "-c", query], text=True).strip())
     link_packages(site, data["links"])
     constraints = output / "native-constraints.txt"
-    constraints.write_text("".join(f"{name}=={version}\n" for name, version in sorted(data["versions"].items())))
-    data.update(target=args.target, model=args.model, native_python=str(native),
-                profile=profile, venv=str(output))
+    constraints.write_text(
+        "".join(f"{name}=={version}\n" for name, version in sorted(data["versions"].items()))
+    )
+    data.update(
+        target=args.target,
+        model=args.model,
+        native_python=str(native),
+        profile=profile,
+        venv=str(output),
+    )
     (output / "native-provenance.json").write_text(json.dumps(data, indent=2) + "\n")
     print(f"Created {output}")
-    print(f"Install model dependencies with {python} -m pip install "
-          f"-c {constraints} -r {ROOT / 'compiler' / args.model / 'requirements.txt'}")
+    print(
+        f"Install model dependencies with {python} -m pip install "
+        f"-c {constraints} -r {ROOT / 'compiler' / args.model / 'requirements.txt'}"
+    )
     return 0
 
 

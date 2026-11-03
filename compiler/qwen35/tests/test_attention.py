@@ -4,7 +4,9 @@ import unittest
 
 import torch
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
-    Qwen3_5Attention, Qwen3_5TextConfig, Qwen3_5TextRotaryEmbedding,
+    Qwen3_5Attention,
+    Qwen3_5TextConfig,
+    Qwen3_5TextRotaryEmbedding,
 )
 
 from compiler.common.attention import cache_extent, load_attention_ops
@@ -21,8 +23,12 @@ class GatedPrefixFlash(unittest.TestCase):
         load_attention_ops()
         torch.manual_seed(35)
         cls.config = Qwen3_5TextConfig(
-            hidden_size=1024, num_attention_heads=8, num_key_value_heads=2, head_dim=256,
-            num_hidden_layers=1, layer_types=["full_attention"],
+            hidden_size=1024,
+            num_attention_heads=8,
+            num_key_value_heads=2,
+            head_dim=256,
+            num_hidden_layers=1,
+            layer_types=["full_attention"],
         )
         cls.config._attn_implementation = "sdpa"
         cls.original = Qwen3_5Attention(cls.config, layer_idx=0).eval().requires_grad_(False)
@@ -43,38 +49,58 @@ class GatedPrefixFlash(unittest.TestCase):
                 positions = torch.arange(length - tokens, length, device="cuda")
                 rotary = self.rotary(hidden, positions.view(1, 1, -1).expand(3, 1, -1))
                 self.assertEqual(rotary[0].shape, (1, tokens, 64))
-                initial = [torch.randn(1, 2, CACHE_LENGTH, 256, device="cuda", dtype=torch.bfloat16)
-                           for _ in range(2)]
+                initial = [
+                    torch.randn(1, 2, CACHE_LENGTH, 256, device="cuda", dtype=torch.bfloat16)
+                    for _ in range(2)
+                ]
                 states = [[tensor.clone() for tensor in initial] for _ in range(2)]
-                caches = [TextCache(["full_attention"], positions, state, cache_extent(length))
-                          for state in states]
+                caches = [
+                    TextCache(["full_attention"], positions, state, cache_extent(length))
+                    for state in states
+                ]
                 pointers = [[tensor.data_ptr() for tensor in state] for state in states]
                 future = torch.arange(CACHE_LENGTH, device="cuda")[None, :] > positions[:, None]
                 mask = torch.zeros_like(future, dtype=hidden.dtype).masked_fill(
-                    future, torch.finfo(hidden.dtype).min)[None, None]
-                reference, _ = self.original(hidden, position_embeddings=rotary,
-                                             attention_mask=mask, past_key_values=caches[0])
-                actual, _ = self.flash(hidden, position_embeddings=rotary,
-                                       past_key_values=caches[1])
+                    future, torch.finfo(hidden.dtype).min
+                )[None, None]
+                reference, _ = self.original(
+                    hidden,
+                    position_embeddings=rotary,
+                    attention_mask=mask,
+                    past_key_values=caches[0],
+                )
+                actual, _ = self.flash(
+                    hidden, position_embeddings=rotary, past_key_values=caches[1]
+                )
                 self.assertTrue(bool(torch.isfinite(actual).all()))
                 self.assertTrue(bool(torch.isfinite(reference).all()))
-                relative_error = (actual.float() - reference.float()).norm() / reference.float().norm()
+                relative_error = (
+                    actual.float() - reference.float()
+                ).norm() / reference.float().norm()
                 self.assertLessEqual(relative_error.item(), 0.05)
                 for cache, state, addresses in zip(caches, states, pointers):
                     self.assertEqual([tensor.data_ptr() for tensor in state], addresses)
                     for returned, owned, before in zip(cache.tensors(), state, initial):
                         self.assertIs(returned, owned)
-                        self.assertTrue(torch.equal(owned[:, :, :length - tokens], before[:, :, :length - tokens]))
+                        self.assertTrue(
+                            torch.equal(
+                                owned[:, :, : length - tokens], before[:, :, : length - tokens]
+                            )
+                        )
                         self.assertTrue(torch.equal(owned[:, :, length:], before[:, :, length:]))
                 for expected, updated in zip(*states):
                     self.assertTrue(torch.equal(expected, updated))
                 poisoned = [tensor.clone() for tensor in initial]
-                for tensor, value in zip(poisoned, (100., -100.)):
+                for tensor, value in zip(poisoned, (100.0, -100.0)):
                     tensor[:, :, length:].fill_(value)
-                poisoned_cache = TextCache(["full_attention"], positions, poisoned, cache_extent(length))
-                output, _ = self.flash(hidden, position_embeddings=rotary, past_key_values=poisoned_cache)
+                poisoned_cache = TextCache(
+                    ["full_attention"], positions, poisoned, cache_extent(length)
+                )
+                output, _ = self.flash(
+                    hidden, position_embeddings=rotary, past_key_values=poisoned_cache
+                )
                 self.assertTrue(torch.equal(output, actual))
-                for updated, clean, value in zip(poisoned, states[1], (100., -100.)):
+                for updated, clean, value in zip(poisoned, states[1], (100.0, -100.0)):
                     self.assertTrue(torch.equal(updated[:, :, :length], clean[:, :, :length]))
                     self.assertTrue(bool((updated[:, :, length:] == value).all()))
 

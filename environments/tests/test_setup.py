@@ -32,8 +32,11 @@ class NativePackageLinks(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "library.so").write_bytes(name.encode())
         links = {p.name: str(p) for p in self.source.iterdir()}
-        before = {str(p.relative_to(self.source)): p.read_bytes()
-                  for p in self.source.rglob("*") if p.is_file()}
+        before = {
+            str(p.relative_to(self.source)): p.read_bytes()
+            for p in self.source.rglob("*")
+            if p.is_file()
+        }
 
         link_packages(self.site, links)
 
@@ -44,9 +47,14 @@ class NativePackageLinks(unittest.TestCase):
             self.assertEqual(destination.resolve(), Path(source).resolve())
         self.assertEqual((self.site / "typing_extensions.py").read_text(), "native_version = 1\n")
         for name in ("cublas", "cudnn"):
-            self.assertEqual((self.site / "nvidia" / name / "library.so").read_bytes(), name.encode())
-        after = {str(p.relative_to(self.source)): p.read_bytes()
-                 for p in self.source.rglob("*") if p.is_file()}
+            self.assertEqual(
+                (self.site / "nvidia" / name / "library.so").read_bytes(), name.encode()
+            )
+        after = {
+            str(p.relative_to(self.source)): p.read_bytes()
+            for p in self.source.rglob("*")
+            if p.is_file()
+        }
         self.assertEqual(after, before)
 
     def test_existing_seed_file_prevents_every_link(self):
@@ -77,7 +85,9 @@ class NativePackageLinks(unittest.TestCase):
     def test_invalid_component_cannot_escape_site_packages(self):
         for name in ("../outside", "nested/package", str(self.root / "outside"), ".", ".."):
             with self.subTest(name=name), self.assertRaises(ValueError):
-                link_packages(self.site, {"typing_extensions.py": str(self.module), name: str(self.module)})
+                link_packages(
+                    self.site, {"typing_extensions.py": str(self.module), name: str(self.module)}
+                )
             self.assertEqual(list(self.site.iterdir()), [])
         self.assertFalse((self.root / "outside").exists())
 
@@ -86,7 +96,9 @@ class NativePackageLinks(unittest.TestCase):
         broken.symlink_to(self.root / "absent")
         for source in (self.root / "missing", broken):
             with self.subTest(source=source), self.assertRaises(FileNotFoundError):
-                link_packages(self.site, {"typing_extensions.py": str(self.module), "other": str(source)})
+                link_packages(
+                    self.site, {"typing_extensions.py": str(self.module), "other": str(source)}
+                )
             self.assertEqual(list(self.site.iterdir()), [])
 
     def test_cli_refuses_existing_output_before_inspecting_native_python(self):
@@ -95,8 +107,18 @@ class NativePackageLinks(unittest.TestCase):
         marker = output / "keep.txt"
         marker.write_text("existing environment\n")
         with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-            main(["--target", "l20", "--model", "qwen3", "--native-python", "/missing/python",
-                  "--output", str(output)])
+            main(
+                [
+                    "--target",
+                    "l20",
+                    "--model",
+                    "qwen3",
+                    "--native-python",
+                    "/missing/python",
+                    "--output",
+                    str(output),
+                ]
+            )
         self.assertEqual(error.exception.code, 2)
         self.assertEqual(marker.read_text(), "existing environment\n")
 

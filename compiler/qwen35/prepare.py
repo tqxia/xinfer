@@ -12,8 +12,11 @@ def encode_prompt(tokenizer, prompt):
     if not prompt.strip():
         raise ValueError("Prompt must not be empty")
     ids = tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}], tokenize=True,
-        add_generation_prompt=True, enable_thinking=False, return_dict=False,
+        [{"role": "user", "content": prompt}],
+        tokenize=True,
+        add_generation_prompt=True,
+        enable_thinking=False,
+        return_dict=False,
     )
     if not 1 <= len(ids) <= 512:
         raise ValueError(f"Expected 1..512 prompt tokens, got {len(ids)}")

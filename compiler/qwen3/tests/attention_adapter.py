@@ -29,19 +29,31 @@ class AttentionProbe(torch.nn.Module):
             cache = PrefixCache(kv, cache_position, kv_extent)
         else:
             cache = TensorCache(kv, cache_position)
-            future = torch.arange(CACHE_LENGTH, device=hidden.device).unsqueeze(0) > cache_position.unsqueeze(1)
+            future = torch.arange(CACHE_LENGTH, device=hidden.device).unsqueeze(
+                0
+            ) > cache_position.unsqueeze(1)
             mask = torch.zeros_like(future, dtype=hidden.dtype)
             mask = mask.masked_fill(future, torch.finfo(hidden.dtype).min)[None, None]
         rotary = self.rotary(hidden, cache_position.unsqueeze(0))
-        return self.attention(hidden, position_embeddings=rotary, attention_mask=mask,
-                              past_key_value=cache, cache_position=cache_position)[0]
+        return self.attention(
+            hidden,
+            position_embeddings=rotary,
+            attention_mask=mask,
+            past_key_value=cache,
+            cache_position=cache_position,
+        )[0]
 
 
 def inputs(tokens, length, hidden_size):
-    return (torch.randn(1, tokens, hidden_size, device="cuda", dtype=torch.bfloat16),
-            torch.arange(length - tokens, length, device="cuda"),
-            tuple(torch.randn(1, 8, CACHE_LENGTH, 128, device="cuda", dtype=torch.bfloat16)
-                  for _ in range(2)), cache_extent(length))
+    return (
+        torch.randn(1, tokens, hidden_size, device="cuda", dtype=torch.bfloat16),
+        torch.arange(length - tokens, length, device="cuda"),
+        tuple(
+            torch.randn(1, 8, CACHE_LENGTH, 128, device="cuda", dtype=torch.bfloat16)
+            for _ in range(2)
+        ),
+        cache_extent(length),
+    )
 
 
 @torch.inference_mode()
@@ -64,20 +76,31 @@ def main():
         example = inputs(1 if kind == "decode" else 16, 32, model.config.hidden_size)
         tokens = torch.export.Dim("tokens", min=2, max=512)
         extent = torch.export.Dim("extent", min=2, max=1025)
-        shapes = ({} if kind == "decode" else {1: tokens},
-                  {} if kind == "decode" else {0: tokens}, ({}, {}), {0: extent})
+        shapes = (
+            {} if kind == "decode" else {1: tokens},
+            {} if kind == "decode" else {0: tokens},
+            ({}, {}),
+            {0: extent},
+        )
         adapter_export = torch.export.export(adapter, example, dynamic_shapes=shapes, strict=False)
         adapter_export.validate()
         targets = [n.target for n in adapter_export.graph.nodes if n.op == "call_function"]
         assert targets.count(torch.ops.xinfer.flash_attention.default) == 1
         assert targets.count(torch.ops.aten.index_copy_.default) == 2
         assert torch.ops.aten.scaled_dot_product_attention.default not in targets
-        site = next(n for n in adapter_export.graph.nodes if n.target == torch.ops.xinfer.flash_attention.default)
+        site = next(
+            n
+            for n in adapter_export.graph.nodes
+            if n.target == torch.ops.xinfer.flash_attention.default
+        )
         assert site.args[0].meta["val"].is_contiguous()
         exported_adapter = adapter_export.module()
         (args.output / f"{kind}.graph.txt").write_text(adapter_export.graph_module.code)
-        cases = ((1, 1), (1, 2), (1, 1024)) if kind == "decode" else (
-            (2, 2), (2, 3), (16, 32), (510, 1022), (512, 512), (512, 1024))
+        cases = (
+            ((1, 1), (1, 2), (1, 1024))
+            if kind == "decode"
+            else ((2, 2), (2, 3), (16, 32), (510, 1022), (512, 512), (512, 1024))
+        )
         for count, length in cases:
             hidden, positions, initial, valid = inputs(count, length, model.config.hidden_size)
             outputs, caches = [], []
@@ -101,19 +124,33 @@ def main():
                 t[:, :, length:].fill_(100)
             valid.fill_(255)
             assert torch.equal(adapter(hidden, positions, poisoned, valid), outputs[1])
-            report["cases"].append(dict(kind=kind, tokens=count, length=length,
-                                       adapter_vs_hf=hf_error, adapter_export_exact=True, cache_exact=True,
-                                       write_region_and_storage=True, future_poison_exact=True))
+            report["cases"].append(
+                dict(
+                    kind=kind,
+                    tokens=count,
+                    length=length,
+                    adapter_vs_hf=hf_error,
+                    adapter_export_exact=True,
+                    cache_exact=True,
+                    write_region_and_storage=True,
+                    future_poison_exact=True,
+                )
+            )
             print(report["cases"][-1], flush=True)
 
     hidden, positions, kv, extent = inputs(1, 1, model.config.hidden_size)
-    arguments = dict(position_embeddings=model.model.rotary_emb(hidden, positions[None]),
-                     past_key_value=PrefixCache(kv, positions, extent), cache_position=positions)
-    for name, changes in (("mask", {"attention_mask": torch.zeros(1, 1, 1, 1024, device="cuda")}),
-                          ("cache", {"past_key_value": TensorCache(kv, positions)}),
-                          ("positions", {"cache_position": positions.clone()}),
-                          ("attention_weights", {"output_attentions": True}),
-                          ("training", {})):
+    arguments = dict(
+        position_embeddings=model.model.rotary_emb(hidden, positions[None]),
+        past_key_value=PrefixCache(kv, positions, extent),
+        cache_position=positions,
+    )
+    for name, changes in (
+        ("mask", {"attention_mask": torch.zeros(1, 1, 1, 1024, device="cuda")}),
+        ("cache", {"past_key_value": TensorCache(kv, positions)}),
+        ("positions", {"cache_position": positions.clone()}),
+        ("attention_weights", {"output_attentions": True}),
+        ("training", {}),
+    ):
         adapter.attention.train(name == "training")
         try:
             adapter.attention(hidden, **(arguments | changes))

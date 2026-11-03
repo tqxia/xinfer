@@ -4,7 +4,12 @@ import argparse
 from pathlib import Path
 import shutil
 
-from compiler.common.benchmark import eager_worker as measure_eager, run_benchmark, resolve_gpu, wait_idle
+from compiler.common.benchmark import (
+    eager_worker as measure_eager,
+    run_benchmark,
+    resolve_gpu,
+    wait_idle,
+)
 from compiler.common.artifacts import read_json, require, sha256
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.qwen35.packages import validate_model_metadata
@@ -40,27 +45,48 @@ def benchmark(args):
         from compiler.qwen35.prepare import encode_prompt
 
         tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-        return (encode_prompt(tokenizer, "What is the capital of France? Answer briefly."),
-                tokenizer.encode("Paris is the capital of France. ", add_special_tokens=False))
+        return (
+            encode_prompt(tokenizer, "What is the capital of France? Answer briefly."),
+            tokenizer.encode("Paris is the capital of France. ", add_special_tokens=False),
+        )
 
     def correctness(environment, out):
         if not args.validation.exists():
             return dict(passed=None, reason="No matching end-to-end report supplied")
         validation = read_json(args.validation)
-        metadata = {kind: entry["metadata"] for kind, entry in environment["packages"]["cpp_aoti"].items()}
-        require(validation["package_sha256"] == {kind: meta["package_sha256"] for kind, meta in metadata.items()},
-                "Validation is for different packages")
-        require(validation.get("shared_weights") == metadata["decode"]["shared_weights"],
-                "Validation is for a different weight archive")
+        metadata = {
+            kind: entry["metadata"] for kind, entry in environment["packages"]["cpp_aoti"].items()
+        }
+        require(
+            validation["package_sha256"]
+            == {kind: meta["package_sha256"] for kind, meta in metadata.items()},
+            "Validation is for different packages",
+        )
+        require(
+            validation.get("shared_weights") == metadata["decode"]["shared_weights"],
+            "Validation is for a different weight archive",
+        )
         shutil.copy2(args.validation, out / "correctness.json")
-        return dict(passed=validation["passed"], native_bitwise=validation["native_bitwise"],
-                    report_sha256=sha256(args.validation), numerical_failures=len(validation["failures"]),
-                    greedy_failures=len(validation["greedy_failures"]))
+        return dict(
+            passed=validation["passed"],
+            native_bitwise=validation["native_bitwise"],
+            report_sha256=sha256(args.validation),
+            numerical_failures=len(validation["failures"]),
+            greedy_failures=len(validation["greedy_failures"]),
+        )
 
-    return run_benchmark(args, model_type="qwen35", packages={"cpp_aoti": args.packages},
-                         eager={"hf": ("compiler.qwen35.benchmark", "worker")}, reference="hf",
-                         prepare_tokens=tokens, manifest_name="manifest.json", validate_model=validate_model_metadata,
-                         correctness=correctness, timeout=3600)
+    return run_benchmark(
+        args,
+        model_type="qwen35",
+        packages={"cpp_aoti": args.packages},
+        eager={"hf": ("compiler.qwen35.benchmark", "worker")},
+        reference="hf",
+        prepare_tokens=tokens,
+        manifest_name="manifest.json",
+        validate_model=validate_model_metadata,
+        correctness=correctness,
+        timeout=3600,
+    )
 
 
 def main():
@@ -72,22 +98,32 @@ def main():
     worker_parser.add_argument("--output", type=Path, required=True)
     idle = commands.add_parser("check-idle", help="Test the idle guard without launching a model")
     idle.add_argument("--output", type=Path, required=True)
-    idle.add_argument("--gpu", help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
-                      "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER")
+    idle.add_argument(
+        "--gpu",
+        help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
+        "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER",
+    )
     runner = commands.add_parser("run")
     runner.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     runner.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
     runner.add_argument("--native", type=Path, default=Path("work/qwen35/build/xinfer_benchmark"))
     runner.add_argument("--validation", type=Path, default=ARTIFACT_DIR / "end-to-end/summary.json")
     runner.add_argument("--output", type=Path, required=True)
-    runner.add_argument("--gpu", help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
-                        "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER")
+    runner.add_argument(
+        "--gpu",
+        help="nvidia-smi physical GPU index or UUID; defaults to CUDA device 0 "
+        "under CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER",
+    )
     runner.add_argument("--lengths", type=int, nargs="+", default=[22, 64, 65, 128, 511, 512])
     runner.add_argument("--decode-steps", type=int, default=64)
     runner.add_argument("--warmup", type=int, default=2)
     runner.add_argument("--repeats", type=int, default=5)
     runner.add_argument("--rounds", type=int, default=2)
-    runner.add_argument("--allow-busy", action="store_true", help="Functional harness checks only; timings are provisional")
+    runner.add_argument(
+        "--allow-busy",
+        action="store_true",
+        help="Functional harness checks only; timings are provisional",
+    )
     args = parser.parse_args()
     if args.command == "check-idle":
         if args.output.exists():

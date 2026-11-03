@@ -18,7 +18,7 @@ OPTIONS = dict(num_warps=4, num_stages=1)
 
 @triton.jit
 def _recurrent_step(q, k, v, g, beta, state, D: tl.constexpr):
-    q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D ** -0.5)
+    q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D**-0.5)
     k = k * tl.rsqrt(tl.sum(k * k, 0) + 1e-6)
     state = state * tl.exp(g)
     prediction = tl.sum(state * k[:, None], 0)
@@ -29,8 +29,9 @@ def _recurrent_step(q, k, v, g, beta, state, D: tl.constexpr):
 
 
 @triton.jit
-def _causal_conv(QKV, Conv, Weight, NextConv, channels, t, tokens, write_state,
-                 N: tl.constexpr, C: tl.constexpr):
+def _causal_conv(
+    QKV, Conv, Weight, NextConv, channels, t, tokens, write_state, N: tl.constexpr, C: tl.constexpr
+):
     # Scalar taps avoid a BF16 shared-layout conversion that miscompiled V on
     # the tested Triton build. Both history/input loads stay explicitly masked.
     total = tl.full(channels.shape, 0, tl.float32)
@@ -49,9 +50,24 @@ def _causal_conv(QKV, Conv, Weight, NextConv, channels, t, tokens, write_state,
 
 
 @triton.jit
-def fused_kernel(QKV, B, A, Conv, Initial, Weight, ALog, DTBias,
-                  Output, NextConv, Final, tokens,
-                  H: tl.constexpr, D: tl.constexpr, BV: tl.constexpr, C: tl.constexpr):
+def fused_kernel(
+    QKV,
+    B,
+    A,
+    Conv,
+    Initial,
+    Weight,
+    ALog,
+    DTBias,
+    Output,
+    NextConv,
+    Final,
+    tokens,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    BV: tl.constexpr,
+    C: tl.constexpr,
+):
     head, tile = tl.program_id(0), tl.program_id(1)
     rows = tl.arange(0, D)
     cols = tile * BV + tl.arange(0, BV)
@@ -61,13 +77,20 @@ def fused_kernel(QKV, B, A, Conv, Initial, Weight, ALog, DTBias,
     dt = tl.load(DTBias + head).to(tl.float32)
     for t in range(tokens):
         # Q/K are shared by four value tiles; only tile 0 owns their conv state.
-        q = _causal_conv(QKV, Conv, Weight, NextConv, head * D + rows,
-                         t, tokens, tile == 0, 3 * H * D, C)
-        k = _causal_conv(QKV, Conv, Weight, NextConv, (H + head) * D + rows,
-                         t, tokens, tile == 0, 3 * H * D, C)
-        v = _causal_conv(QKV, Conv, Weight, NextConv, (2 * H + head) * D + cols,
-                         t, tokens, True, 3 * H * D, C)
-        beta = tl.sigmoid(tl.load(B + t * H + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
+        q = _causal_conv(
+            QKV, Conv, Weight, NextConv, head * D + rows, t, tokens, tile == 0, 3 * H * D, C
+        )
+        k = _causal_conv(
+            QKV, Conv, Weight, NextConv, (H + head) * D + rows, t, tokens, tile == 0, 3 * H * D, C
+        )
+        v = _causal_conv(
+            QKV, Conv, Weight, NextConv, (2 * H + head) * D + cols, t, tokens, True, 3 * H * D, C
+        )
+        beta = (
+            tl.sigmoid(tl.load(B + t * H + head).to(tl.float32))
+            .to(B.dtype.element_ty)
+            .to(tl.float32)
+        )
         x = tl.load(A + t * H + head).to(tl.float32) + dt
         softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
         g = scale * softplus
@@ -77,20 +100,39 @@ def fused_kernel(QKV, B, A, Conv, Initial, Weight, ALog, DTBias,
 
 
 @triton.jit
-def prepare_kernel(QKV, B, A, Conv, Weight, ALog, DTBias,
-                   Q, K, V, G, Beta, NextConv, tokens,
-                   H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
+def prepare_kernel(
+    QKV,
+    B,
+    A,
+    Conv,
+    Weight,
+    ALog,
+    DTBias,
+    Q,
+    K,
+    V,
+    G,
+    Beta,
+    NextConv,
+    tokens,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    C: tl.constexpr,
+):
     t, head = tl.program_id(0), tl.program_id(1)
     rows = tl.arange(0, D)
-    q = _causal_conv(QKV, Conv, Weight, NextConv, head * D + rows,
-                     t, tokens, True, 3 * H * D, C)
-    k = _causal_conv(QKV, Conv, Weight, NextConv, (H + head) * D + rows,
-                     t, tokens, True, 3 * H * D, C)
-    v = _causal_conv(QKV, Conv, Weight, NextConv, (2 * H + head) * D + rows,
-                     t, tokens, True, 3 * H * D, C)
-    q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D ** -0.5)
+    q = _causal_conv(QKV, Conv, Weight, NextConv, head * D + rows, t, tokens, True, 3 * H * D, C)
+    k = _causal_conv(
+        QKV, Conv, Weight, NextConv, (H + head) * D + rows, t, tokens, True, 3 * H * D, C
+    )
+    v = _causal_conv(
+        QKV, Conv, Weight, NextConv, (2 * H + head) * D + rows, t, tokens, True, 3 * H * D, C
+    )
+    q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D**-0.5)
     k = k * tl.rsqrt(tl.sum(k * k, 0) + 1e-6)
-    beta = tl.sigmoid(tl.load(B + t * H + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
+    beta = (
+        tl.sigmoid(tl.load(B + t * H + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
+    )
     scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
     x = tl.load(A + t * H + head).to(tl.float32) + tl.load(DTBias + head).to(tl.float32)
     softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
@@ -103,33 +145,82 @@ def prepare_kernel(QKV, B, A, Conv, Weight, ALog, DTBias,
 
 
 @torch.library.triton_op("xinfer::delta_cond_short", mutates_args={})
-def short(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
-          conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
-          A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def short(
+    qkv: torch.Tensor,
+    b: torch.Tensor,
+    a: torch.Tensor,
+    conv: torch.Tensor,
+    state: torch.Tensor,
+    weight: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Run unchanged fused preparation/recurrence without a device predicate."""
     tokens = qkv.shape[1]
     output = qkv.new_empty((1, tokens, HEADS, DIM))
     next_conv, final = torch.empty_like(conv), torch.empty_like(state)
     torch.library.wrap_triton(fused_kernel)[(HEADS, DIM // VALUE_TILE)](
-        qkv, b, a, conv, state, weight, A_log, dt_bias, output, next_conv, final, tokens,
-        HEADS, DIM, VALUE_TILE, 4, **OPTIONS)
+        qkv,
+        b,
+        a,
+        conv,
+        state,
+        weight,
+        A_log,
+        dt_bias,
+        output,
+        next_conv,
+        final,
+        tokens,
+        HEADS,
+        DIM,
+        VALUE_TILE,
+        4,
+        **OPTIONS,
+    )
     return output, next_conv, final
 
 
 @torch.library.triton_op("xinfer::delta_cond_long", mutates_args={})
-def long(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
-         conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
-         A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def long(
+    qkv: torch.Tensor,
+    b: torch.Tensor,
+    a: torch.Tensor,
+    conv: torch.Tensor,
+    state: torch.Tensor,
+    weight: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Run the C64 chunk path with the measured B3 transform implementation."""
     tokens = qkv.shape[1]
     output = qkv.new_empty((1, tokens, HEADS, DIM))
     next_conv, final = torch.empty_like(conv), torch.empty_like(state)
     shape = (1, tokens, HEADS, DIM)
     q, k, v = (torch.empty(shape, device=qkv.device, dtype=torch.float32) for _ in range(3))
-    g, beta = (torch.empty((1, tokens, HEADS), device=qkv.device, dtype=torch.float32) for _ in range(2))
+    g, beta = (
+        torch.empty((1, tokens, HEADS), device=qkv.device, dtype=torch.float32) for _ in range(2)
+    )
     torch.library.wrap_triton(prepare_kernel)[(tokens, HEADS)](
-        qkv, b, a, conv, weight, A_log, dt_bias, q, k, v, g, beta, next_conv,
-        tokens, HEADS, DIM, 4, **OPTIONS)
+        qkv,
+        b,
+        a,
+        conv,
+        weight,
+        A_log,
+        dt_bias,
+        q,
+        k,
+        v,
+        g,
+        beta,
+        next_conv,
+        tokens,
+        HEADS,
+        DIM,
+        4,
+        **OPTIONS,
+    )
     launch_chunked(q, k, v, g, beta, state, output, final)
     return output, next_conv, final
 
@@ -142,9 +233,16 @@ def _long_branch(*inputs):
     return long(*inputs)
 
 
-def fused(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
-           conv: torch.Tensor, state: torch.Tensor, weight: torch.Tensor,
-           A_log: torch.Tensor, dt_bias: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def fused(
+    qkv: torch.Tensor,
+    b: torch.Tensor,
+    a: torch.Tensor,
+    conv: torch.Tensor,
+    state: torch.Tensor,
+    weight: torch.Tensor,
+    A_log: torch.Tensor,
+    dt_bias: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Validate inputs and select fused recurrence or chunked FP32 prefill."""
     if qkv.ndim != 3 or qkv.shape[0] != 1 or qkv.shape[2] != 3 * HEADS * DIM:
         raise ValueError("Expected QKV [1,T,6144]")
@@ -158,14 +256,15 @@ def fused(qkv: torch.Tensor, b: torch.Tensor, a: torch.Tensor,
     if state.shape != (1, HEADS, DIM, DIM) or A_log.shape != (HEADS,) or dt_bias.shape != (HEADS,):
         raise ValueError("Expected recurrent state [1,16,128,128] and decay parameters [16]")
     tensors = (qkv, b, a, conv, weight, A_log, dt_bias)
-    if qkv.dtype not in (torch.bfloat16, torch.float32) or any(x.dtype != qkv.dtype for x in tensors):
+    if qkv.dtype not in (torch.bfloat16, torch.float32) or any(
+        x.dtype != qkv.dtype for x in tensors
+    ):
         raise ValueError("Expected matching BF16 or FP32 inputs and parameters")
     if state.dtype != torch.float32:
         raise ValueError("Recurrent state must be FP32")
     if qkv.device.type != "cuda" or any(x.device != qkv.device for x in (*tensors, state)):
         raise ValueError("Expected CUDA tensors on one device")
-    qkv, b, a, conv, weight, A_log, dt_bias, state = (
-        x.contiguous() for x in (*tensors, state))
+    qkv, b, a, conv, weight, A_log, dt_bias, state = (x.contiguous() for x in (*tensors, state))
     operands = (qkv, b, a, conv, state, weight, A_log, dt_bias)
     if tokens == 1:
         return short(*operands)

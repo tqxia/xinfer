@@ -34,7 +34,8 @@ class PrefixFlash(unittest.TestCase):
                     extent = cache_extent(length)
                     actual = self.op(q, k, v, extent, dim**-0.5)
                     native = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                        q, k[:, :, :length], v[:, :, :length], 0., True, scale=dim**-0.5)[0]
+                        q, k[:, :, :length], v[:, :, :length], 0.0, True, scale=dim**-0.5
+                    )[0]
                     self.assertTrue(torch.equal(actual, native))
                     self.assertEqual(actual.stride(), (heads * tokens * dim, tokens * dim, dim, 1))
                     self.assertNotIn(actual.data_ptr(), [t.data_ptr() for t in (q, k, v)])
@@ -44,8 +45,13 @@ class PrefixFlash(unittest.TestCase):
                     mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
                     with sdpa_kernel(SDPBackend.MATH):
                         expected = F.scaled_dot_product_attention(
-                            q.float(), k[:, :, :length].float(), v[:, :, :length].float(),
-                            attn_mask=mask, enable_gqa=True, scale=dim**-0.5)
+                            q.float(),
+                            k[:, :, :length].float(),
+                            v[:, :, :length].float(),
+                            attn_mask=mask,
+                            enable_gqa=True,
+                            scale=dim**-0.5,
+                        )
                     error = (actual.float() - expected).norm() / expected.norm()
                     self.assertLess(error.item(), 0.01)
                     k[:, :, length:].fill_(100)
@@ -60,10 +66,14 @@ class PrefixFlash(unittest.TestCase):
                 q, k, v = self.inputs(heads, kv_heads, dim, 2)
                 q.zero_()
                 k.zero_()
-                v.copy_(torch.arange(1024, device="cuda", dtype=torch.bfloat16)[None, None, :, None])
+                v.copy_(
+                    torch.arange(1024, device="cuda", dtype=torch.bfloat16)[None, None, :, None]
+                )
                 output = self.op(q, k, v, cache_extent(5), dim**-0.5)
                 expected = torch.tensor([1.5, 2.0], device="cuda", dtype=torch.bfloat16)
-                self.assertTrue(torch.equal(output, expected[None, None, :, None].expand_as(output)))
+                self.assertTrue(
+                    torch.equal(output, expected[None, None, :, None].expand_as(output))
+                )
 
     @torch.inference_mode()
     def test_feature_strides_and_fake_contract(self):
@@ -73,8 +83,13 @@ class PrefixFlash(unittest.TestCase):
                 extent = cache_extent(3)
                 output = self.op(q, k, v, extent, dim**-0.5)
                 expected = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                    q.contiguous(), k[:, :, :3].contiguous(), v[:, :, :3].contiguous(),
-                    0., True, scale=dim**-0.5)[0]
+                    q.contiguous(),
+                    k[:, :, :3].contiguous(),
+                    v[:, :, :3].contiguous(),
+                    0.0,
+                    True,
+                    scale=dim**-0.5,
+                )[0]
                 self.assertTrue(torch.equal(output, expected))
                 checks = torch.library.opcheck(self.op, (q, k, v, extent, dim**-0.5))
                 self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
@@ -83,7 +98,10 @@ class PrefixFlash(unittest.TestCase):
     def test_invalid_extent_and_head_dimensions(self):
         q, k, v = self.inputs(8, 2, 256, 2)
         for length in (0, 1, 1025):
-            with self.subTest(length=length), self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"):
+            with (
+                self.subTest(length=length),
+                self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"),
+            ):
                 self.op(q, k, v, cache_extent(length), 256**-0.5)
         with self.assertRaisesRegex(RuntimeError, "Unsupported query/KV head dimensions"):
             self.op(q[:, :4], k, v, cache_extent(3), 256**-0.5)

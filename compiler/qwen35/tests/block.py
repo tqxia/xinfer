@@ -24,8 +24,7 @@ def prepare(directory, model=MODEL_ID):
     revision = REVISIONS[model]
 
     def download(name):
-        return Path(hf_hub_download(model, name, revision=revision,
-                                   cache_dir="work/qwen35/hub"))
+        return Path(hf_hub_download(model, name, revision=revision, cache_dir="work/qwen35/hub"))
 
     directory.mkdir(parents=True, exist_ok=False)
     config = download("config.json")
@@ -48,8 +47,13 @@ def prepare(directory, model=MODEL_ID):
                     weights[name.removeprefix(prefix)] = reader.get_tensor(name)
     save_file(weights, directory / "block.safetensors")
     (directory / "config.json").write_bytes(config.read_bytes())
-    manifest = dict(model=model, revision=revision, layer=0, source_shards=shards,
-                    files={n: sha256(directory / n) for n in ("config.json", "block.safetensors")})
+    manifest = dict(
+        model=model,
+        revision=revision,
+        layer=0,
+        source_shards=shards,
+        files={n: sha256(directory / n) for n in ("config.json", "block.safetensors")},
+    )
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
 

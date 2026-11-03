@@ -15,7 +15,12 @@ import torch
 import torch.nn.functional as F
 
 from compiler.common.artifacts import sha256
-from compiler.common.weights import SHARED_WEIGHT_OPTIONS, SharedWeights, compile_shared, validate_shared_weights
+from compiler.common.weights import (
+    SHARED_WEIGHT_OPTIONS,
+    SharedWeights,
+    compile_shared,
+    validate_shared_weights,
+)
 from compiler.common.tests.test_metadata import metadata_pair
 
 
@@ -27,11 +32,13 @@ class TiedViews(torch.nn.Module):
         self.tied = self.weight
         self.sliced = torch.nn.Parameter(base[:, ::2], requires_grad=False)
         self.bias = torch.nn.Parameter(base[:, 1], requires_grad=False)
-        self.register_buffer("scale", torch.tensor([1., 2., 4., 8.]))
+        self.register_buffer("scale", torch.tensor([1.0, 2.0, 4.0, 8.0]))
 
     def forward(self, x):
         result = F.linear(x, self.weight).float() + F.linear(x, self.tied).float()
-        result = (result + F.linear(x[:, ::2], self.sliced).float() + self.bias.float()) * self.scale
+        result = (
+            result + F.linear(x[:, ::2], self.sliced).float() + self.bias.float()
+        ) * self.scale
         return result, self.weight, self.tied, self.sliced, self.bias, self.scale
 
 
@@ -43,15 +50,21 @@ def export_entry(model, kind, directory):
     exported = torch.export.export(model, (inputs(1 if kind == "decode" else 3),))
     (directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
     return exported, lambda compiled: dict(
-        entry_point=kind, marker="preserved metadata",
-        package_bytes=compiled.stat().st_size, package_sha256=sha256(compiled))
+        entry_point=kind,
+        marker="preserved metadata",
+        package_bytes=compiled.stat().st_size,
+        package_sha256=sha256(compiled),
+    )
 
 
 def compile_bundle(model, directory, identity):
     with torch.inference_mode():
         return compile_shared(
-            directory, lambda kind, stage: export_entry(model, kind, stage), identity=identity,
-            inductor_configs={"emulate_precision_casts": True})
+            directory,
+            lambda kind, stage: export_entry(model, kind, stage),
+            identity=identity,
+            inductor_configs={"emulate_precision_casts": True},
+        )
 
 
 def metadata(directory, kind="decode"):
@@ -85,7 +98,9 @@ class SharedWeightBundle(unittest.TestCase):
         shutil.copytree(source or self.bundle, destination)
         return destination
 
-    def rewrite_archive(self, directory, mutate=None, *, update_checksums=True, include_mapping=True):
+    def rewrite_archive(
+        self, directory, mutate=None, *, update_checksums=True, include_mapping=True
+    ):
         payload = mapping(directory)
         if mutate:
             mutate(payload)
@@ -95,7 +110,9 @@ class SharedWeightBundle(unittest.TestCase):
         extra = {"weights.json": json.dumps(payload)} if include_mapping else {}
         torch.jit.save(archive, str(rewritten), _extra_files=extra)
         rewritten.replace(path)
-        contract = dict(metadata(directory)["shared_weights"], bytes=path.stat().st_size, sha256=sha256(path))
+        contract = dict(
+            metadata(directory)["shared_weights"], bytes=path.stat().st_size, sha256=sha256(path)
+        )
         if update_checksums:
             for kind in ("prefill", "decode"):
                 package = metadata(directory, kind)
@@ -126,14 +143,19 @@ class SharedWeightBundle(unittest.TestCase):
         pair = metadata_pair()
         for kind, value in pair.items():
             package = self.bundle / f"{kind}.pt2"
-            value.update(package_bytes=package.stat().st_size, package_sha256=sha256(package),
-                         shared_weights=self.contract)
+            value.update(
+                package_bytes=package.stat().st_size,
+                package_sha256=sha256(package),
+                shared_weights=self.contract,
+            )
         return pair
 
     def test_versioned_file_facts_fail_before_archive_access(self):
         for kind in ("prefill", "decode"):
-            for field, value, error in (("package_bytes", 1, "Package file size mismatch"),
-                                        ("package_sha256", "0" * 64, "Package checksum mismatch")):
+            for field, value, error in (
+                ("package_bytes", 1, "Package file size mismatch"),
+                ("package_sha256", "0" * 64, "Package checksum mismatch"),
+            ):
                 with self.subTest(kind=kind, field=field):
                     pair = self.versioned_metadata()
                     pair[kind][field] = value
@@ -166,7 +188,9 @@ class SharedWeightBundle(unittest.TestCase):
             for kind, rows in (("decode", 1), ("prefill", 3)):
                 compiled = pool.load(kind)
                 self.assertIs(compiled, pool.load(kind))
-                torch.testing.assert_close(compiled(inputs(rows)), self.model(inputs(rows)), rtol=0, atol=0)
+                torch.testing.assert_close(
+                    compiled(inputs(rows)), self.model(inputs(rows)), rtol=0, atol=0
+                )
 
     def test_compile_options_have_one_owner_and_do_not_mutate_the_caller(self):
         directory = self.root / "compile-options"
@@ -176,11 +200,16 @@ class SharedWeightBundle(unittest.TestCase):
         def prepare(kind, stage):
             exported, factory = export_entry(self.model, kind, stage)
             return exported, lambda path: dict(
-                factory(path), inductor_configs={"always_keep_tensor_constants": False})
+                factory(path), inductor_configs={"always_keep_tensor_constants": False}
+            )
 
-        with torch.inference_mode(), patch(
+        with (
+            torch.inference_mode(),
+            patch(
                 "torch._inductor.aoti_compile_and_package",
-                wraps=torch._inductor.aoti_compile_and_package) as compile_graph:
+                wraps=torch._inductor.aoti_compile_and_package,
+            ) as compile_graph,
+        ):
             compile_shared(directory, prepare, identity=self.identity, inductor_configs=requested)
         self.assertEqual(requested, original)
         self.assertEqual(compile_graph.call_count, 2)
@@ -210,7 +239,9 @@ class SharedWeightBundle(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
                 prepare.assert_not_called()
-        self.assertEqual(before, {path.name: sha256(path) for path in populated.iterdir() if path.is_file()})
+        self.assertEqual(
+            before, {path.name: sha256(path) for path in populated.iterdir() if path.is_file()}
+        )
         self.assertEqual(file.read_text(), "preserve")
         self.assertTrue(link.is_symlink())
         self.assertEqual(list(target.iterdir()), [])
@@ -249,8 +280,10 @@ class SharedWeightBundle(unittest.TestCase):
                         kinds.append(kind)
                         exported, factory = export_entry(self.model, kind, stage)
                         if failure == "metadata" and kind == "decode":
+
                             def factory(_):
                                 raise RuntimeError("decode metadata failed")
+
                         return exported, factory
 
                     def compile_graph(exported, **options):
@@ -258,14 +291,22 @@ class SharedWeightBundle(unittest.TestCase):
                             raise RuntimeError("decode compile failed")
                         return real_compile(exported, **options)
 
-                    with torch.inference_mode(), patch(
-                            "torch._inductor.aoti_compile_and_package", side_effect=compile_graph), patch(
-                            "torch.jit.save", wraps=torch.jit.save) as save_archive:
+                    with (
+                        torch.inference_mode(),
+                        patch(
+                            "torch._inductor.aoti_compile_and_package", side_effect=compile_graph
+                        ),
+                        patch("torch.jit.save", wraps=torch.jit.save) as save_archive,
+                    ):
                         with self.assertRaisesRegex(RuntimeError, f"decode {failure} failed"):
-                            compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
+                            compile_shared(
+                                directory, prepare, identity=self.identity, inductor_configs={}
+                            )
                     self.assertEqual(kinds, ["prefill", "decode"])
                     save_archive.assert_not_called()
-                    self.assertEqual(set(root.iterdir()), before, "Staging files must be cleaned up")
+                    self.assertEqual(
+                        set(root.iterdir()), before, "Staging files must be cleaned up"
+                    )
                     if existing_empty:
                         self.assertEqual(list(directory.iterdir()), [])
                     else:
@@ -276,12 +317,18 @@ class SharedWeightBundle(unittest.TestCase):
         changed = TiedViews().eval()
         with torch.inference_mode():
             changed.weight.add_(1)
-        with torch.inference_mode(), self.assertRaisesRegex(
-                ValueError, "source tensor differs between entries"):
+        with (
+            torch.inference_mode(),
+            self.assertRaisesRegex(ValueError, "source tensor differs between entries"),
+        ):
             compile_shared(
                 directory,
-                lambda kind, stage: export_entry(changed if kind == "decode" else self.model, kind, stage),
-                identity=self.identity, inductor_configs={})
+                lambda kind, stage: export_entry(
+                    changed if kind == "decode" else self.model, kind, stage
+                ),
+                identity=self.identity,
+                inductor_configs={},
+            )
         self.assertFalse(directory.exists())
 
     def test_missing_and_corrupt_bundle_files_are_rejected_without_cuda(self):
@@ -295,16 +342,23 @@ class SharedWeightBundle(unittest.TestCase):
                 directory = self.copy_bundle()
                 path = directory / filename
                 path.write_bytes(b"corrupt") if corrupt else path.unlink()
-                with patch("torch.cuda.is_available", side_effect=AssertionError("CUDA must not be queried")):
+                with patch(
+                    "torch.cuda.is_available",
+                    side_effect=AssertionError("CUDA must not be queried"),
+                ):
                     with self.assertRaisesRegex(ValueError, message):
                         validate_shared_weights(directory, self.metadata, self.metadata)
 
     def test_missing_embedded_mapping_is_rejected_without_cuda(self):
         directory = self.copy_bundle()
         self.rewrite_archive(directory, include_mapping=False)
-        with patch("torch.cuda.is_available", side_effect=AssertionError("CUDA must not be queried")):
+        with patch(
+            "torch.cuda.is_available", side_effect=AssertionError("CUDA must not be queried")
+        ):
             with self.assertRaisesRegex(ValueError, "archive metadata is invalid"):
-                validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
+                validate_shared_weights(
+                    directory, metadata(directory, "prefill"), metadata(directory)
+                )
 
     def test_contract_and_compiler_options_cannot_select_another_pool(self):
         altered = copy.deepcopy(self.metadata)
@@ -330,11 +384,13 @@ class SharedWeightBundle(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 directory = self.copy_bundle()
+
                 def mutate(manifest):
                     if field == "stride":
                         next(iter(manifest["tensors"].values()))["stride"][0] = value
                     else:
                         next(iter(manifest["storages"].values()))[field] = value
+
                 contract = self.rewrite_archive(directory, mutate)
                 with self.assertRaisesRegex(ValueError, message):
                     SharedWeights(directory, contract)
@@ -343,15 +399,22 @@ class SharedWeightBundle(unittest.TestCase):
         for damage in ("mapping", "layout"):
             with self.subTest(damage=damage):
                 directory = self.copy_bundle()
+
                 def mutate(manifest):
                     if damage == "mapping":
                         constants = manifest["entries"]["decode"]["constants"]
                         name = next(iter(constants))
-                        constants[name] = next(view for view in manifest["tensors"] if view != constants[name])
+                        constants[name] = next(
+                            view for view in manifest["tensors"] if view != constants[name]
+                        )
                     else:
                         next(iter(manifest["tensors"].values()))["offset"] += 1
+
                 self.rewrite_archive(directory, mutate, update_checksums=False)
-                with patch("torch.cuda.is_available", side_effect=AssertionError("CUDA must not be queried")):
+                with patch(
+                    "torch.cuda.is_available",
+                    side_effect=AssertionError("CUDA must not be queried"),
+                ):
                     with self.assertRaisesRegex(ValueError, "archive checksum mismatch"):
                         validate_shared_weights(directory, self.metadata, self.metadata)
 
@@ -368,7 +431,12 @@ class SharedWeightBundle(unittest.TestCase):
             def load_constants(self, tensors, **options):
                 # A borrowing runtime need not own Python Tensor references.
                 calls.append(options)
-                pointers.append({name: (weakref.ref(value), value.data_ptr()) for name, value in tensors.items()})
+                pointers.append(
+                    {
+                        name: (weakref.ref(value), value.data_ptr())
+                        for name, value in tensors.items()
+                    }
+                )
 
         pool = SharedWeights(self.bundle, self.contract)
         names = list(pool.manifest["entries"]["decode"]["constants"])
@@ -382,13 +450,19 @@ class SharedWeightBundle(unittest.TestCase):
         gc.collect()
         self.assertIsNotNone(owner(), "A retained borrowing model must keep its pool alive")
         self.assertEqual(calls, [dict(check_full_update=True, user_managed=True)])
-        self.assertTrue(all(reference() is not None and reference().data_ptr() == pointer
-                            for reference, pointer in pointers[0].values()))
+        self.assertTrue(
+            all(
+                reference() is not None and reference().data_ptr() == pointer
+                for reference, pointer in pointers[0].values()
+            )
+        )
         del loader, load
         gc.collect()
         self.assertIsNone(owner(), "The weak model cache must not create an ownership cycle")
         bad_pool = SharedWeights(self.bundle, self.contract)
-        with patch("torch._inductor.aoti_load_package", return_value=BorrowingLoader(["unrelated.weight"])):
+        with patch(
+            "torch._inductor.aoti_load_package", return_value=BorrowingLoader(["unrelated.weight"])
+        ):
             with self.assertRaisesRegex(ValueError, "constant FQNs differ"):
                 bad_pool.load("decode")
 

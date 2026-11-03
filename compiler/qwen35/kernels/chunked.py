@@ -15,15 +15,13 @@ OPTIONS = dict(num_warps=4, num_stages=1)
 
 
 @triton.jit
-def _solve(K, G, Beta, Inverse, Prefix, tokens,
-           H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
+def _solve(K, G, Beta, Inverse, Prefix, tokens, H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
     chunk, head = tl.program_id(0), tl.program_id(1)
     rows = tl.arange(0, C)
     dims = tl.arange(0, D)
     time = chunk * C + rows
     valid = time < tokens
-    key = tl.load(K + (time[:, None] * H + head) * D + dims[None, :],
-                  mask=valid[:, None], other=0)
+    key = tl.load(K + (time[:, None] * H + head) * D + dims[None, :], mask=valid[:, None], other=0)
     beta = tl.load(Beta + time * H + head, mask=valid, other=0)
     g = tl.load(G + time * H + head, mask=valid, other=0)
     prefix = tl.cumsum(g, 0)
@@ -43,8 +41,20 @@ def _solve(K, G, Beta, Inverse, Prefix, tokens,
 
 
 @triton.jit
-def _transforms(K, V, Beta, Inverse, Prefix, U, W, tokens,
-                H: tl.constexpr, D: tl.constexpr, C: tl.constexpr, BT: tl.constexpr):
+def _transforms(
+    K,
+    V,
+    Beta,
+    Inverse,
+    Prefix,
+    U,
+    W,
+    tokens,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    C: tl.constexpr,
+    BT: tl.constexpr,
+):
     tl.static_assert(BT >= 16 and (BT & (BT - 1)) == 0, "Unsupported transform tile")
     tl.static_assert(D % BT == 0, "Transform tile must divide the head dimension")
     chunk, head = tl.program_id(0), tl.program_id(1)
@@ -52,8 +62,7 @@ def _transforms(K, V, Beta, Inverse, Prefix, U, W, tokens,
     dims = tl.program_id(2) * BT + tl.arange(0, BT)
     time = chunk * C + rows
     valid = time < tokens
-    inverse = tl.load(Inverse + (chunk * H + head) * C * C
-                      + rows[:, None] * C + rows[None, :])
+    inverse = tl.load(Inverse + (chunk * H + head) * C * C + rows[:, None] * C + rows[None, :])
     offsets = (time[:, None] * H + head) * D + dims[None, :]
     value = tl.load(V + offsets, mask=valid[:, None], other=0)
     beta = tl.load(Beta + time * H + head, mask=valid, other=0)
@@ -68,8 +77,21 @@ def _transforms(K, V, Beta, Inverse, Prefix, U, W, tokens,
 
 
 @triton.jit
-def _states(K, U, W, Prefix, Initial, Incoming, Corrections, Final, tokens,
-            H: tl.constexpr, D: tl.constexpr, C: tl.constexpr, BV: tl.constexpr):
+def _states(
+    K,
+    U,
+    W,
+    Prefix,
+    Initial,
+    Incoming,
+    Corrections,
+    Final,
+    tokens,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    C: tl.constexpr,
+    BV: tl.constexpr,
+):
     head, tile = tl.program_id(0), tl.program_id(1)
     dims = tl.arange(0, D)
     values = tile * BV + tl.arange(0, BV)
@@ -85,20 +107,33 @@ def _states(K, U, W, Prefix, Initial, Incoming, Corrections, Final, tokens,
         u = tl.load(U + base + rows[:, None] * D + values[None, :])
         correction = u - tl.dot(w, state, input_precision="ieee")
         tl.store(Corrections + base + rows[:, None] * D + values[None, :], correction)
-        key = tl.load(K + (time[:, None] * H + head) * D + dims[None, :],
-                      mask=valid[:, None], other=0)
+        key = tl.load(
+            K + (time[:, None] * H + head) * D + dims[None, :], mask=valid[:, None], other=0
+        )
         prefix = tl.load(Prefix + (chunk * H + head) * C + rows)
         last = tl.minimum(tokens - chunk * C, C) - 1
         last_prefix = tl.load(Prefix + (chunk * H + head) * C + last)
         weighted_key = key * tl.exp(last_prefix - prefix)[:, None]
         state = state * tl.exp(last_prefix) + tl.dot(
-            tl.trans(weighted_key), correction, input_precision="ieee")
+            tl.trans(weighted_key), correction, input_precision="ieee"
+        )
     tl.store(Final + state_offsets, state)
 
 
 @triton.jit
-def _outputs(Q, K, Prefix, Incoming, Corrections, Output, tokens,
-             H: tl.constexpr, D: tl.constexpr, C: tl.constexpr, BV: tl.constexpr):
+def _outputs(
+    Q,
+    K,
+    Prefix,
+    Incoming,
+    Corrections,
+    Output,
+    tokens,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    C: tl.constexpr,
+    BV: tl.constexpr,
+):
     chunk, head, tile = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     rows = tl.arange(0, C)
     dims = tl.arange(0, D)
@@ -112,10 +147,10 @@ def _outputs(Q, K, Prefix, Incoming, Corrections, Output, tokens,
     causal = rows[:, None] >= rows[None, :]
     decay = tl.exp(tl.where(causal, prefix[:, None] - prefix[None, :], -float("inf")))
     attention = tl.dot(query, tl.trans(key), input_precision="ieee") * decay
-    state = tl.load(Incoming + (chunk * H + head) * D * D
-                    + dims[:, None] * D + values[None, :])
-    correction = tl.load(Corrections + (chunk * H + head) * C * D
-                         + rows[:, None] * D + values[None, :])
+    state = tl.load(Incoming + (chunk * H + head) * D * D + dims[:, None] * D + values[None, :])
+    correction = tl.load(
+        Corrections + (chunk * H + head) * C * D + rows[:, None] * D + values[None, :]
+    )
     output = tl.dot(query * tl.exp(prefix)[:, None], state, input_precision="ieee")
     output += tl.dot(attention, correction, input_precision="ieee")
     destination = (time[:, None] * H + head) * D + values[None, :]
@@ -125,25 +160,59 @@ def _outputs(Q, K, Prefix, Incoming, Corrections, Output, tokens,
 def launch_chunked(q, k, v, g, beta, state, output, final):
     """Write fresh output/final tensors; inputs are FP32 prepared head vectors."""
     tokens, heads, dim = q.shape[1:]
-    if (type(TRANSFORM_TILE) is not int or TRANSFORM_TILE < 16 or
-            TRANSFORM_TILE & (TRANSFORM_TILE - 1) or dim % TRANSFORM_TILE):
-        raise ValueError("TRANSFORM_TILE must be a power of two >= 16 that divides the head dimension")
+    if (
+        type(TRANSFORM_TILE) is not int
+        or TRANSFORM_TILE < 16
+        or TRANSFORM_TILE & (TRANSFORM_TILE - 1)
+        or dim % TRANSFORM_TILE
+    ):
+        raise ValueError(
+            "TRANSFORM_TILE must be a power of two >= 16 that divides the head dimension"
+        )
     chunks = (tokens + CHUNK_SIZE - 1) // CHUNK_SIZE
     # Kernels use flat pointer offsets, so workspace shape metadata is unused.
     # Flatten without padding: a sample with one chunk must not specialize the
     # dynamic chunk dimension to 1 during AOTInductor's tensor-layout checks.
-    inverse = torch.empty((chunks * heads * CHUNK_SIZE * CHUNK_SIZE,), device=q.device, dtype=torch.float32)
+    inverse = torch.empty(
+        (chunks * heads * CHUNK_SIZE * CHUNK_SIZE,), device=q.device, dtype=torch.float32
+    )
     prefix = torch.empty((chunks * heads * CHUNK_SIZE,), device=q.device, dtype=torch.float32)
     shape = (chunks * heads * CHUNK_SIZE * dim,)
     u, w, corrections = (torch.empty(shape, device=q.device, dtype=torch.float32) for _ in range(3))
     incoming = torch.empty((chunks * heads * dim * dim,), device=q.device, dtype=torch.float32)
     torch.library.wrap_triton(_solve)[(chunks, heads)](
-        k, g, beta, inverse, prefix, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
+        k, g, beta, inverse, prefix, tokens, heads, dim, CHUNK_SIZE, **OPTIONS
+    )
     torch.library.wrap_triton(_transforms)[(chunks, heads, dim // TRANSFORM_TILE)](
-        k, v, beta, inverse, prefix, u, w, tokens, heads, dim, CHUNK_SIZE, TRANSFORM_TILE, **OPTIONS)
+        k, v, beta, inverse, prefix, u, w, tokens, heads, dim, CHUNK_SIZE, TRANSFORM_TILE, **OPTIONS
+    )
     torch.library.wrap_triton(_states)[(heads, dim // VALUE_TILE)](
-        k, u, w, prefix, state, incoming, corrections, final, tokens,
-        heads, dim, CHUNK_SIZE, VALUE_TILE, **OPTIONS)
+        k,
+        u,
+        w,
+        prefix,
+        state,
+        incoming,
+        corrections,
+        final,
+        tokens,
+        heads,
+        dim,
+        CHUNK_SIZE,
+        VALUE_TILE,
+        **OPTIONS,
+    )
     torch.library.wrap_triton(_outputs)[(chunks, heads, dim // VALUE_TILE)](
-        q, k, prefix, incoming, corrections, output, tokens,
-        heads, dim, CHUNK_SIZE, VALUE_TILE, **OPTIONS)
+        q,
+        k,
+        prefix,
+        incoming,
+        corrections,
+        output,
+        tokens,
+        heads,
+        dim,
+        CHUNK_SIZE,
+        VALUE_TILE,
+        **OPTIONS,
+    )

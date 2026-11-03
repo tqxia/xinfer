@@ -62,7 +62,9 @@ def trace(runtime, cases, specs):
                 assert bits_equal(row[0], clean[0]), "Masked KV changes logits"
                 for a, b, spec in zip(row[1:], clean[1:], specs):
                     if spec["kind"] in ("key", "value"):
-                        assert bits_equal(a[:, :, :position], b[:, :, :position]), "Masked KV changes valid state"
+                        assert bits_equal(a[:, :, :position], b[:, :, :position]), (
+                            "Masked KV changes valid state"
+                        )
                         assert (a[:, :, position:] == poison).all(), "Future KV overwritten"
                     else:
                         assert bits_equal(a, b), "Masked KV changes DeltaNet state"
@@ -71,15 +73,22 @@ def trace(runtime, cases, specs):
 
 
 def token_difference(actual, expected):
-    i = next((i for i, (a, b) in enumerate(zip(actual["ids"], expected["ids"])) if a != b),
-             min(len(actual["ids"]), len(expected["ids"])))
-    result = dict(first_difference=i, actual_length=len(actual["ids"]), expected_length=len(expected["ids"]))
+    i = next(
+        (i for i, (a, b) in enumerate(zip(actual["ids"], expected["ids"])) if a != b),
+        min(len(actual["ids"]), len(expected["ids"])),
+    )
+    result = dict(
+        first_difference=i, actual_length=len(actual["ids"]), expected_length=len(expected["ids"])
+    )
     if i < min(len(actual["ids"]), len(expected["ids"])):
         scores = expected["rows"][i][0]
         top = scores.topk(2).values
-        result.update(actual_id=actual["ids"][i], expected_id=expected["ids"][i],
-                      reference_top2_margin=(top[0] - top[1]).item(),
-                      reference_gap_to_actual=(top[0] - scores[actual["ids"][i]]).item())
+        result.update(
+            actual_id=actual["ids"][i],
+            expected_id=expected["ids"][i],
+            reference_top2_margin=(top[0] - top[1]).item(),
+            reference_gap_to_actual=(top[0] - scores[actual["ids"][i]]).item(),
+        )
     return result
 
 
@@ -87,8 +96,9 @@ def mapped_native_trace(directory, cases, specs, vocabulary):
     """Use verified native files as tensor views instead of a second CPU copy."""
     layouts = [((1, vocabulary), torch.bfloat16)]
     layouts += [(tuple(s["shape"]), getattr(torch, s["dtype"])) for s in specs]
-    widths = [math.prod(shape) * torch.empty((), dtype=dtype).element_size()
-              for shape, dtype in layouts]
+    widths = [
+        math.prod(shape) * torch.empty((), dtype=dtype).element_size() for shape, dtype in layouts
+    ]
     result = {}
     for case in cases:
         path = directory / f"{case['name']}.states"
@@ -99,7 +109,7 @@ def mapped_native_trace(directory, cases, specs, vocabulary):
         for step in range(len(case["steps"])):
             tensors = []
             for (shape, dtype), width in zip(layouts, widths):
-                tensors.append(storage[offset:offset + width].view(dtype).reshape(shape))
+                tensors.append(storage[offset : offset + width].view(dtype).reshape(shape))
                 offset += width
             result[case["name"], step] = tuple(tensors)
     return result
@@ -119,34 +129,56 @@ def main():
         validate_model_metadata(entry)
     attention_library = native_attention_library(args.native)
     if attention_library is None:
-        raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
+        raise ValueError(
+            "Qwen3.5 runtime is missing its required native attention library; rebuild the runtime"
+        )
     os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
     load_attention_ops(attention_library)
     configure_text()
     for kind, meta in metadata.items():
-        assert meta["torch_version"] == torch.__version__ and meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"]["manifest"] == json.loads((args.model_dir / "manifest.json").read_text())
+        assert meta["torch_version"] == torch.__version__ and meta["package_sha256"] == sha256(
+            args.packages / f"{kind}.pt2"
+        )
+        assert meta["checkpoint"]["manifest"] == json.loads(
+            (args.model_dir / "manifest.json").read_text()
+        )
     specs = metadata["decode"]["state"]
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
     eos = metadata["decode"]["eos_token_ids"]
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    chats = [dict(name=name, prompt=encode_prompt(tokenizer, text), text=text, limit=64) for name, text in (
-        ("capital", "What is the capital of France? Answer briefly."),
-        ("arithmetic", "What is 17 + 25? Answer with only the number."),
-        ("chinese", "用一句话解释什么是编译器。"))]
-    paragraph = tokenizer.encode("The capital of France is Paris. A small compiler can run a language model. ")
+    chats = [
+        dict(name=name, prompt=encode_prompt(tokenizer, text), text=text, limit=64)
+        for name, text in (
+            ("capital", "What is the capital of France? Answer briefly."),
+            ("arithmetic", "What is 17 + 25? Answer with only the number."),
+            ("chinese", "用一句话解释什么是编译器。"),
+        )
+    ]
+    paragraph = tokenizer.encode(
+        "The capital of France is Paris. A small compiler can run a language model. "
+    )
     stream = (paragraph * (1024 // len(paragraph) + 1))[:1024]
     cases = []
     lengths = (1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 96, 97, 98, 127, 128, 129, 511, 512)
     for length in lengths:
         decode = 64 if length == 512 else 8
-        cases.append(dict(name=f"length_{length}", steps=[stream[:length]] + [[t] for t in stream[length:length + decode]]))
-    cases.append(dict(name="context_end", steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
-                      check_overflow=True))
+        cases.append(
+            dict(
+                name=f"length_{length}",
+                steps=[stream[:length]] + [[t] for t in stream[length : length + decode]],
+            )
+        )
+    cases.append(
+        dict(
+            name="context_end",
+            steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
+            check_overflow=True,
+        )
+    )
     sizes = (96, 98, 97, 99, 1)
     offset, steps = 0, []
     for length in sizes:
-        steps.append(stream[offset:offset + length])
+        steps.append(stream[offset : offset + length])
         offset += length
     mixed = dict(name="mixed_dispatch", steps=steps)
     cases.extend((mixed, dict(mixed, name="mixed_dispatch_repeat")))
@@ -159,7 +191,12 @@ def main():
     print("HF greedy reference with matched partitions", flush=True)
     greedy_hf = {c["name"]: greedy(matched, c, eos) for c in chats}
     for c in chats:
-        cases.append(dict(name=c["name"] + "_teacher", steps=[c["prompt"]] + [[t] for t in greedy_hf[c["name"]]["ids"][:-1]]))
+        cases.append(
+            dict(
+                name=c["name"] + "_teacher",
+                steps=[c["prompt"]] + [[t] for t in greedy_hf[c["name"]]["ids"][:-1]],
+            )
+        )
     del matched, model
     gc.collect()
     torch.cuda.empty_cache()
@@ -172,19 +209,36 @@ def main():
     torch.cuda.empty_cache()
     manifest = args.output / "cases.json"
     manifest.write_text(json.dumps(dict(cases=cases + chats), indent=2, ensure_ascii=False) + "\n")
-    env = {k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
+    }
     env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
     print("Fresh native process", flush=True)
-    run([args.native.resolve(), args.packages.resolve(), manifest.resolve(), (args.output / "native").resolve()],
-        env, args.output / "native.log")
+    run(
+        [
+            args.native.resolve(),
+            args.packages.resolve(),
+            manifest.resolve(),
+            (args.output / "native").resolve(),
+        ],
+        env,
+        args.output / "native.log",
+    )
     native = json.loads((args.output / "native/native.json").read_text())
-    assert native["no_python_library"] and native["attention_library"] and native["loader_pairs"] == 1
+    assert (
+        native["no_python_library"] and native["attention_library"] and native["loader_pairs"] == 1
+    )
     assert len(native["cases"]) == len(cases + chats)
     for case, actual in zip(cases + chats, native["cases"]):
         name = case["name"]
         assert actual["name"] == name
         if "steps" in case:
-            compare_file(args.output / "native" / f"{name}.states", (t for i in range(len(case["steps"])) for t in aoti[(name, i)]))
+            compare_file(
+                args.output / "native" / f"{name}.states",
+                (t for i in range(len(case["steps"])) for t in aoti[(name, i)]),
+            )
             assert actual["position"] == sum(map(len, case["steps"]))
             assert actual["kv_inputs_updated_in_place"] and actual["non_kv_inputs_unchanged"]
             assert actual["kv_write_regions_preserved"]
@@ -198,11 +252,15 @@ def main():
     for i in range(9):
         assert all(bits_equal(a, b) for a, b in zip(aoti[("length_65", i)], aoti[("repeat_65", i)]))
     for i in range(len(mixed["steps"])):
-        assert all(bits_equal(a, b) for a, b in zip(
-            aoti[("mixed_dispatch", i)], aoti[("mixed_dispatch_repeat", i)]))
+        assert all(
+            bits_equal(a, b)
+            for a, b in zip(aoti[("mixed_dispatch", i)], aoti[("mixed_dispatch_repeat", i)])
+        )
     # Native parity is established before releasing the Python trace. Mapping
     # avoids retaining two full CPU traces while the native files occupy tmpfs.
-    aoti = mapped_native_trace(args.output / "native", cases, specs, metadata["decode"]["vocab_size"])
+    aoti = mapped_native_trace(
+        args.output / "native", cases, specs, metadata["decode"]["vocab_size"]
+    )
     gc.collect()
     print("HF teacher-forced, matched partitions", flush=True)
     model = load_model(args.model_dir)
@@ -212,25 +270,43 @@ def main():
     gc.collect()
     torch.cuda.empty_cache()
     print("Independent FP32 controls", flush=True)
-    fp32_cases = [c for c in cases if c["name"] in
-                 ("length_96", "length_97", "length_98", "length_512", "context_end", "capital_teacher")]
+    fp32_cases = [
+        c
+        for c in cases
+        if c["name"]
+        in ("length_96", "length_97", "length_98", "length_512", "context_end", "capital_teacher")
+    ]
     fp32_model = load_model(args.model_dir, dtype=torch.float32)
     fp32_runner = HFRuntime(fp32_model)
     fp32 = trace(fp32_runner, fp32_cases, specs)
     del fp32_runner, fp32_model
     gc.collect()
     torch.cuda.empty_cache()
-    report = dict(numerical_policy=policy(end_to_end=True), comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
-                  delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
-                  attention_backend=metadata["prefill"]["attention_backend"],
-                  linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
-                  shared_weights=metadata["decode"]["shared_weights"],
-                  checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
-                  native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
-                  attention_library_sha256=sha256(attention_library), kv_inputs_updated_in_place=True,
-                  teacher_tensors=sum(map(len, aoti.values())), no_python_library=True,
-                  masked_future_checks=True, repeated_request_bitwise=True, context_overflow_rejected=True,
-                  matched_hf="hf_full_prompt")
+    report = dict(
+        numerical_policy=policy(end_to_end=True),
+        comparisons=[],
+        failures=[],
+        top1_differences=[],
+        greedy=[],
+        greedy_failures=[],
+        delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
+        attention_backend=metadata["prefill"]["attention_backend"],
+        linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
+        shared_weights=metadata["decode"]["shared_weights"],
+        checkpoint=metadata["decode"]["checkpoint"],
+        package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
+        native_sha256=sha256(args.native),
+        native_bitwise=True,
+        teacher_steps=len(aoti),
+        attention_library_sha256=sha256(attention_library),
+        kv_inputs_updated_in_place=True,
+        teacher_tensors=sum(map(len, aoti.values())),
+        no_python_library=True,
+        masked_future_checks=True,
+        repeated_request_bitwise=True,
+        context_overflow_rejected=True,
+        matched_hf="hf_full_prompt",
+    )
     report["native_trace_storage"] = "file_backed_after_bitwise_parity"
     comparisons = [
         ("aoti_vs_hf_full_prompt", aoti, reference, True),
@@ -242,22 +318,58 @@ def main():
     for case in chats:
         name = case["name"]
         actual = greedy_aoti[name]
-        row = dict(name=name, prompt=case["text"], aoti_ids=actual["ids"], aoti_text=tokenizer.decode(actual["ids"], skip_special_tokens=True))
+        row = dict(
+            name=name,
+            prompt=case["text"],
+            aoti_ids=actual["ids"],
+            aoti_text=tokenizer.decode(actual["ids"], skip_special_tokens=True),
+        )
         expected = greedy_hf[name]
-        row["hf_full_prompt"] = dict(ids=expected["ids"], text=tokenizer.decode(expected["ids"], skip_special_tokens=True),
-                                     equal=actual["ids"] == expected["ids"])
+        row["hf_full_prompt"] = dict(
+            ids=expected["ids"],
+            text=tokenizer.decode(expected["ids"], skip_special_tokens=True),
+            equal=actual["ids"] == expected["ids"],
+        )
         if not row["hf_full_prompt"]["equal"]:
-            report["greedy_failures"].append(dict(case=name, comparison="aoti_vs_hf_full_prompt",
-                                                  **token_difference(actual, expected)))
+            report["greedy_failures"].append(
+                dict(
+                    case=name,
+                    comparison="aoti_vs_hf_full_prompt",
+                    **token_difference(actual, expected),
+                )
+            )
         report["greedy"].append(row)
-    report["failure_counts"] = dict(Counter(f["comparison"] + "/" + f["tensor"].split(".")[-1] for f in report["failures"]))
+    report["failure_counts"] = dict(
+        Counter(f["comparison"] + "/" + f["tensor"].split(".")[-1] for f in report["failures"])
+    )
     report["passed"] = end_to_end_passed(report)
     final_states = {"hf": reference, "aoti": aoti, "fp32": fp32}
-    torch.save({label: tuple(t.clone() for t in values[("context_end", 3)])
-                for label, values in final_states.items()}, args.output / "context_end.pt")
-    (args.output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    print(json.dumps({k: report[k] for k in ("passed", "native_bitwise", "teacher_steps", "teacher_tensors",
-                                           "failure_counts", "greedy_failures")}, indent=2))
+    torch.save(
+        {
+            label: tuple(t.clone() for t in values[("context_end", 3)])
+            for label, values in final_states.items()
+        },
+        args.output / "context_end.pt",
+    )
+    (args.output / "summary.json").write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
+    )
+    print(
+        json.dumps(
+            {
+                k: report[k]
+                for k in (
+                    "passed",
+                    "native_bitwise",
+                    "teacher_steps",
+                    "teacher_tensors",
+                    "failure_counts",
+                    "greedy_failures",
+                )
+            },
+            indent=2,
+        )
+    )
     raise SystemExit(0 if report["passed"] else 1)
 
 

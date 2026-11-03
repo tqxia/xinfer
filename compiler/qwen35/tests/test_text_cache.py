@@ -39,10 +39,14 @@ class TextCacheExportContract(unittest.TestCase):
 
         tokens = torch.export.Dim("tokens", min=2, max=6)
         exported = torch.export.export(
-            model, inputs(2), strict=True,
+            model,
+            inputs(2),
+            strict=True,
             dynamic_shapes=({2: tokens}, {0: tokens}, [None, None]),
         )
-        self.assertEqual(sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), 1)
+        self.assertEqual(
+            sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), 1
+        )
         updates = sum(n.target == torch.ops.aten.index_copy_.default for n in exported.graph.nodes)
         self.assertEqual(updates, 2)
         compiled_graph = exported.module()

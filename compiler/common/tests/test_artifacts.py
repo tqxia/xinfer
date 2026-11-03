@@ -10,21 +10,24 @@ from compiler.common.artifacts import ROOT, canonical_json, json_sha256
 
 class ArtifactHelpers(unittest.TestCase):
     def test_metadata_hash_preserves_canonical_encoding(self):
-        metadata = {"z": [None, True, -0.0, 1.25], "name": "紫霄",
-                    "a": {"right": 2, "left": 1}}
-        expected = ('{"a":{"left":1,"right":2},"name":"\\u7d2b\\u9704",'
-                    '"z":[null,true,-0.0,1.25]}')
+        metadata = {"z": [None, True, -0.0, 1.25], "name": "紫霄", "a": {"right": 2, "left": 1}}
+        expected = '{"a":{"left":1,"right":2},"name":"\\u7d2b\\u9704","z":[null,true,-0.0,1.25]}'
         self.assertEqual(canonical_json(metadata), expected)
-        self.assertEqual(json_sha256(metadata), hashlib.sha256(expected.encode("utf-8")).hexdigest())
+        self.assertEqual(
+            json_sha256(metadata), hashlib.sha256(expected.encode("utf-8")).hexdigest()
+        )
         reordered = {"a": {"left": 1, "right": 2}, "name": "紫霄", "z": metadata["z"]}
         self.assertEqual(json_sha256(metadata), json_sha256(reordered))
 
     def test_input_validation_survives_optimized_python(self):
-        code = ("from compiler.common.artifacts import require\n"
-                "assert False, 'this assertion is removed under -O'\n"
-                "require(False, 'invalid archive checksum')\n")
-        result = subprocess.run([sys.executable, "-O", "-c", code], cwd=ROOT,
-                                capture_output=True, text=True)
+        code = (
+            "from compiler.common.artifacts import require\n"
+            "assert False, 'this assertion is removed under -O'\n"
+            "require(False, 'invalid archive checksum')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", code], cwd=ROOT, capture_output=True, text=True
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("ValueError: invalid archive checksum", result.stderr)
 

@@ -31,6 +31,7 @@ def main():
     os.environ["TRITON_DEFAULT_FP_FUSION"] = "0"
     from torch._inductor.decomposition import decompositions
     from torch._inductor.lowering import make_fallback
+
     # Remove reduction-order differences to isolate the cast boundary.
     for op in (torch.ops.aten.mean.dim, torch.ops.aten.sum.dim_IntList):
         decompositions.pop(op, None)
@@ -42,10 +43,19 @@ def main():
     inputs = (hidden, *zero_state(model.config)[:2])
     wrapper = BlockStep(model.model.layers[0].linear_attn)
     graph = torch.export.export(wrapper, inputs, strict=True).module()
-    nodes = [n for n in graph.graph.nodes if n.op == "call_function" and isinstance(n.meta.get("val"), torch.Tensor)]
-    boundary = [n for n in nodes if n.target == torch.ops.aten.to.dtype and
-                n.meta["val"].dtype == torch.float32 and n.args[0].meta["val"].dtype == torch.bfloat16 and
-                "hidden_states = hidden_states.to(torch.float32)" in n.meta.get("stack_trace", "")]
+    nodes = [
+        n
+        for n in graph.graph.nodes
+        if n.op == "call_function" and isinstance(n.meta.get("val"), torch.Tensor)
+    ]
+    boundary = [
+        n
+        for n in nodes
+        if n.target == torch.ops.aten.to.dtype
+        and n.meta["val"].dtype == torch.float32
+        and n.args[0].meta["val"].dtype == torch.bfloat16
+        and "hidden_states = hidden_states.to(torch.float32)" in n.meta.get("stack_trace", "")
+    ]
     assert len(boundary) == 1, "Pinned HF cast location changed; inspect the graph"
     after = nodes.index(boundary[0])
     before = nodes.index(boundary[0].args[0])
@@ -56,20 +66,40 @@ def main():
     expected = graph(*inputs)
     exported = torch.export.export(graph, inputs, strict=True)
     package = args.output / "probe.pt2"
-    torch._inductor.aoti_compile_and_package(exported, package_path=str(package),
-                                            inductor_configs={"emulate_precision_casts": True})
+    torch._inductor.aoti_compile_and_package(
+        exported, package_path=str(package), inductor_configs={"emulate_precision_casts": True}
+    )
     actual = torch._inductor.aoti_load_package(str(package))(*inputs)
     a, b = actual[after], expected[after]
-    report = dict(issue="Q35-NUM-001", torch=torch.__version__, cuda=torch.version.cuda,
-                  hf_source_sha256=sha256(inspect.getfile(modeling_qwen3_5)), source_sha256=sha256(__file__),
-                  checkpoint=json.loads((args.model_dir / "manifest.json").read_text()),
-                  package_sha256=sha256(package), before_node=nodes[before].name, after_node=nodes[after].name,
-                  bf16_equal=torch.equal(actual[before], expected[before]), fp32_equal=torch.equal(a, b),
-                  mismatched_elements=(a != b).sum().item(), elements=a.numel(),
-                  max_abs=(a - b).abs().max().item(), recast_equal=torch.equal(a.bfloat16().float(), b))
-    report["reproduced"] = report["bf16_equal"] and not report["fp32_equal"] and report["recast_equal"]
-    torch.save(dict(eager_bf16=expected[before].cpu(), aoti_bf16=actual[before].cpu(),
-                    eager_fp32=b.cpu(), aoti_fp32=a.cpu()), args.output / "boundary.pt")
+    report = dict(
+        issue="Q35-NUM-001",
+        torch=torch.__version__,
+        cuda=torch.version.cuda,
+        hf_source_sha256=sha256(inspect.getfile(modeling_qwen3_5)),
+        source_sha256=sha256(__file__),
+        checkpoint=json.loads((args.model_dir / "manifest.json").read_text()),
+        package_sha256=sha256(package),
+        before_node=nodes[before].name,
+        after_node=nodes[after].name,
+        bf16_equal=torch.equal(actual[before], expected[before]),
+        fp32_equal=torch.equal(a, b),
+        mismatched_elements=(a != b).sum().item(),
+        elements=a.numel(),
+        max_abs=(a - b).abs().max().item(),
+        recast_equal=torch.equal(a.bfloat16().float(), b),
+    )
+    report["reproduced"] = (
+        report["bf16_equal"] and not report["fp32_equal"] and report["recast_equal"]
+    )
+    torch.save(
+        dict(
+            eager_bf16=expected[before].cpu(),
+            aoti_bf16=actual[before].cpu(),
+            eager_fp32=b.cpu(),
+            aoti_fp32=a.cpu(),
+        ),
+        args.output / "boundary.pt",
+    )
     (args.output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
     if not report["reproduced"]:

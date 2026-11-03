@@ -1,8 +1,12 @@
 """Qwen3 policy: bounded logit drift, diagnostic HF cache/token drift."""
 
 from compiler.common.tests.validation import (
-    DEFAULT_RELATIVE_LIMIT, compare_tensors, relative_limits, tensor_metrics,
-    token_differences, within_limits,
+    DEFAULT_RELATIVE_LIMIT,
+    compare_tensors,
+    relative_limits,
+    tensor_metrics,
+    token_differences,
+    within_limits,
 )
 
 # HF cache differences and token choices are reported separately; neither changes
@@ -27,10 +31,12 @@ def compare(actual, expected, exact=False):
 
 
 def policy():
-    return dict(limits=relative_limits(MAX_RELATIVE_ERROR),
-                hf_cache_and_token_differences="reported",
-                native_python_aoti="bitwise",
-                finite_values_and_cache_state="required")
+    return dict(
+        limits=relative_limits(MAX_RELATIVE_ERROR),
+        hf_cache_and_token_differences="reported",
+        native_python_aoti="bitwise",
+        finite_values_and_cache_state="required",
+    )
 
 
 def model_passed(report):
@@ -38,5 +44,12 @@ def model_passed(report):
 
 
 def reference_limits_passed(report):
-    return not any(report[key] for key in (
-        "failures", "hf_cache_differences", "hf_token_differences", "hf_greedy_differences"))
+    return not any(
+        report[key]
+        for key in (
+            "failures",
+            "hf_cache_differences",
+            "hf_token_differences",
+            "hf_greedy_differences",
+        )
+    )

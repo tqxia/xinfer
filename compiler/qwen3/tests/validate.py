@@ -12,7 +12,13 @@ from transformers import AutoModelForCausalLM, GenerationConfig
 
 from compiler.common.artifacts import write_json as save_json
 
-from compiler.qwen3.prepare import DEFAULT_MODEL, encode_prompt, load_tokenizer, verify_model, write_ids
+from compiler.qwen3.prepare import (
+    DEFAULT_MODEL,
+    encode_prompt,
+    load_tokenizer,
+    verify_model,
+    write_ids,
+)
 
 
 def write_json(path, data):
@@ -51,8 +57,15 @@ def environment(model, model_manifest):
         "python": platform.python_version(),
         "packages": {
             name: importlib.metadata.version(name)
-            for name in ("torch", "triton", "transformers", "tokenizers",
-                         "safetensors", "huggingface-hub", "numpy")
+            for name in (
+                "torch",
+                "triton",
+                "transformers",
+                "tokenizers",
+                "safetensors",
+                "huggingface-hub",
+                "numpy",
+            )
         },
         "torch_runtime_version": torch.__version__,
         "torch_path": str(Path(torch.__file__).resolve()),
@@ -75,7 +88,9 @@ def environment(model, model_manifest):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
-    parser.add_argument("--prompts", type=Path, default=Path(__file__).resolve().parents[1] / "prompts.json")
+    parser.add_argument(
+        "--prompts", type=Path, default=Path(__file__).resolve().parents[1] / "prompts.json"
+    )
     parser.add_argument("--output", type=Path, default=Path("artifacts/reference"))
     parser.add_argument("--max-new-tokens", type=int, default=64)
     args = parser.parse_args()
@@ -101,12 +116,16 @@ def main():
     torch.manual_seed(0)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_dir,
-        local_files_only=True,
-        torch_dtype=torch.bfloat16,
-        attn_implementation="sdpa",
-    ).eval().to("cuda")
+    model = (
+        AutoModelForCausalLM.from_pretrained(
+            args.model_dir,
+            local_files_only=True,
+            torch_dtype=torch.bfloat16,
+            attn_implementation="sdpa",
+        )
+        .eval()
+        .to("cuda")
+    )
     args.output.mkdir(parents=True)
     write_json(args.output / "environment.json", environment(model, manifest))
     write_json(args.output / "model_manifest.json", manifest)
@@ -135,7 +154,7 @@ def main():
                 generation_config=generation,
                 # 4.51 otherwise merges checkpoint defaults back into this config.
                 use_model_defaults=False,
-            )[0, len(ids):].tolist()
+            )[0, len(ids) :].tolist()
         if generated != hf_ids:
             raise AssertionError(f"Manual loop disagrees with HF generate for {name}")
 
@@ -166,7 +185,10 @@ def main():
         }
         write_json(case / "metadata.json", metadata)
         summary.append(metadata)
-        print(f"{name}: {len(ids)} prompt, {len(generated)} generated, {metadata['stop_reason']}", flush=True)
+        print(
+            f"{name}: {len(ids)} prompt, {len(generated)} generated, {metadata['stop_reason']}",
+            flush=True,
+        )
         print(text, flush=True)
     write_json(args.output / "summary.json", summary)
     print(f"PASS: {len(summary)} eager fixtures saved in {args.output}")
