@@ -44,10 +44,12 @@ def _solve(K, G, Beta, Inverse, Prefix, tokens,
 
 @triton.jit
 def _transforms(K, V, Beta, Inverse, Prefix, U, W, tokens,
-                      H: tl.constexpr, D: tl.constexpr, C: tl.constexpr):
+                H: tl.constexpr, D: tl.constexpr, C: tl.constexpr, BT: tl.constexpr):
+    tl.static_assert(BT >= 16 and (BT & (BT - 1)) == 0, "Unsupported transform tile")
+    tl.static_assert(D % BT == 0, "Transform tile must divide the head dimension")
     chunk, head = tl.program_id(0), tl.program_id(1)
     rows = tl.arange(0, C)
-    dims = tl.program_id(2) * 32 + tl.arange(0, 32)
+    dims = tl.program_id(2) * BT + tl.arange(0, BT)
     time = chunk * C + rows
     valid = time < tokens
     inverse = tl.load(Inverse + (chunk * H + head) * C * C
@@ -123,6 +125,9 @@ def _outputs(Q, K, Prefix, Incoming, Corrections, Output, tokens,
 def launch_chunked(q, k, v, g, beta, state, output, final):
     """Write fresh output/final tensors; inputs are FP32 prepared head vectors."""
     tokens, heads, dim = q.shape[1:]
+    if (type(TRANSFORM_TILE) is not int or TRANSFORM_TILE < 16 or
+            TRANSFORM_TILE & (TRANSFORM_TILE - 1) or dim % TRANSFORM_TILE):
+        raise ValueError("TRANSFORM_TILE must be a power of two >= 16 that divides the head dimension")
     chunks = (tokens + CHUNK_SIZE - 1) // CHUNK_SIZE
     # Kernels use flat pointer offsets, so workspace shape metadata is unused.
     # Flatten without padding: a sample with one chunk must not specialize the
@@ -135,7 +140,7 @@ def launch_chunked(q, k, v, g, beta, state, output, final):
     torch.library.wrap_triton(_solve)[(chunks, heads)](
         k, g, beta, inverse, prefix, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
     torch.library.wrap_triton(_transforms)[(chunks, heads, dim // TRANSFORM_TILE)](
-        k, v, beta, inverse, prefix, u, w, tokens, heads, dim, CHUNK_SIZE, **OPTIONS)
+        k, v, beta, inverse, prefix, u, w, tokens, heads, dim, CHUNK_SIZE, TRANSFORM_TILE, **OPTIONS)
     torch.library.wrap_triton(_states)[(heads, dim // VALUE_TILE)](
         k, u, w, prefix, state, incoming, corrections, final, tokens,
         heads, dim, CHUNK_SIZE, VALUE_TILE, **OPTIONS)

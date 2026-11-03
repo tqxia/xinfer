@@ -24,7 +24,8 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
   without loading Python. No serving API, native tokenizer or concurrency is
   introduced by this cleanup.
 - Share the package runner and generation/benchmark/validation executables
-  across models. Keep strict model-specific metadata and state policies.
+  across models. Use common versioned metadata and retain model-specific ABI
+  validation and state policies.
 
 ## Validation and acceptance
 
@@ -59,30 +60,34 @@ Historical GB10 Flash measurements remain on `dev-gb10`; they do not establish
 performance on L20 or another toolchain. Generate profiling scripts as needed
 for each investigation rather than maintaining profiling infrastructure here.
 
-## Qwen3.5 status (unchanged by this refactor)
+## Supported Qwen3.5 pipeline and scaling work
 
-The separate [Qwen3.5 text-only extension](compiler/qwen35/README.md) now targets
-0.8B for the first complete generation pipeline, with 4B retained for later
-scaling checks. Stages 1-2 pass on 0.8B: a real DeltaNet block compiles for T=64/T=1
-and handles inputs of 1-512 tokens through chunk/remainder dispatch, with bitwise
-C++/Python AOTI parity and passing eager/FP32 diagnostics. Boundary, partition,
-reset and 512-step decode tests pass. Bounded dynamic prefill export fails shape
-constraints in the pinned toolchain. Shapes come from config/package metadata;
-the existing 4B packages also pass regression through the same probe. Step 3 now
-exports and compiles the full text model: the eager adapter matches HF bitwise,
-and 50/50 teacher-forced AOTI next-token predictions agree. Numerical acceptance
-is open for 850 conv and four recurrent-state tensors; the unchanged checks fail.
-Focused probes identify a lost BF16 rounding boundary before DeltaNet gated
-normalization, and the Qwen3 numerical controls do not resolve it. Issue
-Q35-NUM-001 now has a retained reproducer. Step 4's Python-free C++ generation
-runtime passes native/Python AOTI parity on 3,136 teacher-forced tensors, 28
-greedy logit rows and 288 final state tensors, plus reset/context/stopping and
-18 rejection checks. Step 5 now passes native/Python AOTI parity on 9,947
-teacher-forced tensors across 203 steps. All three greedy fixtures match HF
-with the same partitions; full-prompt HF differs on one tied punctuation
-decision (Q35-NUM-002). Conv/recurrent-state acceptance still fails under the
-unchanged limits. The three-profile benchmark is functionally checked, including
-fixed-token prediction differences; final timings will run in the user's
-separate environment. Native parity does not close numerical acceptance.
-Results and evidence are recorded in the extension guide; the plan below
-describes the original Qwen3-0.6B PoC. All 0.8B experiment steps are kept in one implementation commit.
+The [Qwen3.5 text-only pipeline](compiler/qwen35/README.md) currently supports
+0.8B. It exports paired dynamic prefill (2–512 tokens) and single-token decode
+with packaged Triton DeltaNet kernels and shared native valid-prefix
+FlashAttention. Caller-owned KV buffers update in place; conv/recurrent inputs
+remain unchanged, and returned tensors become the next state. Both entries share
+one weight pool and use metadata schema version 1, the common runner and shared
+native generation, benchmark and validation executables.
+
+Native/Python AOTI parity is validated for 0.8B; HF numerical acceptance remains
+open. Keep the existing HF/FP32 comparisons and Q35-NUM-001/Q35-NUM-002 diagnostics.
+The [experiment record](docs/experiments/qwen35.md) preserves earlier block probes,
+fixed-shape packages and export failures as historical evidence. Those results
+do not establish support for 4B in the current full-model Triton path.
+
+4B full-model support remains a later milestone. Before claiming support:
+
+- Support its separate key/value head counts (16/32), 8,192 convolution channels
+  and per-value-head recurrent state. Update Q/K grouping, channel and gate
+  offsets, convolution write ownership and workspaces in both short and chunked
+  DeltaNet paths.
+- Add the model's attention geometry from its verified config to the shared
+  operator, fake shape contract, adapter and ABI validation. Coordinate any
+  larger context/token ranges across export, metadata and runtime contracts.
+- Regenerate independent HF/FP32 fixtures and validate state preservation,
+  partition/reset behavior, native/Python AOTI parity, generation and GPU memory
+  with the complete shared-weight package pair.
+
+Keep unsupported-shape checks until the new profile passes these gates. Preserve
+tested tuning specializations where they still fit the target configuration.
