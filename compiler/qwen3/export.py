@@ -9,7 +9,7 @@ import torch
 
 from compiler.common.weights import compile_shared
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.custom_ops.attention import OPERATOR_CONTRACT
+from compiler.common.attention import OPERATOR_CONTRACT
 from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
 

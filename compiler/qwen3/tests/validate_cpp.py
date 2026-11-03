@@ -65,7 +65,7 @@ def main():
     spec = json.loads((args.packages/'decode.json').read_text())
     prefill_spec = json.loads((args.packages/'prefill.json').read_text())
     validate_shared_weights(args.packages, prefill_spec, spec)
-    from compiler.qwen3.custom_ops.attention import load_package_attention_ops
+    from compiler.qwen3.packages import load_package_attention_ops
     load_package_attention_ops(spec, native=args.native)
     model = load_model(args.model_dir)
     hf_cache = StaticCache(model.config, 1, CACHE_LENGTH, device='cuda', dtype=torch.bfloat16)

@@ -9,7 +9,7 @@ from transformers import StaticCache
 
 from compiler.common.validation import bits_equal
 from compiler.common.weights import SharedWeights, validate_shared_weights
-from compiler.qwen3.custom_ops.attention import load_package_attention_ops
+from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_extent, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.qwen3.tests.numerics import (

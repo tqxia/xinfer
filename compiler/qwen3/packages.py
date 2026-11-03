@@ -1,4 +1,4 @@
-"""Qwen3 package checks and compatibility imports for shared native attention."""
+"""Validate Qwen3 attention packages and load their native dependency."""
 
 from compiler.common.attention import OPERATOR_CONTRACT, load_attention_ops, native_attention_library
 

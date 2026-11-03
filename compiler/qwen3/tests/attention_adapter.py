@@ -9,7 +9,7 @@ import sys
 import torch
 
 from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, PrefixCache
-from compiler.qwen3.custom_ops.attention import load_attention_ops
+from compiler.common.attention import load_attention_ops
 from compiler.qwen3.model import CACHE_LENGTH, TensorCache, cache_extent, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.qwen3.tests.numerics import compare

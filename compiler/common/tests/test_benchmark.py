@@ -277,7 +277,7 @@ class GpuBenchmarkRouting(unittest.TestCase):
                         patch.object(qwen3_benchmark, 'run_worker', side_effect=worker), \
                         patch.object(qwen3_benchmark.platform, 'platform', return_value='test-platform'), \
                         patch.object(qwen3_benchmark.subprocess, 'check_output', side_effect=query), \
-                        patch('compiler.qwen3.custom_ops.attention.native_attention_library', return_value=library), \
+                        patch('compiler.common.attention.native_attention_library', return_value=library), \
                         patch('compiler.common.weights.validate_shared_weights', return_value=weights):
                     qwen3_benchmark.run(args)
                     self.assertEqual(os.environ['CUDA_VISIBLE_DEVICES'], '3,1')

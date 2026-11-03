@@ -103,7 +103,7 @@ def summarize(records, workload, reference='eager'):
 
 def validate_packages(packages):
     """Check the fixed Flash ABI and that prefill/decode describe one model."""
-    from compiler.qwen3.custom_ops.attention import OPERATOR_CONTRACT
+    from compiler.common.attention import OPERATOR_CONTRACT
 
     for kind in ('prefill', 'decode'):
         metadata = packages[kind]['metadata']
@@ -146,7 +146,7 @@ def validate_comparison(baseline, candidate, baseline_weights, candidate_weights
 
 def run(args):
     from compiler.common.weights import validate_shared_weights
-    from compiler.qwen3.custom_ops.attention import native_attention_library
+    from compiler.common.attention import native_attention_library
 
     if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
         raise ValueError('Counts must be positive')
@@ -184,7 +184,7 @@ def run(args):
     source.mkdir()
     for name in (*NATIVE_RUNTIME_SOURCES, 'compiler/qwen3/benchmark.py', 'compiler/qwen3/model.py',
                  'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'compiler/common/attention.py',
-                 'compiler/qwen3/custom_ops/attention.py', 'compiler/qwen3/custom_ops/__init__.py',
+                 'compiler/qwen3/packages.py',
                  'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
                  'compiler/common/weights.py', 'compiler/common/benchmark.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)

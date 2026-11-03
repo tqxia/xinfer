@@ -101,6 +101,9 @@ must be deployed with it and their matching LibTorch/CUDA libraries. A `.pt2`
 package does not bundle this external operator. Native linkage must remain free
 of `libpython` and `libtorch_python`.
 
+Both models use `compiler/common/attention.py` for operator loading and export
+shape registration. Qwen3-specific package checks live in `packages.py`.
+
 ## Export the canonical package pair
 
 Choose a new or empty directory. One invocation exports and compiles both entry

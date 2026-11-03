@@ -11,7 +11,7 @@ os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
 import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from compiler.qwen3.custom_ops.attention import load_attention_ops
+from compiler.common.attention import load_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import compare
 

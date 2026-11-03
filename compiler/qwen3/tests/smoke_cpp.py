@@ -10,7 +10,7 @@ import torch
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import sha256
-from compiler.qwen3.custom_ops.attention import load_package_attention_ops
+from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
 
