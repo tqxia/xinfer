@@ -2,14 +2,19 @@
 
 import torch
 
+from compiler.common.artifacts import require
+
 # The full-model logit/state checks share this default. Kernel-level tests pass
 # their independently chosen limits explicitly or use row_errors directly.
 DEFAULT_RELATIVE_LIMIT = 0.05
 
 
 def row_errors(actual, expected):
-    assert actual.shape == expected.shape
-    assert torch.isfinite(actual).all() and torch.isfinite(expected).all()
+    require(actual.shape == expected.shape, "Tensor shapes differ")
+    require(
+        torch.isfinite(actual).all() and torch.isfinite(expected).all(),
+        "Nonfinite validation tensors",
+    )
     delta = actual - expected
     return dict(
         max_abs=delta.abs().max().item(),
@@ -32,7 +37,7 @@ def bits_equal(actual, expected):
 
 def tensor_metrics(actual, expected, *, rows=None, logits=False):
     """Measure original-tensor bit parity and errors over caller-selected rows."""
-    assert actual.shape == expected.shape
+    require(actual.shape == expected.shape, "Tensor shapes differ")
     error = row_errors(*(rows if rows is not None else (actual, expected)))
     error["bitwise_equal"] = bits_equal(actual, expected)
     if logits:
@@ -63,14 +68,14 @@ def compare_tensors(
     actual, expected, *, limit=DEFAULT_RELATIVE_LIMIT, exact=False, rows=None, logits=False
 ):
     metrics = tensor_metrics(actual, expected, rows=rows, logits=logits)
-    assert metrics["bitwise_equal"] if exact else within_limits(metrics, limit), metrics
+    require(metrics["bitwise_equal"] if exact else within_limits(metrics, limit), metrics)
     return metrics
 
 
 def token_differences(actual, expected):
     """Explain top-1 drift for logits produced with identical input tokens."""
     row_errors(actual, expected)
-    assert actual.ndim == 2 and actual.shape[-1] >= 2
+    require(actual.ndim == 2 and actual.shape[-1] >= 2, "Expected rows with at least two logits")
     return [
         dict(
             row=i,
@@ -87,7 +92,7 @@ def token_differences(actual, expected):
 
 
 def cpu_copy(tensors):
-    assert all(torch.isfinite(t).all() for t in tensors)
+    require(all(torch.isfinite(t).all() for t in tensors), "Nonfinite validation tensors")
     return tuple(t.cpu().clone() for t in tensors)
 
 
@@ -99,5 +104,5 @@ def compare_file(path, tensors):
     with path.open("rb") as stream:
         for tensor in tensors:
             data = raw_bytes(tensor)
-            assert stream.read(len(data)) == data, f"Native/Python bitwise mismatch: {path}"
-        assert not stream.read(1), f"Extra native output: {path}"
+            require(stream.read(len(data)) == data, f"Native/Python bitwise mismatch: {path}")
+        require(not stream.read(1), f"Extra native output: {path}")

@@ -4,9 +4,16 @@ import argparse
 import json
 import os
 from pathlib import Path
+import sys
 
 
 def main():
+    # Keep direct-file execution independent of the repository's import path.
+    if sys.flags.optimize:
+        raise ValueError(
+            "Model validation requires Python assertions; rerun without -O/-OO "
+            "and unset PYTHONOPTIMIZE."
+        )
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--disable-fp-fusion", action="store_true")

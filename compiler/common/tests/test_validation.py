@@ -1,11 +1,18 @@
 """CPU checks for common measurements and the models' distinct acceptance policies."""
 
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 import torch
 
+from compiler.common.artifacts import ROOT
 from compiler.common.tests.validation import (
     bits_equal,
+    compare_file,
     compare_tensors,
     record_failure,
     tensor_metrics,
@@ -31,7 +38,7 @@ class ValidationMeasurements(unittest.TestCase):
         metrics = tensor_metrics(actual, reference)
         self.assertAlmostEqual(metrics["relative_l2"], 0.1, places=6)
         self.assertAlmostEqual(metrics["peak_relative"], 0.1, places=6)
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             compare_tensors(actual, reference)
 
     def test_bitwise_contract_keeps_shape_dtype_and_signed_zero(self):
@@ -41,7 +48,7 @@ class ValidationMeasurements(unittest.TestCase):
         self.assertFalse(bits_equal(positive, positive.reshape(2, 1)))
         self.assertFalse(bits_equal(positive, positive.double()))
         compare_tensors(positive, negative)
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             compare_tensors(positive, negative, exact=True)
 
     def test_canonical_logits_and_token_diagnostics(self):
@@ -69,10 +76,80 @@ class ValidationMeasurements(unittest.TestCase):
 
     def test_invalid_measurements_fail_before_acceptance(self):
         for value in (float("nan"), float("inf"), -float("inf")):
-            with self.subTest(value=value), self.assertRaises(AssertionError):
+            with self.subTest(value=value), self.assertRaises(ValueError):
                 tensor_metrics(torch.tensor([[value, 1.0]]), torch.ones(1, 2))
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             tensor_metrics(torch.ones(2, 1), torch.ones(1, 2))
+
+    def test_native_file_requires_exact_bytes_and_length(self):
+        tensors = (torch.tensor([0.0, 1.0]), torch.tensor([2.0], dtype=torch.bfloat16))
+        data = b"".join(t.view(torch.uint8).numpy().tobytes() for t in tensors)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "native.bin"
+            path.write_bytes(data)
+            compare_file(path, iter(tensors))
+            for changed in (bytes([data[0] ^ 1]) + data[1:], data[:-1], data + b"x"):
+                with self.subTest(data=changed), self.assertRaises(ValueError):
+                    path.write_bytes(changed)
+                    compare_file(path, iter(tensors))
+
+    def test_shared_checks_remain_active_in_optimized_python(self):
+        # Run a separate CPU-only suite because model-test imports deliberately
+        # reject optimized interpreters before their assertion-based checks run.
+        code = r"""
+import tempfile
+import unittest
+from pathlib import Path
+import torch
+from compiler.common.tests.validation import (
+    compare_file, compare_tensors, cpu_copy, tensor_metrics, token_differences,
+)
+
+class OptimizedValidation(unittest.TestCase):
+    def test_tensor_acceptance(self):
+        reference = torch.tensor([[0.0, 1.0]])
+        compare_tensors(reference, reference.clone(), exact=True)
+        compare_tensors(reference * 1.01, reference)
+        with self.assertRaises(ValueError):
+            compare_tensors(torch.tensor([[-0.0, 1.0]]), reference, exact=True)
+        with self.assertRaises(ValueError):
+            compare_tensors(reference * 1.06, reference)
+        with self.assertRaisesRegex(ValueError, "shapes differ"):
+            tensor_metrics(torch.ones(2, 1), torch.ones(1, 2))
+        for invalid in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                tensor_metrics(torch.tensor([[invalid, 1.0]]), reference)
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                cpu_copy((torch.tensor([invalid]),))
+        with self.assertRaisesRegex(ValueError, "at least two logits"):
+            token_differences(torch.ones(1, 1), torch.ones(1, 1))
+
+    def test_file_acceptance(self):
+        tensor = torch.tensor([0.0, 1.0])
+        data = tensor.view(torch.uint8).numpy().tobytes()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "native.bin"
+            path.write_bytes(data)
+            compare_file(path, (tensor,))
+            for changed in (bytes([data[0] ^ 1]) + data[1:], data[:-1], data + b"x"):
+                with self.subTest(data=changed), self.assertRaises(ValueError):
+                    path.write_bytes(changed)
+                    compare_file(path, (tensor,))
+
+unittest.main()
+"""
+        env = {key: value for key, value in os.environ.items() if key != "PYTHONOPTIMIZE"}
+        for flag in ("-O", "-OO"):
+            with self.subTest(flag=flag):
+                result = subprocess.run(
+                    [sys.executable, flag, "-c", code],
+                    cwd=ROOT,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_required_and_diagnostic_comparisons_share_measurements(self):
         metrics = tensor_metrics(torch.ones(1, 2) * 1.06, torch.ones(1, 2))

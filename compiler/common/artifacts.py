@@ -45,6 +45,7 @@ def run(command, env, log, success=True, error=None):
             stderr=subprocess.STDOUT,
             timeout=1200,
         )
-    assert (result.returncode == 0) == success, log.read_text()
+    output = log.read_text()
+    require((result.returncode == 0) == success, output)
     if error:
-        assert error in log.read_text(), log.read_text()
+        require(error in output, output)

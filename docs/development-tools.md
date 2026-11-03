@@ -103,6 +103,13 @@ agreement. The shared full-model
 relative-error limit is 5%; focused kernel validators retain their own limits.
 Native/Python AOTI comparisons continue to require bitwise equality.
 
+Model validation modules require Python assertions. They refuse `-O`, `-OO` and
+`PYTHONOPTIMIZE` before loading models or creating reports, because their graph,
+state and runtime checks use assertions. Shared numerical/file comparisons and
+subprocess status/error checks use explicit validation and remain active in
+optimized interpreters. Existing reports are unchanged; rerun validation if a
+report was produced with assertions disabled.
+
 ## Compare HF eager with compiled Qwen3
 
 `run` compares the unmodified HF eager reference with one FlashAttention AOTI

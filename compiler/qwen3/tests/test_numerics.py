@@ -18,7 +18,7 @@ class NumericalPolicyTest(unittest.TestCase):
 
     def test_large_logit_drift_still_fails_with_matching_top1(self):
         hf = torch.tensor([[1.0, 0.5]])
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             compare(hf * 1.06, hf)
 
     def test_peak_relative_bound_is_enforced_independently(self):
@@ -26,16 +26,16 @@ class NumericalPolicyTest(unittest.TestCase):
         compiled = hf.clone()
         compiled[0, 0] += 0.06
         self.assertLess(error_metrics(compiled, hf)["relative_l2"], 0.05)
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             compare(compiled, hf)
 
     def test_nonfinite_values_cannot_be_reported_as_accepted_drift(self):
         for value in (float("nan"), float("inf"), -float("inf")):
-            with self.subTest(value=value), self.assertRaises(AssertionError):
+            with self.subTest(value=value), self.assertRaises(ValueError):
                 error_metrics(torch.tensor([[value, 1.0]]), torch.ones(1, 2))
 
     def test_native_parity_retains_bitwise_signed_zero_check(self):
-        with self.assertRaises(AssertionError):
+        with self.assertRaises(ValueError):
             compare(torch.tensor([[0.0, 1.0]]), torch.tensor([[-0.0, 1.0]]), exact=True)
 
 
