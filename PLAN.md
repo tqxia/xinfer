@@ -54,8 +54,8 @@ Further work can investigate CUDA Graphs, launch overhead, cache-layout changes
 and measured kernel bottlenecks. Preserve the readable single supported path,
 freeze artifacts for each comparison and rerun functional/numerical checks.
 Historical GB10 Flash measurements remain on `dev-gb10`; they do not establish
-performance on L20 or another toolchain. Profiling currently uses the existing
-Qwen3 NVTX driver described in [development tools](docs/development-tools.md).
+performance on L20 or another toolchain. Generate profiling scripts as needed
+for each investigation rather than maintaining profiling infrastructure here.
 
 ## Qwen3.5 status (unchanged by this refactor)
 
@@ -84,12 +84,3 @@ fixed-token prediction differences; final timings will run in the user's
 separate environment. Native parity does not close numerical acceptance.
 Results and evidence are recorded in the extension guide; the plan below
 describes the original Qwen3-0.6B PoC. All 0.8B experiment steps are kept in one implementation commit.
-
-## Deferred work
-
-- [ ] After Qwen3.5-4B text-only inference is fully functional (AOTI export/compile,
-  C++ prefill/decode generation and end-to-end validation), refactor the profiling
-  infrastructure for reuse across models. Separate shared NVTX capture and trace
-  analysis from model/runtime adapters and kernel classification. Use both
-  Qwen3-0.6B and Qwen3.5 to guide the abstractions; defer this refactor until that
-  milestone.

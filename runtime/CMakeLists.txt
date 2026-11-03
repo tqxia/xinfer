@@ -15,7 +15,6 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 option(QWEN_BUILD_VALIDATION "Build native validation drivers" OFF)
 option(QWEN_BUILD_BENCHMARK "Build fixed-token native benchmarks" OFF)
-option(QWEN_BUILD_PROFILE "Build the Qwen3 NVTX profiling driver" OFF)
 separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 add_library(xinfer_attention_ops SHARED common/attention.cpp)
 set_target_properties(xinfer_attention_ops PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

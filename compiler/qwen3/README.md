@@ -212,6 +212,6 @@ its `gpu_uuid`.
 
 Both preserve rotated process order, warmups, source/package hashes, memory and
 GPU telemetry. Use the [development tools guide](../../docs/development-tools.md)
-for paired comparisons and the optional NVTX profiler. Shared-GPU smoke timings
+for paired comparisons and numerical diagnostics. Shared-GPU smoke timings
 are provisional; controlled performance measurements require the idle checks.
 Historical GB10 speedups do not establish a speedup for another toolchain/GPU.

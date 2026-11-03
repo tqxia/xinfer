@@ -48,5 +48,4 @@ whole request. Both model workers record reset-plus-prefill and consumed
 positions; report headers/profile comparisons remain model-specific. Warmup
 predictions are checked as well as measured repeats. Source snapshots include
 the shared implementation. Qwen3 keeps HF eager/FP32 references for validation, with bounded HF logit error
-and separate cache/token drift diagnostics. CUDA Graph integration is deferred. Profiling capture/classification refactoring remains
-deferred in PLAN.md.
+and separate cache/token drift diagnostics. CUDA Graph integration is deferred.
