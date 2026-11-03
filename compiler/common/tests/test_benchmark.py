@@ -1,4 +1,4 @@
-"""CPU checks for benchmark measurement boundaries and the GPU idle guard."""
+"""CPU checks for shared benchmark measurement, orchestration and report contracts."""
 
 import copy
 import json
@@ -12,15 +12,32 @@ import unittest
 from unittest.mock import patch
 
 from compiler.common import benchmark
+from compiler.common.artifacts import sha256, write_json
+from compiler.common.metadata import validate_metadata_pair
+from compiler.common.tests.test_metadata import metadata_pair
 from compiler.qwen3 import benchmark as qwen3_benchmark
 from compiler.qwen35 import benchmark as qwen35_benchmark
-from compiler.common.tests.test_metadata import metadata_pair
+
+
+def sample(case, predictions=None):
+    return dict(reset_ms=1, prefill_ms=2, first_prediction_ms=3, decode_ms=6,
+                decode_ms_per_token=3, request_ms=9,
+                prediction_ids=predictions or [11] * (1 + len(case['decode_tokens'])),
+                consumed_positions=len(case['prompt']) + len(case['decode_tokens']))
+
+
+def worker_report(workload):
+    return dict(cpu_threads=1, load_ms=10, initial_memory=dict(device_used_bytes=100), cases=[
+        dict(name=case['name'], prompt_tokens=len(case['prompt']), decode_steps=len(case['decode_tokens']),
+             first_request=sample(case), samples=[sample(case) for _ in range(workload['repeats'])],
+             memory=dict(peak_allocated_bytes=10, peak_reserved_bytes=20, sampled_peak_device_used_bytes=150))
+        for case in workload['cases']])
 
 
 class BenchmarkContract(unittest.TestCase):
     def test_fixed_tokens_and_timing_boundaries(self):
         calls = []
-        case = dict(prompt=[7, 8], decode_tokens=[0, 9])  # EOS-like 0 must not stop the request.
+        case = dict(prompt=[7, 8], decode_tokens=[0, 9])  # EOS-like 0 remains input data.
 
         def predict(tokens, position):
             calls.append((tokens, position))
@@ -33,25 +50,87 @@ class BenchmarkContract(unittest.TestCase):
         self.assertEqual(sync.call_count, 4)
         self.assertEqual(result['prediction_ids'], [0, 0, 0])
         self.assertEqual(result['consumed_positions'], 4)
-        self.assertEqual([result[k] for k in ('reset_ms', 'prefill_ms', 'first_prediction_ms',
-                                             'decode_ms', 'decode_ms_per_token', 'request_ms')],
-                         [1000, 2000, 3000, 6000, 3000, 9000])
+        self.assertEqual([result[key] for key in benchmark.TIMING_FIELDS], [1000, 2000, 3000, 6000, 3000, 9000])
+
+    def test_git_provenance_restores_tracked_text_and_binary_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / 'repository'
+            repository.mkdir()
+
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repository, check=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+
+            git('init', '--quiet')
+            (repository / '.gitignore').write_text('ignored.tmp\n')
+            text = repository / 'tracked.py'
+            text.write_text('baseline\n')
+            binary = repository / 'tracked.bin'
+            binary.write_bytes(bytes(range(256)))
+            git('add', '.')
+            git('-c', 'user.name=Benchmark Test', '-c', 'user.email=benchmark@example.invalid',
+                'commit', '--quiet', '-m', 'baseline')
+            commit = git('rev-parse', 'HEAD').decode().strip()
+            clean = root / 'clean-report'
+            clean.mkdir()
+            with patch.object(benchmark, 'ROOT', repository):
+                provenance = benchmark.git_provenance(clean)
+            self.assertEqual(provenance['git_commit'], commit)
+            self.assertFalse(provenance['git_dirty'])
+            self.assertEqual(provenance['git_status'], [])
+            self.assertEqual((clean / 'source.patch').read_bytes(), b'')
+
+            text.write_text('staged\nbaseline\n')
+            git('add', 'tracked.py')
+            text.write_text('staged\nunstaged\n')
+            binary.write_bytes(bytes(reversed(range(256))))
+            (repository / 'helper.py').write_text('untracked helper contents\n')
+            (repository / 'ignored.tmp').write_text('ignored scratch\n')
+            out = root / 'dirty-report'
+            out.mkdir()
+            with patch.object(benchmark, 'ROOT', repository):
+                provenance = benchmark.git_provenance(out)
+            self.assertEqual(provenance['git_commit'], commit)
+            self.assertTrue(provenance['git_dirty'])
+            self.assertIn('MM tracked.py', provenance['git_status'])
+            self.assertIn('?? helper.py', provenance['git_status'])
+            self.assertFalse(any('ignored.tmp' in line for line in provenance['git_status']))
+            self.assertEqual(provenance['git_diff'], dict(file='source.patch', sha256=sha256(out / 'source.patch')))
+
+            restored = root / 'restored'
+            git('clone', '--quiet', str(repository), str(restored))
+            git('-C', str(restored), 'apply', str(out / 'source.patch'))
+            self.assertEqual((restored / 'tracked.py').read_bytes(), text.read_bytes())
+            self.assertEqual((restored / 'tracked.bin').read_bytes(), binary.read_bytes())
+            self.assertFalse((restored / 'helper.py').exists())
 
     def test_first_request_and_warmup_excluded(self):
         requests, reset_after = [], []
+        case = dict(name='case', prompt=[1], decode_tokens=[2])
 
-        def request(case):
-            requests.append(case)
-            return dict(prediction_ids=[3], serial=len(requests))
+        def request(item):
+            requests.append(item)
+            return sample(item) | dict(serial=len(requests))
 
-        workload = dict(warmup=2, repeats=2, cases=[dict(name='case', prompt=[1], decode_tokens=[2])])
+        workload = dict(warmup=2, repeats=2, cases=[case])
         with patch.object(benchmark, 'memory_stats', return_value={'device_used_bytes': 100}), \
              patch('torch.cuda.reset_peak_memory_stats', side_effect=lambda: reset_after.append(len(requests))):
             row, = benchmark.measure_cases(request, workload)
         self.assertEqual(len(requests), 5)
         self.assertEqual(row['first_request']['serial'], 1)
-        self.assertEqual([s['serial'] for s in row['samples']], [4, 5])
+        self.assertEqual([item['serial'] for item in row['samples']], [4, 5])
         self.assertEqual(reset_after, [3])
+
+    def test_warmup_predictions_and_position_are_checked(self):
+        case = dict(name='case', prompt=[1], decode_tokens=[2])
+        for key, value in (('prediction_ids', [8, 9]), ('prediction_ids', [11]), ('consumed_positions', 1)):
+            bad = sample(case) | {key: value}
+            with self.subTest(key=key, value=value), \
+                    patch.object(benchmark, 'memory_stats', return_value={'device_used_bytes': 100}):
+                replies = iter([sample(case), bad])
+                with self.assertRaises(ValueError):
+                    benchmark.measure_cases(lambda _: next(replies), dict(warmup=1, repeats=1, cases=[case]))
 
     def test_idle_requires_consecutive_samples_on_same_device(self):
         readings = ['0,0', '99,0'] + ['0,0'] * 5
@@ -59,8 +138,8 @@ class BenchmarkContract(unittest.TestCase):
              patch.object(benchmark.subprocess, 'check_output', side_effect=readings) as query, \
              patch.object(benchmark.time, 'sleep'):
             path = Path(directory) / 'idle.json'
-            samples = benchmark.wait_idle('GPU-test', output=path)
-            self.assertEqual(len(samples), 7)
+            readings = benchmark.wait_idle('GPU-test', output=path)
+            self.assertEqual(len(readings), 7)
             self.assertTrue(json.loads(path.read_text())['idle'])
             self.assertTrue(all(call.args[0][2] == 'GPU-test' for call in query.call_args_list))
 
@@ -89,35 +168,34 @@ class SharedWeightComparison(unittest.TestCase):
 
     def test_same_weights_with_different_archive_hashes_are_comparable(self):
         baseline, candidate, before, after = self.profiles()
-        qwen3_benchmark.validate_packages(baseline)
-        qwen3_benchmark.validate_packages(candidate)
-        qwen3_benchmark.validate_comparison(baseline, candidate, before, after)
+        for profile in (baseline, candidate):
+            validate_metadata_pair(profile['prefill']['metadata'], profile['decode']['metadata'])
+        benchmark.validate_comparison(baseline, candidate, before, after)
         candidate['prefill']['metadata']['shared_weights']['sha256'] = 'e' * 64
         with self.assertRaisesRegex(ValueError, 'Package metadata differs: shared_weights'):
-            qwen3_benchmark.validate_packages(candidate)
+            validate_metadata_pair(candidate['prefill']['metadata'], candidate['decode']['metadata'])
 
     def test_changed_source_weights_are_rejected_despite_same_identity(self):
         baseline, candidate, before, after = self.profiles()
         after['sources']['model.model.embed_tokens.weight'] = 'v_' + 'e' * 64
         with self.assertRaisesRegex(ValueError, 'Incomparable shared weights: sources'):
-            qwen3_benchmark.validate_comparison(baseline, candidate, before, after)
+            benchmark.validate_comparison(baseline, candidate, before, after)
 
     def test_changed_numerical_settings_are_rejected(self):
         baseline, candidate, before, after = self.profiles()
         for entry in candidate.values():
             entry['metadata']['triton_enable_fp_fusion'] = False
-        qwen3_benchmark.validate_packages(candidate)
         with self.assertRaisesRegex(ValueError, 'Incomparable packages: prefill/triton_enable_fp_fusion'):
-            qwen3_benchmark.validate_comparison(baseline, candidate, before, after)
+            benchmark.validate_comparison(baseline, candidate, before, after)
 
 
 class GpuSelection(unittest.TestCase):
     GPU = 'GPU-22222222-2222-2222-2222-222222222222'
     OTHER = 'GPU-33333333-3333-3333-3333-333333333333'
 
-    def test_both_models_use_the_shared_resolver(self):
-        self.assertIs(qwen3_benchmark.resolve_gpu, benchmark.resolve_gpu)
-        self.assertIs(qwen35_benchmark.resolve_gpu, benchmark.resolve_gpu)
+    def test_both_models_use_the_shared_controller(self):
+        self.assertIs(qwen3_benchmark.run_benchmark, benchmark.run_benchmark)
+        self.assertIs(qwen35_benchmark.run_benchmark, benchmark.run_benchmark)
 
     def test_explicit_index_or_uuid_overrides_inherited_visibility(self):
         for selector in ('2', self.GPU):
@@ -154,8 +232,7 @@ class GpuSelection(unittest.TestCase):
 
     def test_invalid_explicit_selections_do_not_probe_or_fall_back(self):
         for selector in ('', ' ', '0,1', 'MIG-example'):
-            with self.subTest(selector=selector), \
-                    patch.object(benchmark.subprocess, 'check_output') as query:
+            with self.subTest(selector=selector), patch.object(benchmark.subprocess, 'check_output') as query:
                 with self.assertRaises(ValueError):
                     benchmark.resolve_gpu(selector)
                 query.assert_not_called()
@@ -170,8 +247,7 @@ class GpuSelection(unittest.TestCase):
                     query.assert_called_once()
 
     def test_cuda_uuid_cannot_silently_resolve_to_another_physical_gpu(self):
-        with patch.object(benchmark.subprocess, 'check_output',
-                          side_effect=[self.GPU, self.OTHER]) as query:
+        with patch.object(benchmark.subprocess, 'check_output', side_effect=[self.GPU, self.OTHER]) as query:
             with self.assertRaisesRegex(ValueError, 'UUID does not match'):
                 benchmark.resolve_gpu()
         self.assertEqual(query.call_count, 2)
@@ -179,190 +255,238 @@ class GpuSelection(unittest.TestCase):
     def test_missing_cuda_or_failed_smi_lookup_never_falls_back(self):
         failure = subprocess.CalledProcessError(1, ['device-query'], stderr='No accessible CUDA device')
         for selector in (None, '2'):
-            with self.subTest(selector=selector), \
-                    patch.dict(os.environ, CUDA_VISIBLE_DEVICES=''), \
-                    patch.object(benchmark.subprocess, 'check_output', side_effect=failure) as query:
+            with self.subTest(selector=selector), patch.object(benchmark.subprocess, 'check_output', side_effect=failure):
                 with self.assertRaises(ValueError):
                     benchmark.resolve_gpu(selector)
-                query.assert_called_once()
-        with patch.object(benchmark.subprocess, 'check_output',
-                          side_effect=[self.GPU, failure]) as query:
+        with patch.object(benchmark.subprocess, 'check_output', side_effect=[self.GPU, failure]):
             with self.assertRaises(ValueError):
                 benchmark.resolve_gpu()
-        self.assertEqual(query.call_count, 2)
-
-    def test_idle_wrapper_forwards_selected_device(self):
-        selected = []
-
-        def idle(device='0', allow_busy=False):
-            selected.append((device, allow_busy))
-            return ['reading']
-
-        with patch.object(qwen3_benchmark, 'check_idle', side_effect=idle):
-            self.assertEqual(qwen3_benchmark.wait_idle(self.GPU, allow_busy=True), ['reading'])
-        self.assertEqual(selected, [(self.GPU, True)])
 
 
-class GpuBenchmarkRouting(unittest.TestCase):
-    def test_run_and_compare_use_one_gpu_for_workers_idle_telemetry_and_metadata(self):
+class SummaryContract(unittest.TestCase):
+    def workload(self):
+        return dict(warmup=1, repeats=2, cases=[dict(name='case', prompt=[1, 2], decode_tokens=[3, 4])])
+
+    def test_summary_preserves_union_of_metrics_and_arbitrary_reference(self):
+        workload = self.workload()
+        with tempfile.TemporaryDirectory() as directory:
+            records = []
+            for label in ('baseline', 'candidate'):
+                report = worker_report(workload)
+                if label == 'candidate':
+                    for entry in [report['cases'][0]['first_request'], *report['cases'][0]['samples']]:
+                        entry['prediction_ids'] = [11, 12, 11]
+                path = Path(directory) / f'{label}.json'
+                write_json(path, report)
+                records.append(dict(profile=label, result=str(path)))
+            result = benchmark.summarize(records, workload, 'baseline')
+            case = result['candidate']['cases']['case']
+            self.assertEqual(set(benchmark.TIMING_FIELDS) - case.keys(), set())
+            self.assertEqual(case['first_prediction_ms']['n'], 2)
+            self.assertEqual(case['memory']['sampled_peak_device_delta_bytes'], 50)
+            self.assertEqual(case['prediction_agreement'], dict(baseline=2))
+            self.assertEqual(case['decode_tokens_per_second'], 1000 / 3)
+
+    def test_malformed_or_inconsistent_reports_fail(self):
+        workload = self.workload()
+        mutations = [
+            lambda r: r.update(cpu_threads=2),
+            lambda r: r['cases'][0].update(prompt_tokens=1),
+            lambda r: r['cases'][0].update(samples=r['cases'][0]['samples'][:1]),
+            lambda r: r['cases'][0]['first_request'].update(prediction_ids=[11]),
+            lambda r: r['cases'][0]['first_request'].update(consumed_positions=3),
+            lambda r: r['cases'][0]['first_request'].update(prediction_ids=[12, 11, 11]),
+            lambda r: r['cases'][0]['samples'][0].update(consumed_positions=3),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.json'
+            for mutate in mutations:
+                with self.subTest(mutation=mutate):
+                    report = worker_report(workload)
+                    mutate(report)
+                    write_json(path, report)
+                    with self.assertRaises(ValueError):
+                        benchmark.summarize([dict(profile='hf', result=str(path))], workload, 'hf')
+
+    def test_first_request_is_consistent_across_rounds(self):
+        workload = self.workload()
+        with tempfile.TemporaryDirectory() as directory:
+            records = []
+            for index in range(2):
+                report = worker_report(workload)
+                if index:
+                    report['cases'][0]['first_request']['prediction_ids'][0] = 12
+                path = Path(directory) / f'{index}.json'
+                write_json(path, report)
+                records.append(dict(profile='hf', result=str(path)))
+            with self.assertRaisesRegex(ValueError, 'Repeated predictions differ'):
+                benchmark.summarize(records, workload, 'hf')
+
+
+class ControllerContract(unittest.TestCase):
+    def fixtures(self, root, model_type, mode='run'):
+        model = root / 'model'
+        model.mkdir()
+        manifest = dict(revision='fixture-revision')
+        write_json(model / ('manifest.json' if model_type == 'qwen35' else 'model_manifest.json'), manifest)
+        native = root / 'xinfer_benchmark'
+        native.write_bytes(b'native benchmark fixture')
+        library = root / 'libxinfer_attention_ops.so'
+        library.write_bytes(b'attention fixture')
+        directories = []
+        for label in ('baseline', 'candidate'):
+            directory = root / label
+            directory.mkdir()
+            pair = metadata_pair(model_type)
+            for kind, metadata in pair.items():
+                package = directory / f'{kind}.pt2'
+                package.write_bytes(b'compiled package fixture')
+                metadata['checkpoint']['manifest'] = manifest
+                metadata.update(package_bytes=package.stat().st_size, package_sha256=sha256(package))
+                write_json(directory / f'{kind}.json', metadata)
+            directories.append(directory)
+        capital = root / 'reference/capital'
+        capital.mkdir(parents=True)
+        (capital / 'prompt.ids').write_text('7 8\n')
+        (capital / 'generated.ids').write_text('9\n')
+        args = SimpleNamespace(command=mode, gpu=None, warmup=1, repeats=1, rounds=2, decode_steps=1, lengths=[2],
+                               allow_busy=True, output=root / 'benchmark', native=native, model_dir=model,
+                               reference=root / 'reference', packages=directories[0],
+                               baseline_packages=directories[0], candidate_packages=directories[1],
+                               baseline_label='baseline', candidate_label='candidate', validation=root / 'absent.json')
+        return args, library
+
+    def run_controller(self, args, library, model_type, fail=False):
         gpu = GpuSelection.GPU
-        profiles, _, weights, _ = SharedWeightComparison().profiles()
-        for mode in ('run', 'compare'):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                capital = root / 'reference/capital'
-                capital.mkdir(parents=True)
-                (capital / 'prompt.ids').write_text('7 8\n')
-                (capital / 'generated.ids').write_text('9\n')
-                model = root / 'model'
-                model.mkdir()
-                (model / 'model_manifest.json').write_text('{}')
-                native = root / 'xinfer_benchmark'
-                native.write_bytes(b'native benchmark fixture')
-                library = root / 'attention.so'
-                library.write_bytes(b'attention fixture')
-                directories = []
-                for label in ('baseline', 'candidate'):
-                    directory = root / label
-                    directory.mkdir()
-                    for kind, entry in profiles.items():
-                        (directory / f'{kind}.json').write_text(json.dumps(entry['metadata']))
-                        (directory / f'{kind}.pt2').write_bytes(b'compiled package fixture')
-                    directories.append(directory)
-                args = SimpleNamespace(
-                    command=mode, gpu=None, warmup=1, repeats=1, rounds=2, decode_steps=1, lengths=[2],
-                    allow_busy=True, output=root / 'benchmark', native=native, model_dir=model,
-                    reference=root / 'reference', packages=directories[0],
-                    baseline_packages=directories[0], candidate_packages=directories[1],
-                    baseline_label='baseline', candidate_label='candidate')
-                workers, gpu_records = [], []
+        workers, gpu_records = [], []
 
-                def query(command, **options):
-                    if command[0] == 'git':
-                        return 'fixture-commit\n'
-                    self.assertEqual(command[:3], ['nvidia-smi', '-i', gpu])
-                    gpu_records.append(command)
-                    return f'name, uuid\nGPU 2, {gpu}\n'
+        def query(command, **options):
+            if command[0] == 'git':
+                if command[1] == 'rev-parse':
+                    return 'fixture-commit\n'
+                if command[1] == 'status':
+                    return ' M compiler/common/benchmark.py\n?? helper.py\n'
+                self.assertEqual(command[1], 'diff')
+                return b'fixture tracked diff\n'
+            if command[0] == 'ldd':
+                self.assertEqual(options['env']['PYTHONHOME'], '/nonexistent-python-home')
+                return 'libtorch_cpu.so => /fixture/libtorch_cpu.so\n'
+            self.assertEqual(command[:3], ['nvidia-smi', '-i', gpu])
+            gpu_records.append(command)
+            return f'name, uuid\nGPU 2, {gpu}\n'
 
-                def worker(command, env, device, telemetry, log, timeout):
-                    workers.append(dict(command=command, env=dict(env), device=device))
-                    case = dict(name='length_2', memory=dict(
-                        peak_allocated_bytes=0, peak_reserved_bytes=0, sampled_peak_device_used_bytes=100),
-                        samples=[dict(reset_ms=1, prefill_ms=2, decode_ms_per_token=3,
-                                      request_ms=5, prediction_ids=[11, 12])])
-                    Path(command[-1]).write_text(json.dumps(dict(
-                        load_ms=1, initial_memory=dict(device_used_bytes=100), cases=[case])))
-                    return 10
+        def worker(command, env, device, telemetry, log, timeout):
+            workers.append(dict(command=command, env=dict(env), device=device))
+            if fail and len(workers) == 2:
+                raise RuntimeError('worker failed')
+            workload = json.loads((args.output / 'workload.json').read_text())
+            write_json(Path(command[-1]), worker_report(workload))
+            return 10
 
-                with patch.dict(os.environ, CUDA_VISIBLE_DEVICES='3,1', CUDA_DEVICE_ORDER='PCI_BUS_ID'), \
-                        patch.object(qwen3_benchmark, 'resolve_gpu', return_value=gpu) as resolve, \
-                        patch.object(qwen3_benchmark, 'wait_idle', return_value=[]) as idle, \
-                        patch.object(qwen3_benchmark, 'run_worker', side_effect=worker), \
-                        patch.object(qwen3_benchmark.platform, 'platform', return_value='test-platform'), \
-                        patch.object(qwen3_benchmark.subprocess, 'check_output', side_effect=query), \
-                        patch('compiler.common.attention.native_attention_library', return_value=library), \
-                        patch('compiler.common.weights.validate_shared_weights', return_value=weights):
-                    qwen3_benchmark.run(args)
-                    self.assertEqual(os.environ['CUDA_VISIBLE_DEVICES'], '3,1')
-                    self.assertEqual(os.environ['CUDA_DEVICE_ORDER'], 'PCI_BUS_ID')
-                resolve.assert_called_once_with(None)
-                self.assertEqual(len(workers), 4)
-                self.assertTrue(all(call['device'] == gpu for call in workers))
-                self.assertTrue(all(call['env']['CUDA_VISIBLE_DEVICES'] == gpu for call in workers))
-                self.assertEqual(idle.call_count, 8)
-                for call in idle.call_args_list:
-                    self.assertEqual(call.args[0] if call.args else call.kwargs['device'], gpu)
-                self.assertEqual(len(gpu_records), 1)
-                environment = json.loads((args.output / 'environment.json').read_text())
-                self.assertEqual(environment['gpu_uuid'], gpu)
-                self.assertIn(gpu, environment['gpu'])
-                summary = json.loads((args.output / 'summary.json').read_text())
-                self.assertEqual(set(summary['profiles']), {'eager', 'aoti'} if mode == 'run'
-                                 else {'baseline', 'candidate'})
-                if mode == 'run':
-                    self.assertEqual(sum(call['command'][0] == sys.executable for call in workers), 2)
-                else:
-                    self.assertTrue(all(call['command'][0] == str(native.resolve()) for call in workers))
+        weights = dict(identity_sha256='1' * 64, sources={})
+        with patch.dict(os.environ, CUDA_VISIBLE_DEVICES='3,1', CUDA_DEVICE_ORDER='PCI_BUS_ID'), \
+                patch.object(benchmark, 'resolve_gpu', return_value=gpu) as resolve, \
+                patch.object(benchmark, 'wait_idle', return_value=[]) as idle, \
+                patch.object(benchmark, 'run_worker', side_effect=worker), \
+                patch.object(benchmark.platform, 'platform', return_value='test-platform'), \
+                patch.object(benchmark.subprocess, 'check_output', side_effect=query), \
+                patch('compiler.common.attention.native_attention_library', return_value=library), \
+                patch('compiler.common.weights.validate_shared_weights', return_value=weights), \
+                patch('transformers.AutoTokenizer.from_pretrained') as tokenizer, \
+                patch('compiler.qwen35.prepare.encode_prompt', return_value=[7, 8]):
+            tokenizer.return_value.encode.return_value = [9]
+            invoke = qwen35_benchmark.benchmark if model_type == 'qwen35' else qwen3_benchmark.run
+            if fail:
+                with self.assertRaisesRegex(RuntimeError, 'worker failed'):
+                    invoke(args)
+            else:
+                invoke(args)
+            self.assertEqual(os.environ['CUDA_VISIBLE_DEVICES'], '3,1')
+            self.assertEqual(os.environ['CUDA_DEVICE_ORDER'], 'PCI_BUS_ID')
+        resolve.assert_called_once_with(args.gpu)
+        self.assertTrue(all(row['device'] == gpu and row['env']['CUDA_VISIBLE_DEVICES'] == gpu for row in workers))
+        self.assertTrue(all(call.args[0] == gpu for call in idle.call_args_list))
+        self.assertEqual(len(gpu_records), 1)
+        return workers, idle
 
+    def test_models_and_compare_share_gpu_routing_rotation_and_reports(self):
+        for model_type, mode in (('qwen3', 'run'), ('qwen3', 'compare'), ('qwen35', 'run')):
+            for selector in (None, '2'):
+                with self.subTest(model=model_type, mode=mode, selector=selector), tempfile.TemporaryDirectory() as temporary:
+                    args, library = self.fixtures(Path(temporary), model_type, mode)
+                    args.gpu = selector
+                    workers, idle = self.run_controller(args, library, model_type)
+                    self.assertEqual(len(workers), 4)
+                    self.assertEqual(idle.call_count, 8)
+                    is_python = [row['command'][0] == sys.executable for row in workers]
+                    self.assertEqual(is_python, [True, False, False, True] if mode == 'run' else [False] * 4)
+                    if mode == 'compare':
+                        self.assertEqual([Path(row['command'][1]).name for row in workers],
+                                         ['baseline', 'candidate', 'candidate', 'baseline'])
+                    self.assertTrue(all(row['env']['PYTHONHOME'] == '/nonexistent-python-home'
+                                        for row in workers if row['command'][0] != sys.executable))
+                    environment = json.loads((args.output / 'environment.json').read_text())
+                    self.assertEqual(environment['gpu_uuid'], GpuSelection.GPU)
+                    self.assertEqual(environment['attention_library']['sha256'], sha256(library))
+                    self.assertEqual(environment['git_commit'], 'fixture-commit')
+                    self.assertTrue(environment['git_dirty'])
+                    self.assertEqual(environment['git_status'], [' M compiler/common/benchmark.py', '?? helper.py'])
+                    self.assertEqual(environment['git_diff'],
+                                     dict(file='source.patch', sha256=sha256(args.output / 'source.patch')))
+                    self.assertFalse((args.output / 'source').exists())
+                    self.assertNotIn('source_sha256', environment)
+                    self.assertTrue((args.output / 'native.ldd').is_file())
+                    summary = json.loads((args.output / 'summary.json').read_text())
+                    labels = ({'baseline', 'candidate'} if mode == 'compare' else
+                              {'hf', 'cpp_aoti'} if model_type == 'qwen35' else {'eager', 'aoti'})
+                    self.assertEqual(set(summary['profiles']), labels)
+                    self.assertEqual(summary['schema_version'], 1)
+                    self.assertTrue(summary['functional_checks_passed'])
+                    self.assertIsNone(summary['numerical_acceptance']['passed'])
 
-class Qwen35GpuRouting(unittest.TestCase):
-    def test_run_routes_workers_idle_telemetry_and_metadata_to_selected_gpu(self):
-        gpu = GpuSelection.GPU
-        for selector in (None, '2'):
-            with self.subTest(selector=selector), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                model = root / 'model'
-                model.mkdir()
-                manifest = dict(revision='fixture-revision')
-                (model / 'manifest.json').write_text(json.dumps(manifest))
-                native = root / 'xinfer_benchmark'
-                native.write_bytes(b'native benchmark fixture')
-                library = root / 'libxinfer_attention_ops.so'
-                library.write_bytes(b'attention fixture')
-                packages = root / 'packages'
-                packages.mkdir()
-                pair = metadata_pair('qwen35')
-                for kind in ('prefill', 'decode'):
-                    package = packages / f'{kind}.pt2'
-                    package.write_bytes(b'compiled package fixture')
-                    metadata = pair[kind]
-                    metadata['checkpoint']['manifest'] = manifest
-                    metadata.update(package_bytes=package.stat().st_size, package_sha256=qwen35_benchmark.sha256(package))
-                    (packages / f'{kind}.json').write_text(json.dumps(metadata))
-                args = SimpleNamespace(
-                    gpu=selector, warmup=1, repeats=1, rounds=2, decode_steps=1, lengths=[2],
-                    allow_busy=True, output=root / 'benchmark', native=native, model_dir=model,
-                    packages=packages, validation=root / 'no-validation.json')
-                workers, gpu_records = [], []
+    def test_worker_failure_persists_completed_runs_and_failure_report_for_both_models(self):
+        for model_type in ('qwen3', 'qwen35'):
+            with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
+                args, library = self.fixtures(Path(temporary), model_type)
+                self.run_controller(args, library, model_type, fail=True)
+                self.assertEqual(len(json.loads((args.output / 'runs.json').read_text())), 1)
+                self.assertEqual(json.loads((args.output / 'failure.json').read_text()),
+                                 dict(error='worker failed', completed_runs=1))
+                self.assertFalse((args.output / 'summary.json').exists())
 
-                def query(command, **options):
-                    if command[0] == 'git':
-                        return 'fixture-commit\n'
-                    if command[0] == 'ldd':
-                        return 'libtorch_cpu.so => /fixture/libtorch_cpu.so\n'
-                    self.assertEqual(command[:3], ['nvidia-smi', '-i', gpu])
-                    gpu_records.append(command)
-                    return f'name, uuid\nGPU 2, {gpu}\n'
+    def test_matching_qwen35_correctness_evidence_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, library = self.fixtures(Path(temporary), 'qwen35')
+            metadata = json.loads((args.packages / 'decode.json').read_text())
+            validation = dict(passed=False, native_bitwise=True, failures=[{}], greedy_failures=[],
+                              package_sha256={kind: json.loads((args.packages / f'{kind}.json').read_text())['package_sha256']
+                                              for kind in ('prefill', 'decode')}, shared_weights=metadata['shared_weights'])
+            args.validation = Path(temporary) / 'validation.json'
+            write_json(args.validation, validation)
+            self.run_controller(args, library, 'qwen35')
+            summary = json.loads((args.output / 'summary.json').read_text())
+            self.assertFalse(summary['numerical_acceptance']['passed'])
+            self.assertTrue(summary['functional_checks_passed'])
+            self.assertEqual(summary['numerical_acceptance']['numerical_failures'], 1)
+            self.assertEqual(json.loads((args.output / 'correctness.json').read_text()), validation)
 
-                def worker(command, env, device, telemetry, log, timeout):
-                    workers.append(dict(command=command, env=dict(env), device=device))
-                    sample = dict(reset_ms=1, prefill_ms=2, first_prediction_ms=3,
-                                  decode_ms_per_token=3, request_ms=6,
-                                  prediction_ids=[11, 12], consumed_positions=3)
-                    case = dict(name='length_2', first_request=sample, samples=[sample], memory=dict(
-                        peak_allocated_bytes=0, peak_reserved_bytes=0, sampled_peak_device_used_bytes=100))
-                    Path(command[-1]).write_text(json.dumps(dict(cpu_threads=1, load_ms=1, cases=[case])))
-                    return 10
-
-                with patch.dict(os.environ, CUDA_VISIBLE_DEVICES='3,1', CUDA_DEVICE_ORDER='PCI_BUS_ID'), \
-                        patch.object(qwen35_benchmark, 'resolve_gpu', return_value=gpu) as resolve, \
-                        patch.object(qwen35_benchmark, 'wait_idle', return_value=[]) as idle, \
-                        patch.object(qwen35_benchmark, 'run_worker', side_effect=worker), \
-                        patch.object(qwen35_benchmark.platform, 'platform', return_value='test-platform'), \
-                        patch.object(qwen35_benchmark.subprocess, 'check_output', side_effect=query), \
-                        patch.object(qwen35_benchmark, 'native_attention_library', return_value=library), \
-                        patch('transformers.AutoTokenizer.from_pretrained') as tokenizer, \
-                        patch('compiler.qwen35.prepare.encode_prompt', return_value=[7, 8]), \
-                        patch('compiler.common.weights.validate_shared_weights', return_value={}):
-                    tokenizer.return_value.encode.return_value = [9]
+    def test_mismatched_correctness_evidence_is_rejected_before_workers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, library = self.fixtures(Path(temporary), 'qwen35')
+            args.validation = Path(temporary) / 'validation.json'
+            write_json(args.validation, dict(package_sha256={}, shared_weights={}))
+            with patch.object(benchmark, 'resolve_gpu', return_value=GpuSelection.GPU), \
+                    patch.object(benchmark, 'capture_environment', return_value={
+                        'packages': {'cpp_aoti': {kind: {'metadata': json.loads((args.packages / f'{kind}.json').read_text())}
+                                                   for kind in ('prefill', 'decode')}}}), \
+                    patch('transformers.AutoTokenizer.from_pretrained') as tokenizer, \
+                    patch('compiler.qwen35.prepare.encode_prompt', return_value=[7, 8]), \
+                    patch.object(benchmark, 'run_worker') as worker:
+                tokenizer.return_value.encode.return_value = [9]
+                with self.assertRaisesRegex(ValueError, 'Validation is for different packages'):
                     qwen35_benchmark.benchmark(args)
-                    self.assertEqual(os.environ['CUDA_VISIBLE_DEVICES'], '3,1')
-                    self.assertEqual(os.environ['CUDA_DEVICE_ORDER'], 'PCI_BUS_ID')
-                resolve.assert_called_once_with(selector)
-                self.assertEqual(len(workers), 4)
-                self.assertTrue(all(call['device'] == gpu for call in workers))
-                self.assertTrue(all(call['env']['CUDA_VISIBLE_DEVICES'] == gpu for call in workers))
-                self.assertEqual(sum(call['command'][0] == sys.executable for call in workers), 2)
-                self.assertEqual(idle.call_count, 8)
-                self.assertTrue(all(call.args[1] == gpu for call in idle.call_args_list))
-                self.assertEqual(len(gpu_records), 1)
-                environment = json.loads((args.output / 'environment.json').read_text())
-                self.assertEqual(environment['gpu_uuid'], gpu)
-                self.assertIn(gpu, environment['gpu'])
-                self.assertEqual(environment['attention_library_sha256'], qwen35_benchmark.sha256(library))
-                summary = json.loads((args.output / 'summary.json').read_text())
-                self.assertEqual(set(summary['profiles']), {'hf', 'cpp_aoti'})
-                self.assertTrue(summary['functional_checks_passed'])
+                worker.assert_not_called()
+            self.assertEqual(json.loads((args.output / 'failure.json').read_text())['completed_runs'], 0)
 
     def test_check_idle_cli_resolves_default_and_explicit_selection(self):
         gpu = GpuSelection.GPU
@@ -377,23 +501,16 @@ class Qwen35GpuRouting(unittest.TestCase):
                         patch.object(qwen35_benchmark, 'wait_idle', return_value=[]) as idle:
                     qwen35_benchmark.main()
                 resolve.assert_called_once_with(selector)
-                idle.assert_called_once_with(output, gpu)
+                idle.assert_called_once_with(gpu, output=output)
 
-    def test_invalid_selection_preserves_absent_run_and_idle_outputs(self):
-        for mode in ('run', 'check-idle'):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
-                output = Path(temporary) / 'missing-parent' / 'output'
-                with patch.object(qwen35_benchmark, 'resolve_gpu', side_effect=ValueError('invalid GPU')):
-                    with self.assertRaisesRegex(ValueError, 'invalid GPU'):
-                        if mode == 'run':
-                            args = SimpleNamespace(gpu='bad', warmup=1, repeats=1, rounds=1,
-                                                   decode_steps=1, lengths=[2], output=output)
-                            qwen35_benchmark.benchmark(args)
-                        else:
-                            with patch.object(sys, 'argv', ['benchmark', 'check-idle', '--gpu', 'bad',
-                                                            '--output', str(output)]):
-                                qwen35_benchmark.main()
-                self.assertFalse(output.parent.exists())
+    def test_invalid_gpu_preserves_absent_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, _ = self.fixtures(Path(temporary), 'qwen35')
+            args.output = Path(temporary) / 'missing-parent' / 'output'
+            with patch.object(benchmark, 'resolve_gpu', side_effect=ValueError('invalid GPU')):
+                with self.assertRaisesRegex(ValueError, 'invalid GPU'):
+                    qwen35_benchmark.benchmark(args)
+            self.assertFalse(args.output.parent.exists())
 
 
 if __name__ == '__main__':

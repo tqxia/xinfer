@@ -403,6 +403,9 @@ policy.
 Profiles compare HF full-prompt eager with native AOTI using identical fixed
 tokens. EOS is data during timing. Reports retain numerical acceptance,
 reset/prefill/decode timings, memory, workload, provenance and telemetry.
+`environment.json` records `git_commit`, `git_status`, `git_dirty` and
+package/binary/workload hashes. `source.patch` combines staged and unstaged
+tracked changes as a Git binary patch. Untracked file contents are not captured.
 `--allow-busy` is for functional checks and marks timings provisional. Final
 measurements require an idle environment.
 

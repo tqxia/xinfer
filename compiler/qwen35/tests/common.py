@@ -1,15 +1,17 @@
 """Full-model fixtures and per-state acceptance policy shared by Qwen3.5 tests."""
 
-from compiler.common.validation import bits_equal, row_errors
+from compiler.common.tests.validation import (
+    DEFAULT_RELATIVE_LIMIT, record_failure, relative_limits, tensor_metrics, token_differences,
+)
 
-LIMIT = 0.05
+LIMIT = DEFAULT_RELATIVE_LIMIT
 
 
 def metrics(actual, expected, index):
     assert actual.shape == expected.shape
     width = expected.shape[-1] if index < 2 else expected.shape[-2] * expected.shape[-1]
     a, b = (t.float().reshape(-1, width) for t in (actual, expected))
-    return row_errors(a, b)
+    return tensor_metrics(actual, expected, rows=(a, b))
 
 
 def fixtures(tokenizer):
@@ -46,14 +48,31 @@ def compare(report, name, actual, expected, specs, enforce=True):
         for i, (a, b) in enumerate(zip(values, expected[key])):
             label = "logits" if i == 0 else specs[i - 1]["name"]
             axis = 0 if i == 0 else (1 if specs[i - 1]["kind"] == "conv" else 2)
-            error = dict(**metrics(a, b, axis), bitwise_equal=bits_equal(a, b))
+            error = metrics(a, b, axis)
             row["tensors"][label] = error
-            if enforce and max(error["relative_l2"], error["peak_relative"]) > LIMIT:
-                report["failures"].append(dict(comparison=name, case=key[0], step=key[1], tensor=label, **error))
+            record_failure(report["failures"], error, limit=LIMIT, required=enforce,
+                           comparison=name, case=key[0], step=key[1], tensor=label)
         a, b = values[0], expected[key][0]
-        row["top1_equal"] = a.argmax(-1).item() == b.argmax(-1).item()
-        if not row["top1_equal"]:
-            top = b.float().topk(2).values[0]
-            row["reference_top2_margin"] = (top[0] - top[1]).item()
+        differences = token_differences(a, b)
+        row["top1_equal"] = not differences
+        if differences:
+            row["reference_top2_margin"] = differences[0]["reference_top2_margin"]
+            row["token_differences"] = differences
             report["top1_differences"].append({k: v for k, v in row.items() if k != "tensors"})
         report["comparisons"].append(row)
+
+
+def policy(*, end_to_end=False):
+    return dict(limits=relative_limits(LIMIT), hf_state_errors="required",
+                hf_token_differences="required" if end_to_end else "reported",
+                native_python_aoti="bitwise" if end_to_end else "checked_by_validate_end_to_end",
+                finite_values_and_cache_state="required")
+
+
+def model_passed(report):
+    return not report["failures"]
+
+
+def end_to_end_passed(report):
+    return not (report["failures"] or report["greedy_failures"] or
+                any(row["comparison"].startswith("aoti_vs_hf") for row in report["top1_differences"]))

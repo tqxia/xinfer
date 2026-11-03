@@ -53,14 +53,21 @@ def correctness(directory, model):
                   bool(summary.get("cases")) and
                   all(case["cpp_vs_aoti"]["max_abs"] == 0 for case in summary["cases"])
                   for profile, summary in summaries.items()}
-        failures, greedy, tokens = "numerical_failures", "hf_greedy_differences", "hf_token_differences"
+        failures, greedy, tokens = "failures", "hf_greedy_differences", "hf_token_differences"
     else:
         parity = {profile: summary.get("native_bitwise") is True for profile, summary in summaries.items()}
         failures, greedy, tokens = "failures", "greedy_failures", "top1_differences"
     parity = {profile: passed and digests[profile].get("native_python_parity_verified") is True
               for profile, passed in parity.items()}
     old, new = summaries["embedded"], summaries["shared"]
-    numerical = differences(old[failures], new[failures], ("comparison", "case", "step", "tensor", "domain"))
+    # Embedded-weight runs are retained historical evidence. Their Qwen3 reports
+    # predate the common failure-array name; new validators only write `failures`.
+    def failure_rows(summary):
+        if model == "qwen3" and failures not in summary:
+            return summary["numerical_failures"]
+        return summary[failures]
+
+    numerical = differences(failure_rows(old), failure_rows(new), ("comparison", "case", "step", "tensor", "domain"))
     greedy_differences = differences(old[greedy], new[greedy], ("comparison", "case"))
     token_differences = differences(old[tokens], new[tokens], ("comparison", "case", "step"))
     diagnostics = dict(

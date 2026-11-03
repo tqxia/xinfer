@@ -15,9 +15,10 @@ from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.common.tests.validation import record_failure
 from compiler.qwen3.tests.numerics import (
-    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, policy,
-    token_differences, within_logit_limits,
+    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, model_passed, policy, reference_limits_passed,
+    token_differences,
 )
 
 
@@ -157,14 +158,14 @@ def main():
         return (decode if len(tokens) == 1 else prefill)(
             ids, positions, py_cache, cache_extent(position + len(tokens))).float()
 
-    report = dict(cases=[], error_limit=MAX_RELATIVE_ERROR, native_loader_pairs=native['loader_pairs'],
-                  numerical_policy=policy(), numerical_failures=[], hf_cache_differences=[],
+    report = dict(cases=[], native_loader_pairs=native['loader_pairs'],
+                  numerical_policy=policy(), failures=[], hf_cache_differences=[],
                   hf_token_differences=[], hf_greedy_differences=[])
 
     def compare_logits(actual, expected, name, comparison):
         metrics = error_metrics(actual, expected)
-        if not within_logit_limits(metrics):
-            report['numerical_failures'].append(dict(case=name, domain='logits', comparison=comparison, **metrics))
+        record_failure(report['failures'], metrics, limit=MAX_RELATIVE_ERROR,
+                       case=name, tensor='logits', comparison=comparison)
         return metrics
 
     full_cache = None
@@ -228,8 +229,7 @@ def main():
                 error.update(layer=index//2, kind='K' if index % 2 == 0 else 'V')
                 error['bitwise_equal'] = torch.equal(compiled.view(torch.int16), original.view(torch.int16))
                 cache_errors.append(error)
-                if max(error['max_relative_l2'], error['max_peak_relative']) > MAX_RELATIVE_ERROR:
-                    report['hf_cache_differences'].append(dict(case=name, **error))
+                record_failure(report['hf_cache_differences'], error, limit=MAX_RELATIVE_ERROR, case=name)
             full_cache = ([t.cpu().float() for t in py_cache], [t.cpu().float() for t in hf_tensors])
             metrics['cache_cpp_vs_aoti_bitwise'] = True
             metrics['cache_aoti_vs_hf_static_bitwise'] = all(e['bitwise_equal'] for e in cache_errors)
@@ -238,7 +238,7 @@ def main():
             assert entry['overflow_rejected_without_mutation'] and entry['position'] == CACHE_LENGTH
         report['cases'].append(metrics)
         assert all(torch.isfinite(tensor).all().item() for tensor in py_cache), (name, 'Nonfinite compiled cache')
-        print(dict(name=name, rows=entry['rows'], hf_relative_l2=metrics['aoti_vs_hf_static']['max_relative_l2'],
+        print(dict(name=name, rows=entry['rows'], hf_relative_l2=metrics['aoti_vs_hf_static']['relative_l2'],
                    top1_differences=metrics['top1_differences']), flush=True)
     # A repeated prompt after different requests must reproduce the initial run exactly.
     first = (args.output/'capital_initial.f32').read_bytes()
@@ -259,16 +259,14 @@ def main():
                 error.pop('top1_agreement')
             report['full_cache_fp32_control'].append(dict(layer=index//2, kind='K' if index % 2 == 0 else 'V', **errors))
     report.update(total_rows=sum(c['rows'] for c in report['cases']), repeated_request_exact=True)
-    report['passed'] = not report['numerical_failures']
+    report['passed'] = model_passed(report)
     report['hf_parity_passed'] = all(
         case['aoti_vs_hf_static_bitwise'] and case.get('cache_aoti_vs_hf_static_bitwise', True)
         for case in report['cases']) and not report['hf_greedy_differences']
-    report['hf_reference_limits_passed'] = not (
-        report['numerical_failures'] or report['hf_cache_differences'] or
-        report['hf_token_differences'] or report['hf_greedy_differences'])
+    report['hf_reference_limits_passed'] = reference_limits_passed(report)
     (args.output/'summary.json').write_text(json.dumps(report, indent=2)+'\n')
     if not report['passed']:
-        raise SystemExit(f"FAIL: {len(report['numerical_failures'])} logit comparisons exceed the unchanged "
+        raise SystemExit(f"FAIL: {len(report['failures'])} logit comparisons exceed the unchanged "
                          f"{MAX_RELATIVE_ERROR:.0%} error limits; "
                          f"all cases and FP32 controls recorded in {args.output}/summary.json")
     print(f"PASS: native/Python parity, bounded logits and cache-state checks; "

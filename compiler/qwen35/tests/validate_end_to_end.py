@@ -20,11 +20,11 @@ from compiler.common.attention import load_attention_ops, native_attention_libra
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.reference import HFRuntime
 from compiler.qwen35.model import configure_text, load_model
-from compiler.common.validation import bits_equal
+from compiler.common.tests.validation import bits_equal
 from compiler.qwen35.reference import PythonRuntime
-from compiler.common.validation import compare_file, cpu_copy
+from compiler.common.tests.validation import compare_file, cpu_copy
 from compiler.common.artifacts import run
-from compiler.qwen35.tests.common import compare
+from compiler.qwen35.tests.common import compare, end_to_end_passed, policy
 
 
 def greedy(runtime, case, eos):
@@ -222,7 +222,7 @@ def main():
     del fp32_runner, fp32_model
     gc.collect()
     torch.cuda.empty_cache()
-    report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
+    report = dict(numerical_policy=policy(end_to_end=True), comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
                   delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
                   attention_backend=metadata["prefill"]["attention_backend"],
                   linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
@@ -253,13 +253,12 @@ def main():
                                                   **token_difference(actual, expected)))
         report["greedy"].append(row)
     report["failure_counts"] = dict(Counter(f["comparison"] + "/" + f["tensor"].split(".")[-1] for f in report["failures"]))
-    report["passed"] = not (report["failures"] or report["greedy_failures"] or
-                             any(r["comparison"].startswith("aoti_vs_hf") for r in report["top1_differences"]))
+    report["passed"] = end_to_end_passed(report)
     root = ROOT
     names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/validate.cpp"]
-    names += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    names += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/tests/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
               "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]

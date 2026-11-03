@@ -13,8 +13,8 @@ class NumericalPolicyTest(unittest.TestCase):
         compiled = torch.tensor([[0.99, 1.0]])
         compare(compiled, hf)
         difference, = token_differences(compiled, hf)
-        self.assertEqual((difference['hf_id'], difference['compiled_id']), (0, 1))
-        self.assertGreater(difference['hf_selected_token_gap'], 0)
+        self.assertEqual((difference['reference_id'], difference['actual_id']), (0, 1))
+        self.assertGreater(difference['reference_selected_token_gap'], 0)
 
     def test_large_logit_drift_still_fails_with_matching_top1(self):
         hf = torch.tensor([[1.0, 0.5]])
@@ -25,7 +25,7 @@ class NumericalPolicyTest(unittest.TestCase):
         hf = torch.ones(1, 128)
         compiled = hf.clone()
         compiled[0, 0] += 0.06
-        self.assertLess(error_metrics(compiled, hf)['max_relative_l2'], 0.05)
+        self.assertLess(error_metrics(compiled, hf)['relative_l2'], 0.05)
         with self.assertRaises(AssertionError):
             compare(compiled, hf)
 

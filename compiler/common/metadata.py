@@ -22,6 +22,11 @@ FIELDS = (
 )
 ENTRY_FIELDS = {"entry_point", "token_range", "package_bytes", "package_sha256", "diagnostics"}
 STATE_FIELDS = {"name", "layer", "kind", "shape", "stride", "dtype", "update"}
+# Entry points are paired by kind; artifact facts and provenance may differ.
+# Shared weights are compared separately by logical identity and source mapping.
+COMPARISON_EXCLUDED_FIELDS = {
+    "entry_point", "package_bytes", "package_sha256", "shared_weights", "provenance", "diagnostics",
+}
 
 
 def _check(condition, field):

@@ -7,15 +7,15 @@ from pathlib import Path
 import torch
 from transformers import StaticCache
 
-from compiler.common.validation import bits_equal
+from compiler.common.tests.validation import bits_equal
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_extent, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.common.tests.validation import record_failure
 from compiler.qwen3.tests.numerics import (
-    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, policy, token_differences,
-    within_logit_limits,
+    MAX_RELATIVE_ERROR, compare, error_metrics, ids_from, model_passed, policy, reference_limits_passed, token_differences,
 )
 
 
@@ -93,7 +93,7 @@ def main():
                      use_cache=True, logits_to_keep=1).logits[:, -1]
 
     report = dict(fixtures=[], boundaries=[], context_end=[], numerical_policy=policy(),
-                  numerical_failures=[], hf_cache_differences=[], hf_token_differences=[],
+                  failures=[], hf_cache_differences=[], hf_token_differences=[],
                   hf_greedy_differences=[])
     report["numerical_policy"]["native_python_aoti"] = "checked_by_validate_cpp"
     hf_parity = True
@@ -102,8 +102,7 @@ def main():
         nonlocal hf_parity
         metrics = error_metrics(actual, expected)
         hf_parity &= bits_equal(actual, expected)
-        if not within_logit_limits(metrics):
-            report["numerical_failures"].append(dict(case=name, **metrics))
+        record_failure(report["failures"], metrics, limit=MAX_RELATIVE_ERROR, case=name)
         differences = token_differences(actual, expected)
         if differences:
             report["hf_token_differences"].append(dict(case=name, differences=differences))
@@ -118,8 +117,7 @@ def main():
             error.update(layer=index // 2, kind="K" if index % 2 == 0 else "V",
                          bitwise_equal=bits_equal(a, b))
             hf_parity &= error["bitwise_equal"]
-            if not within_logit_limits(error):
-                report["hf_cache_differences"].append(dict(case=name, **error))
+            record_failure(report["hf_cache_differences"], error, limit=MAX_RELATIVE_ERROR, case=name)
             metrics.append(error)
         return metrics
 
@@ -193,13 +191,12 @@ def main():
         fp32 = trace(eager_wrapper, prompt, continuation, fp32_kv)
         fixture["bf16_vs_fp32"] = error_metrics(eager, fp32)
         fixture["aoti_vs_fp32"] = error_metrics(actual, fp32)
-    report["passed"] = not report["numerical_failures"]
+    report["passed"] = model_passed(report)
     report["hf_parity_passed"] = bool(hf_parity) and not report["hf_greedy_differences"]
-    report["hf_reference_limits_passed"] = not any(report[key] for key in (
-        "numerical_failures", "hf_cache_differences", "hf_token_differences", "hf_greedy_differences"))
+    report["hf_reference_limits_passed"] = reference_limits_passed(report)
     (args.packages / "validation.json").write_text(json.dumps(report, indent=2) + "\n")
     if not report["passed"]:
-        raise SystemExit(f"FAIL: {len(report['numerical_failures'])} logit comparisons exceed {MAX_RELATIVE_ERROR:.0%}; "
+        raise SystemExit(f"FAIL: {len(report['failures'])} logit comparisons exceed {MAX_RELATIVE_ERROR:.0%}; "
                          f"see {args.packages / 'validation.json'}")
     print("PASS: bounded logits, Flash handoff, cache state/reuse and FP32 controls; HF drift recorded", flush=True)
 

@@ -18,7 +18,7 @@ import torch
 from transformers.models.qwen3_5 import modeling_qwen3_5
 
 from compiler.common.artifacts import ROOT, read_json, sha256, write_json
-from compiler.common.validation import bits_equal, compare_file, cpu_copy
+from compiler.common.tests.validation import bits_equal, compare_file, cpu_copy
 from compiler.qwen35.config import ARTIFACT_DIR, configure
 from compiler.qwen35.tests.block import MODEL_DIR
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused as dispatch, long, short
@@ -307,6 +307,7 @@ def main():
                   limits=LIMITS, absolute_limits=ABS_LIMITS, hf_chunk_reference=64,
                   partition_acceptance=dict(core="numerical", conv="bitwise", recurrent="numerical"),
                   source_sha256={name: sha256(ROOT / name) for name in (
+                      "compiler/common/tests/validation.py",
                       "compiler/qwen35/tests/validate_cond.py", "compiler/qwen35/tests/validate_fused.py",
                       "compiler/qwen35/tests/block.py",
                       "compiler/qwen35/kernels/recurrent.py",

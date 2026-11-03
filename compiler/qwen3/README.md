@@ -244,8 +244,11 @@ to select physical GPU 1. Workers, idle checks,
 telemetry and GPU records all use the selected GPU; `environment.json` records
 its `gpu_uuid`.
 
-Both preserve rotated process order, warmups, source/package hashes, memory and
-GPU telemetry. Use the [development tools guide](../../docs/development-tools.md)
+Both preserve rotated process order, warmups, package/binary/workload hashes,
+memory and GPU telemetry. Source provenance records `git_commit`, `git_status`
+and `git_dirty` in `environment.json`; `source.patch` combines staged and unstaged
+tracked changes as a Git binary patch. Untracked file contents are not captured.
+Use the [development tools guide](../../docs/development-tools.md)
 for paired comparisons and numerical diagnostics. Shared-GPU smoke timings
 are provisional; controlled performance measurements require the idle checks.
 Historical GB10 speedups do not establish a speedup for another toolchain/GPU.

@@ -9,8 +9,9 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns model-specific package contracts and state policies. Shared file,
-validation and benchmark helpers live in `compiler/common/`.
+`runtime/<model>/` owns model-specific package contracts and state policies. Shared file
+and benchmark helpers live in `compiler/common/`; numerical validation support
+lives in `compiler/common/tests/validation.py`.
 `environments/` owns project setup, native-stack checks and target profiles;
 its Bash entry points are `setup.sh` and `check.sh`.
 `runtime/common/` owns the runner, device and package preflight, positions,
@@ -52,7 +53,10 @@ and re-export existing embedded-weight packages before using the current runtime
 
 Benchmark measurement boundaries are unchanged: reset, prefill, decode and
 whole request. Both model workers record reset-plus-prefill and consumed
-positions; the native report schema is shared. Warmup
-predictions are checked as well as measured repeats. Source snapshots include
-the shared implementation. Qwen3 keeps HF eager/FP32 references for validation, with bounded HF logit error
+positions. The Python benchmark controller shares provenance capture, rotated
+process order, failure handling and summaries across models. Warmup predictions
+are checked as well as measured repeats. Benchmark provenance records the Git
+commit, tracked file status and dirty flag, plus `source.patch` with staged and
+unstaged tracked changes. Untracked file contents are not captured. Qwen3 keeps
+HF eager/FP32 references for validation, with bounded HF logit error
 and separate cache/token drift diagnostics. CUDA Graph integration is deferred.

@@ -23,6 +23,47 @@ numerical checks and historical output comparisons remain usable.
 The [common runtime record](experiments/common-runtime.md) describes the runner,
 state-policy boundaries, compatibility behavior and validation evidence.
 
+## Shared Python benchmark and validation support
+
+Both Python benchmark entry points use `compiler/common/benchmark.py` for Git
+provenance, environment and package records, rotated process order, idle checks,
+worker execution, failure reports and summaries. Model modules provide prompts,
+checkpoint manifests, package checks and eager reset/step hooks. Qwen3 retains
+paired compiled-profile comparisons; Qwen3.5 attaches its matching end-to-end
+validation result.
+
+Benchmark `summary.json` uses `schema_version: 1` and `model_type`. Its `profiles`
+retain the CLI's profile labels; each case stores prediction agreement as
+`prediction_agreement: {reference_profile: matching_count}`. Environment records
+use `packages[profile][entry_point]` for metadata, size and checksum, and
+`shared_weights[profile]` for the archive identity checks.
+
+For benchmark source provenance, `environment.json` records `git_commit`,
+`git_status` and `git_dirty`. `source.patch` is a Git binary patch containing both
+staged and unstaged changes to tracked files relative to that commit. Untracked
+file contents are not captured. Package, binary and workload hashes remain in
+the environment record.
+
+Both summaries include reset, prefill, reset-plus-prefill (`first_prediction_ms`),
+decode, per-token decode and whole-request distributions. Memory records include
+the sampled device-memory peak and its delta from the process's initial reading,
+as well as PyTorch allocator peaks. Device-memory samples can include other GPU
+users. Repeated predictions, their counts, consumed positions and single-threaded
+workers are checked before aggregation. Prediction agreement between profiles
+remains diagnostic.
+
+Numerical helpers live in `compiler/common/tests/validation.py`, alongside their
+tests. Shared metric names are `max_abs`, `relative_l2` and `peak_relative`.
+Full-model reports use `numerical_policy.limits` and a `failures` array for required
+bounded-error comparisons. These replace the older Qwen3 `max_relative_l2`,
+`max_peak_relative` and `numerical_failures` names and Qwen3.5's standalone `limit`.
+Model validators retain tensor grouping and acceptance rules: Qwen3 bounds HF
+logit errors and reports HF cache/token differences separately, while Qwen3.5's
+end-to-end gate also bounds state errors and requires HF top-1 and greedy-token
+agreement. The shared full-model
+relative-error limit is 5%; focused kernel validators retain their own limits.
+Native/Python AOTI comparisons continue to require bitwise equality.
+
 ## Compare HF eager with compiled Qwen3
 
 `run` compares the unmodified HF eager reference with one FlashAttention AOTI
@@ -83,7 +124,7 @@ Labels name the measurements; they do not select another execution backend.
 continuation; it defaults to `artifacts/reference`.
 
 Results include per-request timings, latency distributions, predicted-token
-agreement, memory samples, GPU telemetry, source snapshots and package/binary
+agreement, memory samples, GPU telemetry, Git provenance and package/binary
 hashes. Prediction agreement is diagnostic; use the correctness validator for
 numerical acceptance. GPU-idle checks run before and after each worker. Use
 `--allow-busy` only for harness checks; its timings are marked provisional.

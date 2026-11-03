@@ -20,7 +20,7 @@ from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.model import configure_text
 from compiler.qwen35.tests.common import fixtures
 from compiler.qwen35.reference import PythonRuntime
-from compiler.common.validation import cpu_copy, compare_file
+from compiler.common.tests.validation import cpu_copy, compare_file
 from compiler.common.artifacts import run
 
 
@@ -291,7 +291,7 @@ def main():
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
                Path("runtime/qwen35/runtime.h"), Path("runtime/main.cpp"),
                Path("runtime/validate.cpp")]
-    sources += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/tests/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     sources += list(NATIVE_RUNTIME_SOURCES)
     sources += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
                 "runtime/common/attention.cpp", "runtime/common/attention.h"]

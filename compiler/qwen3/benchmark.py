@@ -1,236 +1,66 @@
 """Benchmark identical fixed-token requests in eager Python and native AOTI."""
+
 import argparse
-import os
 from pathlib import Path
-import platform
-import shutil
-import subprocess
-import sys
-import time
 
-from compiler.qwen3.prepare import DEFAULT_MODEL
-from compiler.common.benchmark import (
-    memory_stats as memory, measure_request, measure_cases, distribution,
-    wait_idle as check_idle, run_worker, resolve_gpu,
-)
-from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, read_json, write_json, sha256 as digest
-from compiler.common.metadata import read_package_metadata, validate_metadata_pair
+from compiler.common.benchmark import eager_worker as measure_eager, run_benchmark, validate_comparison
+from compiler.common.artifacts import require
 from compiler.qwen3.packages import validate_model_metadata
-
-ROOT = Path(__file__).resolve().parents[2]
-PACKAGE_FIELDS = (
-    'schema_version', 'model_type', 'checkpoint', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
-    'cache_length', 'vocab_size', 'cxx11_abi', 'cuda_compute_capability', 'state',
-    'input_order', 'output_order', 'logits', 'input_mutation', 'model_specific',
-    'eos_token_ids', 'attention_backend', 'cache_input', 'custom_attention',
-    'kv_extent', 'export_options', 'tf32', 'triton_enable_fp_fusion',
-    'inductor_configs',
-)
+from compiler.qwen3.prepare import DEFAULT_MODEL
 
 
-def wait_idle(device, allow_busy=False):
-    return check_idle(device=device, allow_busy=allow_busy)
-
-
-def eager_worker(args):
+def eager_loader():
     import torch
     from compiler.qwen3.model import QwenStep, allocate_cache, load_model
 
-    workload = read_json(args.workload)
-    if args.output.exists():
-        raise ValueError('Output already exists')
-    torch.backends.cuda.matmul.allow_tf32 = False
-    torch.backends.cudnn.allow_tf32 = False
+    def load(model_dir):
+        model = load_model(model_dir)
+        step, cache = QwenStep(model), allocate_cache(model.config)
 
-    with torch.inference_mode():
-        start = time.perf_counter()
-        torch.empty(0, device='cuda')
-        torch.cuda.synchronize()
-        init_ms = (time.perf_counter()-start)*1000
-        initial_memory = memory()
-        torch.cuda.reset_peak_memory_stats()
-        start = time.perf_counter()
-        model = load_model(args.model_dir)
-        fn, cache = QwenStep(model), allocate_cache(model.config)
-        torch.cuda.synchronize()
-        load_ms = (time.perf_counter()-start)*1000
-        report = dict(kind='eager', torch_version=torch.__version__, cpu_threads=torch.get_num_threads(),
-                      cuda_init_ms=init_ms, load_ms=load_ms, initial_memory=initial_memory,
-                      load_memory=memory(), cases=[])
-
-        def step(tokens, position):
-            ids = (torch.full((1, 1), tokens[0], device='cuda', dtype=torch.int64) if len(tokens) == 1
-                   else torch.tensor(tokens, dtype=torch.int64).unsqueeze(0).to('cuda'))
-            pos = (torch.full((1,), position, device='cuda', dtype=torch.int64) if len(tokens) == 1
-                   else torch.arange(position, position+len(tokens), device='cuda'))
-            return fn(ids, pos, cache).argmax(-1).item()
+        def predict(tokens, position):
+            ids = (torch.full((1, 1), tokens[0], device="cuda", dtype=torch.int64) if len(tokens) == 1
+                   else torch.tensor(tokens, dtype=torch.int64).unsqueeze(0).to("cuda"))
+            pos = (torch.full((1,), position, device="cuda", dtype=torch.int64) if len(tokens) == 1
+                   else torch.arange(position, position + len(tokens), device="cuda"))
+            return step(ids, pos, cache).argmax(-1).item()
 
         def reset():
             for tensor in cache:
                 tensor.zero_()
 
-        report["cases"] = measure_cases(lambda case: measure_request(reset, step, case), workload)
-        write_json(args.output, report)
+        return reset, predict
+
+    return load
 
 
-def summarize(records, workload, reference='eager'):
-    result = {}
-    for label in dict.fromkeys(x['profile'] for x in records):
-        runs = [read_json(x['result']) for x in records if x['profile'] == label]
-        profile = dict(load_ms=distribution([r['load_ms'] for r in runs]), cases={})
-        for case in workload['cases']:
-            rows = [next(c for c in r['cases'] if c['name'] == case['name']) for r in runs]
-            samples = [s for row in rows for s in row['samples']]
-            metrics = {key: distribution([s[key] for s in samples])
-                       for key in ('reset_ms', 'prefill_ms', 'decode_ms_per_token', 'request_ms')}
-            metrics['decode_tokens_per_second'] = 1000/metrics['decode_ms_per_token']['median']
-            metrics['memory'] = {key: max(row['memory'][key] for row in rows)
-                                 for key in ('peak_allocated_bytes', 'peak_reserved_bytes',
-                                             'sampled_peak_device_used_bytes')}
-            metrics['memory']['sampled_peak_device_delta_bytes'] = max(
-                row['memory']['sampled_peak_device_used_bytes']-run['initial_memory']['device_used_bytes']
-                for row, run in zip(rows, runs))
-            predictions = rows[0]['samples'][0]['prediction_ids']
-            assert all(s['prediction_ids'] == predictions for s in samples), (label, case['name'])
-            metrics['prediction_ids'] = predictions
-            profile['cases'][case['name']] = metrics
-        result[label] = profile
-    for label, profile in result.items():
-        for name, case in profile['cases'].items():
-            ref = result[reference]['cases'][name]['prediction_ids']
-            assert len(case['prediction_ids']) == len(ref), (label, name, 'Prediction count differs')
-            case[f'prediction_agreement_with_{reference}'] = sum(a == b for a, b in zip(case['prediction_ids'], ref))
-    return result
-
-
-def validate_packages(packages):
-    """Check the fixed Flash ABI and that prefill/decode describe one model."""
-    prefill, decode = (packages[kind]['metadata'] for kind in ('prefill', 'decode'))
-    validate_metadata_pair(prefill, decode, model_type='qwen3')
-    for metadata in (prefill, decode):
-        validate_model_metadata(metadata)
-
-
-def validate_comparison(baseline, candidate, baseline_weights, candidate_weights):
-    """Compare model inputs and numerical settings independently of artifact hashes."""
-    for kind in ('prefill', 'decode'):
-        before, after = (profile[kind]['metadata'] for profile in (baseline, candidate))
-        for key in (*PACKAGE_FIELDS, 'token_range'):
-            if before[key] != after[key]:
-                raise ValueError(f'Incomparable packages: {kind}/{key}')
-    for key in ('identity_sha256', 'sources'):
-        if baseline_weights[key] != candidate_weights[key]:
-            raise ValueError(f'Incomparable shared weights: {key}')
+def eager_worker(args):
+    measure_eager(args, eager_loader(), "eager")
 
 
 def run(args):
-    from compiler.common.weights import validate_shared_weights
-    from compiler.common.attention import native_attention_library
-
-    if min(args.warmup, args.repeats, args.rounds, args.decode_steps) < 1:
-        raise ValueError('Counts must be positive')
-    if not args.lengths or len(set(args.lengths)) != len(args.lengths):
-        raise ValueError('Provide distinct prompt lengths')
-    if any(n < 1 or n > 512 or n+args.decode_steps > 1024 for n in args.lengths):
-        raise ValueError('Prompt/context length outside package contract')
-    if args.output.exists():
-        raise ValueError('Choose an absent output directory')
-    paired = args.command == 'compare'
-    if paired and (args.baseline_label == args.candidate_label or any(
-            not label.replace('_', '').isalnum() or label == 'eager'
-            for label in (args.baseline_label, args.candidate_label))):
-        raise ValueError('Provide distinct alphanumeric/underscore labels; eager is reserved')
-    gpu = resolve_gpu(args.gpu)
-    packages = ({args.baseline_label: args.baseline_packages.resolve(),
-                 args.candidate_label: args.candidate_packages.resolve()}
-                if paired else dict(aoti=args.packages.resolve()))
-    binary = args.native.resolve()
-    if not binary.is_file():
-        raise ValueError('Build xinfer_benchmark with -DQWEN_BUILD_BENCHMARK=ON first')
-    library = native_attention_library(binary)
-    if library is None:
-        raise ValueError('Native benchmark must link libxinfer_attention_ops.so; rebuild Qwen3')
-    prompt = [int(x) for x in (args.reference/'capital/prompt.ids').read_text().split()]
-    continuation = [int(x) for x in (args.reference/'capital/generated.ids').read_text().split()]
-    workload = dict(warmup=args.warmup, repeats=args.repeats, cases=[
-        dict(name=f'length_{n}', prompt=(prompt*(n//len(prompt)+1))[:n],
-             decode_tokens=(continuation*(args.decode_steps//len(continuation)+1))[:args.decode_steps])
-        for n in args.lengths])
-    out = args.output.resolve()
-    out.mkdir(parents=True)
-    write_json(out/'workload.json', workload)
-    source = out/'source'
-    source.mkdir()
-    for name in (*NATIVE_RUNTIME_SOURCES, 'compiler/qwen3/benchmark.py', 'compiler/qwen3/model.py',
-                 'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'compiler/common/attention.py',
-                 'compiler/qwen3/packages.py', 'compiler/common/metadata.py',
-                 'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
-                 'compiler/common/weights.py', 'compiler/common/benchmark.py'):
-        (source/name).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT/name, source/name)
-    environment = dict(platform=platform.platform(), cpu_count=os.cpu_count(),
-                       affinity=sorted(os.sched_getaffinity(0)),
-                       git_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-                       source_sha256={p.relative_to(source).as_posix(): digest(p)
-                                      for p in sorted(source.rglob('*')) if p.is_file()},
-                       binary_sha256=digest(binary), workload_sha256=digest(out/'workload.json'),
-                       model_manifest=read_json(args.model_dir/'model_manifest.json'),
-                       allow_busy=args.allow_busy, cpu_threads=1, gpu_uuid=gpu, packages={}, shared_weights={})
-    environment['attention_library'] = dict(path=str(library), sha256=digest(library))
-    environment['gpu'] = subprocess.check_output([
-        'nvidia-smi', '-i', gpu, '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
-        '--format=csv'], text=True)
-    for label, directory in packages.items():
-        metadata = read_package_metadata(directory, model_type='qwen3')
-        environment['packages'][label] = {kind: dict(metadata=metadata[kind],
-                                                    bytes=(directory/(kind+'.pt2')).stat().st_size,
-                                                    sha256=digest(directory/(kind+'.pt2')))
-                                           for kind in ('prefill', 'decode')}
-        validate_packages(environment['packages'][label])
-        environment['shared_weights'][label] = validate_shared_weights(
-            directory, environment['packages'][label]['prefill']['metadata'],
-            environment['packages'][label]['decode']['metadata'])
+    paired = args.command == "compare"
     if paired:
-        validate_comparison(environment['packages'][args.baseline_label],
-                            environment['packages'][args.candidate_label],
-                            environment['shared_weights'][args.baseline_label],
-                            environment['shared_weights'][args.candidate_label])
-    write_json(out/'environment.json', environment)
-    env = {k: v for k, v in os.environ.items()
-           if k not in ('VIRTUAL_ENV', 'PYTHONPATH', 'PYTHONHOME', 'LD_LIBRARY_PATH')}
-    env.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', HF_HUB_OFFLINE='1', TRANSFORMERS_OFFLINE='1',
-               PYTHONDONTWRITEBYTECODE='1', CUDA_VISIBLE_DEVICES=gpu)
-    records = []
-    labels = list(packages) if paired else ['eager', 'aoti']
-    for round_index in range(args.rounds):
-        order = labels[round_index % len(labels):]+labels[:round_index % len(labels)]
-        for label in order:
-            stem = f'round-{round_index+1}-{label}'
-            idle = wait_idle(gpu, args.allow_busy)
-            write_json(out/(stem+'.idle.json'), idle)
-            result = out/(stem+'.json')
-            if label == 'eager':
-                command = [sys.executable, '-m', 'compiler.qwen3.benchmark', 'eager', '--model-dir', str(args.model_dir),
-                           '--workload', str(out/'workload.json'), '--output', str(result)]
-                child_env = env
-            else:
-                command = [str(binary), str(packages[label]), str(out/'workload.json'), str(result)]
-                child_env = env | {'PATH': '/usr/bin:/bin', 'PYTHONHOME': '/nonexistent-python-home'}
-            print(stem, 'starting', flush=True)
-            elapsed = run_worker(command, child_env, gpu, out/(stem+".gpu.csv"), out/(stem+".log"), 900)
-            records.append(dict(round=round_index+1, profile=label, result=str(result),
-                                process_ms=elapsed, host_loadavg=os.getloadavg()))
-            write_json(out/'runs.json', records)
-            write_json(out/(stem+'.after-idle.json'), wait_idle(gpu, args.allow_busy))
-            print(stem, 'finished', flush=True)
-    summary = dict(status='provisional_shared_gpu' if args.allow_busy else 'idle_boundaries_checked',
-                   rounds=args.rounds, warmup=args.warmup, repeats=args.repeats, decode_steps=args.decode_steps,
-                   profiles=summarize(records, workload, args.baseline_label if paired else 'eager'))
-    write_json(out/'summary.json', summary)
-    for label, profile in summary['profiles'].items():
-        for name, metrics in profile['cases'].items():
-            print(label, name, 'prefill_ms=', round(metrics['prefill_ms']['median'], 3),
-                  'decode_ms/token=', round(metrics['decode_ms_per_token']['median'], 3), flush=True)
+        require(args.baseline_label != args.candidate_label and all(
+            label.replace("_", "").isalnum() and label != "eager"
+            for label in (args.baseline_label, args.candidate_label)),
+            "Provide distinct alphanumeric/underscore labels; eager is reserved")
+    packages = ({args.baseline_label: args.baseline_packages, args.candidate_label: args.candidate_packages}
+                if paired else dict(aoti=args.packages))
+
+    def tokens():
+        directory = args.reference / "capital"
+        return ([int(word) for word in (directory / "prompt.ids").read_text().split()],
+                [int(word) for word in (directory / "generated.ids").read_text().split()])
+
+    def compare(profiles, weights):
+        validate_comparison(profiles[args.baseline_label], profiles[args.candidate_label],
+                            weights[args.baseline_label], weights[args.candidate_label])
+
+    return run_benchmark(args, model_type="qwen3", packages=packages,
+                         eager={} if paired else {"eager": ("compiler.qwen3.benchmark", "eager")},
+                         reference=args.baseline_label if paired else "eager", prepare_tokens=tokens,
+                         manifest_name="model_manifest.json", validate_model=validate_model_metadata,
+                         compare=compare if paired else None)
 
 
 def main():

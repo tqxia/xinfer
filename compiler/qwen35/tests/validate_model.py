@@ -13,8 +13,8 @@ from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import cache_extent
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
-from compiler.common.validation import bits_equal
-from compiler.qwen35.tests.common import fixtures, compare, LIMIT
+from compiler.common.tests.validation import bits_equal
+from compiler.qwen35.tests.common import fixtures, compare, model_passed, policy
 from compiler.qwen35.reference import PythonRuntime
 
 
@@ -175,14 +175,14 @@ def main():
     runtime = PythonRuntime(args.packages, specs)
     functions = runtime.functions
     compiled = explicit_trace(functions, config, cases)
-    report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
+    report = dict(numerical_policy=policy(), cases=cases, comparisons=[], failures=[], top1_differences=[],
                   delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
                   delta_algorithm=metadata["prefill"]["model_specific"].get("delta_algorithm"),
                   delta_short_threshold=metadata["prefill"]["model_specific"].get("delta_short_threshold"),
                   linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
                   shared_weights=metadata["prefill"]["shared_weights"],
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/common/metadata.py', 'compiler/qwen35/packages.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/adapters/attention.py', 'compiler/common/attention.py', 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/tests/validation.py', 'compiler/common/artifacts.py', 'compiler/common/metadata.py', 'compiler/qwen35/packages.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/adapters/attention.py', 'compiler/common/attention.py', 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
     seed = cases[1]["steps"][0] * 8
     report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 96, 97, 98, 511, 512]
@@ -207,7 +207,7 @@ def main():
         assert all(bits_equal(a, b) for a, b in zip(
             compiled[("mixed_dispatch", i)], compiled[("mixed_dispatch_repeat", i)]))
     report["checks"].update(reset_repeat_bitwise=True, non_kv_input_preservation=True, finite_shapes_dtypes=True)
-    report["passed"] = not report["failures"]
+    report["passed"] = model_passed(report)
     (args.output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     torch.save({name: trace[("long_prefix", len(cases[4]["steps"]) - 1)]
                 for name, trace in dict(hf=reference, aoti=compiled, fp32=fp32).items()}, args.output / "final_states.pt")
