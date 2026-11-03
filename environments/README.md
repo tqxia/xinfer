@@ -139,6 +139,10 @@ supported. If preparing it from the pinned Hub source, run
 `"$Q35_PY" -m compiler.qwen35.model --output "$Q35_MODEL"` before enabling offline
 mode. See each model's guide for preparation details.
 
+Qwen3 tools default to `work/models/qwen3-0.6b` when run from the repository
+root. Place the complete verified directory there or symlink an existing
+checkpoint; `--model-dir` overrides this location for each command.
+
 ```bash
 Q3_MODEL="$PWD/work/models/qwen3-0.6b"
 Q35_MODEL="$PWD/work/models/qwen35-0.8b-text"

@@ -8,7 +8,7 @@ from pathlib import Path
 from compiler.common.artifacts import sha256
 
 
-DEFAULT_MODEL = Path("/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b")
+DEFAULT_MODEL = Path("work/models/qwen3-0.6b")
 
 
 def verify_model(model_dir):

@@ -45,10 +45,24 @@ BUILD="$PWD/work/l20/build-torch213"
 
 ## Prepare offline inputs
 
-The default checkpoint is
-`/data/workspace/develop/qwen3-rust-demo/models/qwen3-0.6b`, revision
-`c1899de289a04d12100db370d81485cdf75e47ca`. Helpers verify and read these files;
-they do not modify the checkpoint or download another copy.
+Run commands from the repository root. Qwen3 tools default to
+`work/models/qwen3-0.6b`. Place the complete verified checkpoint there, including
+`model_manifest.json`, or symlink an existing local checkpoint:
+
+```bash
+mkdir -p work/models
+ln -s /path/to/qwen3-0.6b work/models/qwen3-0.6b
+```
+
+The checkpoint revision is `c1899de289a04d12100db370d81485cdf75e47ca`.
+Helpers verify and read these files; they do not modify the checkpoint or
+download another copy. Export, benchmark and model validation commands accept
+`--model-dir` to select another directory. For preparation, put it before the
+subcommand, for example:
+
+```bash
+"$Q3_PY" -m compiler.qwen3.prepare --model-dir /path/to/qwen3-0.6b verify
+```
 
 ```bash
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
