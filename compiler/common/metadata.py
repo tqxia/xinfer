@@ -12,13 +12,39 @@ from compiler.common.attention import OPERATOR_CONTRACT
 SCHEMA_VERSION = 1
 KV_EXTENT = dict(device="cpu", dtype="uint8", shape="[valid_length + 1]", data_read=False)
 FIELDS = (
-    "schema_version", "model_type", "entry_point", "token_range", "torch_version",
-    "torch_cuda_version", "cxx11_abi", "cuda_compute_capability", "batch_size", "dtype",
-    "cache_length", "vocab_size", "eos_token_ids", "checkpoint", "state", "input_order",
-    "output_order", "logits", "input_mutation", "attention_backend", "custom_attention",
-    "cache_input", "kv_extent", "export_options", "tf32", "triton_enable_fp_fusion",
-    "inductor_configs", "package_bytes", "package_sha256", "shared_weights",
-    "model_specific", "provenance", "diagnostics",
+    "schema_version",  # Version of this metadata format.
+    "model_type",  # Model family used to select runtime behavior.
+    "entry_point",  # Package role: prefill or decode.
+    "token_range",  # Inclusive [minimum, maximum] tokens accepted per call.
+    "torch_version",  # PyTorch version used for export and compilation.
+    "torch_cuda_version",  # CUDA version that PyTorch was built against.
+    "cxx11_abi",  # PyTorch's _GLIBCXX_USE_CXX11_ABI setting.
+    "cuda_compute_capability",  # Target GPU architecture as [major, minor].
+    "batch_size",  # Fixed inference batch size.
+    "dtype",  # Model activation dtype; state entries specify their own dtypes.
+    "cache_length",  # Allocated KV-cache capacity in tokens.
+    "vocab_size",  # Vocabulary size and exclusive token-ID upper bound.
+    "eos_token_ids",  # Token IDs that stop greedy generation.
+    "checkpoint",  # Source model ID, revision and checkpoint manifest.
+    "state",  # Ordered state descriptors: layout, dtype and update policy.
+    "input_order",  # Flattened AOTI input names in call order.
+    "output_order",  # AOTI output names in return order.
+    "logits",  # Shape and dtype of the last-token logits.
+    "input_mutation",  # Which inputs the graph may modify in place.
+    "attention_backend",  # Attention implementation used by the compiled model.
+    "custom_attention",  # External attention operator name and ABI contract.
+    "cache_input",  # Cache-buffer representation expected by the graph.
+    "kv_extent",  # Contract for the shape-only CPU valid-prefix input.
+    "export_options",  # Graph export settings that affect the package contract.
+    "tf32",  # Whether CUDA matmul and cuDNN may use TF32.
+    "triton_enable_fp_fusion",  # Allow Triton floating-point fusion, such as FMA.
+    "inductor_configs",  # Explicit Inductor compilation overrides for this entry.
+    "package_bytes",  # Compiled .pt2 file size in bytes.
+    "package_sha256",  # SHA-256 checksum of the compiled .pt2 file.
+    "shared_weights",  # Archive format, filename, identity, size and checksum.
+    "model_specific",  # Model-family extras, such as geometry or DeltaNet settings.
+    "provenance",  # Exporter source hashes, dependency versions and capture settings.
+    "diagnostics",  # Per-entry compilation timings and graph diagnostics.
 )
 ENTRY_FIELDS = {"entry_point", "token_range", "package_bytes", "package_sha256", "diagnostics"}
 STATE_FIELDS = {"name", "layer", "kind", "shape", "stride", "dtype", "update"}
