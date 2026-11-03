@@ -13,9 +13,9 @@ using xinfer::require;
 using xinfer::write_logits;
 
 struct Spec : xinfer::SpecBase {
-  explicit Spec(const fs::path &directory) : Spec(directory, xinfer::SpecBase(directory)) {}
+  explicit Spec(const fs::path &directory) : Spec(xinfer::SpecBase(directory)) {}
 
-  Spec(const fs::path &directory, const xinfer::SpecBase &parsed) : SpecBase(parsed) {
+  explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen3, "Unsupported model type");
     const auto &specific = metadata.at("model_specific");
     for (const auto *field :
@@ -54,7 +54,6 @@ struct Spec : xinfer::SpecBase {
     }
     xinfer::metadata_check(metadata.at("output_order") == Json::array({"last_logits"}),
                            "output_order");
-    validate_files(directory);
   }
 };
 

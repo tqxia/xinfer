@@ -3,6 +3,7 @@
 #include "generation.h"
 
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
+#include <utility>
 #include <vector>
 
 namespace xinfer {
@@ -14,16 +15,7 @@ public:
   using Loader = torch::inductor::AOTIModelPackageLoader;
 
   Runner(const fs::path &packages, const Spec &spec)
-      : spec_(spec), device_(checked_device(spec_)), weights_(packages, spec_.shared_weights),
-        prefill_((packages / "prefill.pt2").string()), decode_((packages / "decode.pt2").string()),
-        state_(spec_, device_) {
-    configure(spec_);
-    weights_.load(prefill_, "prefill");
-    weights_.load(decode_, "decode");
-    extent_ =
-        at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
-    reset();
-  }
+      : Runner(spec, spec.validate_files(packages)) {}
 
   void reset(double fill = 0) {
     state_.reset(fill);
@@ -66,6 +58,19 @@ public:
   int64_t decode_calls() const { return decode_calls_; }
 
 private:
+  Runner(const Spec &spec, ValidatedBundle bundle)
+      : spec_(spec), device_(checked_device(spec_)),
+        weights_(std::move(bundle), spec_.shared_weights),
+        prefill_(weights_.package_path("prefill").string()),
+        decode_(weights_.package_path("decode").string()), state_(spec_, device_) {
+    configure(spec_);
+    weights_.load(prefill_, "prefill");
+    weights_.load(decode_, "decode");
+    extent_ =
+        at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
+    reset();
+  }
+
   const Spec spec_;
   const c10::Device device_;
   // Borrowing loaders are destroyed before their canonical weight owner.

@@ -15,9 +15,9 @@ using xinfer::require;
 constexpr int64_t max_prompt = 512;
 
 struct Spec : xinfer::SpecBase {
-  explicit Spec(const fs::path &packages) : Spec(packages, xinfer::SpecBase(packages)) {}
+  explicit Spec(const fs::path &packages) : Spec(xinfer::SpecBase(packages)) {}
 
-  Spec(const fs::path &packages, const xinfer::SpecBase &parsed) : SpecBase(parsed) {
+  explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen35, "Unsupported model type");
     const auto &specific = metadata.at("model_specific");
     require(specific.value("delta_backend", Json()) == "triton_op", "Unsupported DeltaNet backend");
@@ -42,7 +42,6 @@ struct Spec : xinfer::SpecBase {
       outputs.push_back(item.name);
     }
     require(metadata.at("output_order") == outputs, "Invalid tensor ABI order");
-    validate_files(packages);
   }
 };
 

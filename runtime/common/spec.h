@@ -294,19 +294,11 @@ struct SpecBase {
   Json prefill_metadata, metadata, shared_weights;
   std::vector<StateSpec> state;
 
-  void validate_files(const fs::path &directory) const {
-    for (const auto *entry : {&prefill_metadata, &metadata}) {
-      const auto kind = entry->at("entry_point").get<std::string>();
-      const auto path = directory / (kind + ".pt2");
-      require(fs::is_regular_file(path), "Package file is missing: " + kind);
-      require(fs::file_size(path) == entry->at("package_bytes").get<uintmax_t>(),
-              "Package file size mismatch");
-      require(sha256_file(path) == entry->at("package_sha256").get<std::string>(),
-              "Package checksum mismatch: " + kind);
-    }
-    const auto archive = validate_shared_weights(directory, prefill_metadata, metadata);
-    require(model_from_identity(archive.at("identity")) == model_type,
+  ValidatedBundle validate_files(const fs::path &directory) const {
+    auto bundle = ValidatedBundle::verify(directory, prefill_metadata, metadata);
+    require(model_from_identity(bundle.manifest().at("identity")) == model_type,
             "Package model identity mismatch");
+    return bundle;
   }
 
   void check_tokens(const std::vector<int64_t> &ids) const {

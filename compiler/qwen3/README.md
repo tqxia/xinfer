@@ -172,12 +172,13 @@ prompt at position zero. Total context capacity is 1,024. Earlier positions
 must already be populated. Runtime checks reject invalid IDs, nonpositive or
 oversized budgets, incompatible metadata and cache overflow before model work.
 The runtime also checks the actual CUDA device against the package's compute
-capability before loading GPU weights. The common metadata reader requires
-the schema version, package sizes and checksums, model identity and all shared
-contracts before archive loading. Missing or unsupported schema versions are
-rejected. Earlier unversioned sidecars must be converted or the bundle
-re-exported; there are no legacy field aliases. `model_type="qwen3"` selects the
-Qwen3 state policy after common parsing.
+capability before loading GPU weights. The common metadata reader validates
+the schema version, model identity and all shared contracts. Native file
+preflight verifies package and archive sizes and checksums before GPU weight
+allocation. Missing or unsupported schema versions are rejected. Earlier
+unversioned sidecars must be converted or the bundle re-exported; there are no
+legacy field aliases. `model_type="qwen3"` selects the Qwen3 state policy after
+common parsing.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
 masks, training and attention-weight requests are unsupported.
 

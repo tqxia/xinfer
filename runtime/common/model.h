@@ -11,11 +11,11 @@ template <class Function> decltype(auto) with_model(const fs::path &packages, Fu
   const SpecBase metadata(packages);
   switch (metadata.model_type) {
   case ModelType::Qwen3: {
-    const qwen::Spec spec(packages, metadata);
+    const qwen::Spec spec(metadata);
     return function(spec, [&] { return std::make_unique<qwen::Runtime>(packages, spec); });
   }
   case ModelType::Qwen35: {
-    const qwen35::Spec spec(packages, metadata);
+    const qwen35::Spec spec(metadata);
     return function(spec, [&] { return std::make_unique<qwen35::Runtime>(packages, spec); });
   }
   }

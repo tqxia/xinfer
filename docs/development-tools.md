@@ -47,6 +47,18 @@ the same report header and timing boundaries for both models. The validation
 binary retains the existing model-specific trace layouts so current Python
 numerical checks and historical output comparisons remain usable.
 
+`Spec` validates metadata and the model ABI. Each native runtime construction
+performs fresh file preflight: it hashes prefill and decode once each against the
+sidecars and embedded weight manifest, hashes the weight archive once, and
+parses its manifest once. All integrity checks complete before GPU weight
+allocation. These checks repeat for every runtime construction.
+
+Native `load_ms` includes file preflight, weight loading and loader setup.
+Earlier reports excluded the file checks performed during `Spec` construction.
+Use whole-process elapsed time (`process_ms` in benchmark `runs.json`) to compare
+total startup across that boundary change; first-request and steady-state
+timings remain separate.
+
 The [common runtime record](experiments/common-runtime.md) describes the runner,
 state-policy boundaries, compatibility behavior and validation evidence.
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
