@@ -62,8 +62,9 @@ step(input_ids, cache_position, state, kv_extent) -> last_logits, *next_state
 `state` contains two tensors per layer in layer order. The six BF16 KV pairs
 have shape `[1,2,1024,256]`. Updates use in-place `index_copy_`, writing only the
 current token rows. The 18 conv/recurrent pairs retain their functional update
-contract. KV outputs alias the input buffers; other state outputs become the
-next call's inputs.
+contract: the DeltaNet adapter reads the caller's tensors directly without
+cloning them and returns fresh tensors for the next call. KV outputs alias the
+input buffers.
 
 Inputs must be unpadded, batch-one contiguous appends to a populated prefix.
 `kv_extent` is a CPU `uint8` tensor whose shape is `[valid_length + 1]`, including

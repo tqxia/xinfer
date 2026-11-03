@@ -93,7 +93,8 @@ def zero_state(config):
 class LayerState:
     def __init__(self, kind, a, b):
         if kind == "linear_attention":
-            self.conv_states = [a.clone()]
+            # DeltaNet reads caller state and returns fresh replacement tensors.
+            self.conv_states = [a]
             self.recurrent_states = [b]
             self.record_past = False
         else:
