@@ -57,9 +57,11 @@ validation into full-state dumps after every token. There is no second
 model-specific execution loop. Forced EOS remains an explicit validation-case
 override, separate from the runner's owned spec.
 
-`block_main.cpp` now uses `common/io.h` for shared checks, JSON and tensor output.
-Its standalone fixture ABI and the separate fused-GDN validation target remain
-available.
+At the refactor commit, `block_main.cpp` used `common/io.h` for shared checks,
+JSON and tensor output. Its standalone fixture ABI was preserved for the checks
+below. The legacy block runner and its Python validator were subsequently
+retired; their last containing commit is `a63eb21`. The fused-GDN validation
+target remains available.
 
 ## L20 validation
 

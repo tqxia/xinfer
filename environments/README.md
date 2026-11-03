@@ -114,8 +114,8 @@ done
 
 The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for both
 model families. Model selection comes from the package metadata; there is no
-separate full-model build switch. `qwen35_fused` and the optional `qwen35_block`
-remain focused GDN validation tools.
+separate full-model build switch. `qwen35_fused` remains a focused GDN validation
+tool, built with `QWEN_BUILD_VALIDATION`.
 
 `--build` verifies that CMake selected the active environment's LibTorch, resolving
 symlinks to the shared native installation. Build before either full-model

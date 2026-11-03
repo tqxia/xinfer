@@ -48,11 +48,4 @@ inline void write_tensor(std::ostream& stream, const at::Tensor& tensor) {
   require(bool(stream), "Failed to write tensor");
 }
 
-inline void write_tensor(const fs::path& path, const at::Tensor& tensor) {
-  auto file = output_file(path, true);
-  write_tensor(file, tensor);
-  file.close();
-  require(bool(file), "Failed to write tensor: " + path.string());
-}
-
 }  // namespace xinfer

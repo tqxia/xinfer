@@ -415,8 +415,11 @@ Their removed source files can be recovered from Git history or the recorded
 source snapshots. The retired fixed-shape block exporter
 (`diagnostics/export_block.py`) and original HF dynamic-export probe
 (`diagnostics/probe_dynamic.py`) are archived in commit `0984678`; their
-historical commands require that checkout or its source snapshot. The shared
-block helpers now live in `tests/block.py`. Its preparation command also accepts
+historical commands require that checkout or its source snapshot. The legacy
+`qwen35_block` runner, `tests/validate_block.py` and fixed-shape sequence helpers
+were subsequently retired; their last containing commit is `a63eb21`.
+The shared block helpers remain in `tests/block.py` for the active GDN validators
+and rounding diagnostic. Its preparation command also accepts
 `--model Qwen/Qwen3.5-4B` for manual block diagnostics.
 Generated evidence remains ignored in `artifacts/qwen35/`; builds and caches
 remain ignored in `work/`.

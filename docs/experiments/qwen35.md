@@ -15,6 +15,11 @@ shared helpers and preparation command now live in
 `compiler/qwen35/tests/block.py`. The commands below retain their historical
 paths and use the original checkout or recorded source snapshot.
 
+The legacy `qwen35_block` runner, `tests/validate_block.py` and fixed-shape
+sequence helpers were subsequently retired; their last containing commit is
+`a63eb21`. The active fused/conditional GDN validators and rounding diagnostic
+still use `tests/block.py`.
+
 ## Prefix Flash and in-place KV: 2026-11-02
 
 The six full-attention layers now reuse the shared native prefix-Flash operator

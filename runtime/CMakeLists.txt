@@ -39,7 +39,6 @@ foreach(target IN LISTS XINFER_TARGETS)
   target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json xinfer_attention_ops)
 endforeach()
 
-option(QWEN_BUILD_DELTANET "Build the isolated Qwen3.5 DeltaNet probe" OFF)
-if(QWEN_BUILD_DELTANET OR QWEN_BUILD_VALIDATION)
+if(QWEN_BUILD_VALIDATION)
   add_subdirectory(qwen35)
 endif()

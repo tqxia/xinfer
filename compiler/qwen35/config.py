@@ -12,7 +12,6 @@ REVISIONS = {
 }
 TEXT_DIR = Path("work/qwen35/0.8b/text")
 ARTIFACT_DIR = Path("artifacts/qwen35/0.8b")
-PREFILL = 64
 CACHE_LENGTH = 1024
 
 

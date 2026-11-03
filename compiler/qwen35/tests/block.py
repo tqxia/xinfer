@@ -11,7 +11,7 @@ from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 from compiler.common.artifacts import sha256
-from compiler.qwen35.config import MODEL_ID, REVISIONS, deltanet_state_shapes
+from compiler.qwen35.config import MODEL_ID, REVISIONS
 
 
 MODEL_DIR = Path("work/qwen35/0.8b/block")
@@ -102,15 +102,6 @@ def load_block(directory=MODEL_DIR, dtype=torch.bfloat16):
     block = Qwen3_5GatedDeltaNet(config, layer_idx=0)
     block.load_state_dict(load_file(directory / "block.safetensors"), strict=True)
     return block.eval().requires_grad_(False).to(device="cuda", dtype=dtype), config
-
-
-def input_shapes(config, tokens):
-    return ((1, tokens, config.hidden_size), *deltanet_state_shapes(config))
-
-def zero_state(config, dtype=torch.bfloat16):
-    _, conv, recurrent = input_shapes(config, 1)
-    return (torch.zeros(conv, device="cuda", dtype=dtype),
-            torch.zeros(recurrent, device="cuda", dtype=torch.float32))
 
 
 if __name__ == "__main__":
