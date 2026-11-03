@@ -12,6 +12,7 @@ import torch
 from transformers import StaticCache
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
+from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
 from compiler.qwen3.tests.numerics import (
@@ -62,8 +63,8 @@ def main():
     args.output.mkdir(parents=True)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    spec = json.loads((args.packages/'decode.json').read_text())
-    prefill_spec = json.loads((args.packages/'prefill.json').read_text())
+    metadata = read_package_metadata(args.packages, model_type='qwen3')
+    prefill_spec, spec = metadata['prefill'], metadata['decode']
     validate_shared_weights(args.packages, prefill_spec, spec)
     from compiler.qwen3.packages import load_package_attention_ops
     load_package_attention_ops(spec, native=args.native)
@@ -218,7 +219,7 @@ def main():
             compare(actual, clean, exact=True)
             metrics['future_mask_exact'] = True
         if case.get('dump_cache'):
-            bits = np.fromfile(args.output/(name+'.kv.bf16'), dtype='<i2').reshape(2*spec['layers'], *spec['cache_shape'])
+            bits = np.fromfile(args.output/(name+'.kv.bf16'), dtype='<i2').reshape(len(spec['state']), *spec['state'][0]['shape'])
             cache_errors = []
             for index, (raw, compiled, original) in enumerate(zip(bits, py_cache, hf_tensors)):
                 assert np.array_equal(raw, compiled.cpu().view(torch.int16).numpy())

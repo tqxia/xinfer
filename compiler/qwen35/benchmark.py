@@ -13,9 +13,11 @@ from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
     wait_idle as check_idle, run_worker, resolve_gpu,
 )
-from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, read_json, write_json, validate_model_type
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, read_json, write_json
 from compiler.common.attention import native_attention_library
+from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
+from compiler.qwen35.packages import validate_model_metadata
 
 
 def wait_idle(path, device, allow_busy=False):
@@ -115,7 +117,7 @@ def benchmark(args):
                 "runtime/common/attention.cpp", "runtime/common/attention.h"]
     sources += ["compiler/common/passes/pack_linears.py"]
     sources += list(NATIVE_RUNTIME_SOURCES)
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "compiler/common/weights.py", "runtime/common/io.h",
+    sources += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/validation.py", "compiler/common/benchmark.py", "compiler/common/weights.py", "runtime/common/io.h",
                 "runtime/common/generation.h", "runtime/common/benchmark.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     sources = list(dict.fromkeys(sources))
     for name in sources:
@@ -136,12 +138,11 @@ def benchmark(args):
         raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
     environment["attention_library_sha256"] = sha256(attention_library)
     (out / "native.ldd").write_text(linked)
-    for kind in ("prefill", "decode"):
-        meta = read_json(args.packages / f"{kind}.json")
+    environment["packages"] = read_package_metadata(args.packages, model_type="qwen35")
+    for kind, meta in environment["packages"].items():
+        validate_model_metadata(meta)
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"] == environment["model_manifest"]
-        environment["packages"][kind] = meta
-    validate_model_type(environment["packages"]["prefill"], environment["packages"]["decode"], "qwen35")
+        assert meta["checkpoint"]["manifest"] == environment["model_manifest"]
     environment["shared_weights"] = validate_shared_weights(
         args.packages, environment["packages"]["prefill"], environment["packages"]["decode"])
     correctness = dict(passed=None, reason="No matching end-to-end report supplied")

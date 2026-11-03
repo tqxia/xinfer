@@ -5,23 +5,10 @@ import subprocess
 import sys
 import unittest
 
-from compiler.common.artifacts import ROOT, canonical_json, json_sha256, validate_model_type
+from compiler.common.artifacts import ROOT, canonical_json, json_sha256
 
 
 class ArtifactHelpers(unittest.TestCase):
-    def test_model_tag_requires_a_matching_known_pair(self):
-        for expected in ("qwen3", "qwen35"):
-            validate_model_type({}, {}, expected)
-            validate_model_type({"model_type": expected}, {"model_type": expected}, expected)
-            with self.assertRaisesRegex(ValueError, "Package model types differ"):
-                validate_model_type({"model_type": expected}, {}, expected)
-            with self.assertRaisesRegex(ValueError, "Package model types differ"):
-                validate_model_type({}, {"model_type": expected}, expected)
-            for wrong in (None, "unknown", "qwen35" if expected == "qwen3" else "qwen3"):
-                with self.subTest(expected=expected, wrong=wrong), \
-                        self.assertRaisesRegex(ValueError, "Unsupported model type"):
-                    validate_model_type({"model_type": wrong}, {"model_type": wrong}, expected)
-
     def test_metadata_hash_preserves_canonical_encoding(self):
         metadata = {"z": [None, True, -0.0, 1.25], "name": "紫霄",
                     "a": {"right": 2, "left": 1}}

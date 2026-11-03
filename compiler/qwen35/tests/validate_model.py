@@ -8,7 +8,9 @@ import torch
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
-from compiler.common.artifacts import require, sha256, ROOT
+from compiler.common.artifacts import sha256, ROOT
+from compiler.common.metadata import read_package_metadata
+from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import cache_extent
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.common.validation import bits_equal
@@ -123,19 +125,15 @@ def main():
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     configure_text()
-    metadata = {kind: json.loads((args.packages / f"{kind}.json").read_text()) for kind in ("prefill", "decode")}
-    require(all(not meta.get("eager_numerics", False) for meta in metadata.values()),
-            "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
+    metadata = read_package_metadata(args.packages, model_type="qwen35")
+    for entry in metadata.values():
+        validate_model_metadata(entry)
     for kind, meta in metadata.items():
-        assert meta["torch"] == torch.__version__ and meta["cache_length"] == CACHE_LENGTH
+        assert meta["torch_version"] == torch.__version__ and meta["cache_length"] == CACHE_LENGTH
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
-    for field in ("checkpoint", "state", "source_sha256", "inductor_configs", "attention_backend", "shared_weights",
-                  "input_mutation", "cache_input", "kv_extent", "custom_attention"):
-        assert metadata["prefill"][field] == metadata["decode"][field], field
-    assert metadata["prefill"].get("linear_packing") == metadata["decode"].get("linear_packing")
+        assert meta["checkpoint"]["manifest"] == json.loads((args.model_dir / "manifest.json").read_text())
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    assert metadata["prefill"]["delta_backend"] == "triton_op"
+    assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
     cases = fixtures(tokenizer)
     (args.output / "cases.json").write_text(json.dumps(dict(cases=cases), indent=2) + "\n")
     model = load_model(args.model_dir)
@@ -159,7 +157,7 @@ def main():
     wrapper = TextStep(model)
     adapted = explicit_trace(dict(prefill=wrapper, decode=wrapper), config, cases)
     packed = None
-    if metadata["prefill"].get("linear_packing", {}).get("enabled", False):
+    if metadata["prefill"]["model_specific"].get("linear_packing", {}).get("enabled", False):
         from compiler.qwen35.export import export_step
         print("Eager packed graph: isolate packing from compilation", flush=True)
         packed_functions = {kind: export_step(model, kind)[0].module()
@@ -178,13 +176,13 @@ def main():
     functions = runtime.functions
     compiled = explicit_trace(functions, config, cases)
     report = dict(limit=LIMIT, cases=cases, comparisons=[], failures=[], top1_differences=[],
-                  delta_backend=metadata["prefill"]["delta_backend"],
-                  delta_algorithm=metadata["prefill"].get("delta_algorithm"),
-                  delta_short_threshold=metadata["prefill"].get("delta_short_threshold"),
-                  linear_packing=metadata["prefill"].get("linear_packing"),
+                  delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
+                  delta_algorithm=metadata["prefill"]["model_specific"].get("delta_algorithm"),
+                  delta_short_threshold=metadata["prefill"]["model_specific"].get("delta_short_threshold"),
+                  linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
                   checkpoint=metadata["prefill"]["checkpoint"], package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
                   shared_weights=metadata["prefill"]["shared_weights"],
-                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/adapters/attention.py', 'compiler/common/attention.py', 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
+                  source_sha256={name: sha256(ROOT / name) for name in ('compiler/qwen35/config.py', 'compiler/qwen35/model.py', 'compiler/qwen35/tests/validate_model.py', 'compiler/qwen35/tests/common.py', 'compiler/common/validation.py', 'compiler/common/artifacts.py', 'compiler/common/metadata.py', 'compiler/qwen35/packages.py', 'compiler/qwen35/adapters/delta.py', 'compiler/qwen35/adapters/attention.py', 'compiler/common/attention.py', 'runtime/common/attention.cpp', 'runtime/common/attention.h', 'compiler/qwen35/kernels/recurrent.py', 'compiler/qwen35/kernels/chunked.py', 'compiler/common/passes/pack_linears.py', 'compiler/common/weights.py', 'compiler/qwen35/export.py')},
                   checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]))
     seed = cases[1]["steps"][0] * 8
     report["checks"]["dynamic_mask_lengths"] = [2, 22, 65, 96, 97, 98, 511, 512]

@@ -16,6 +16,7 @@ import torch.nn.functional as F
 
 from compiler.common.artifacts import sha256
 from compiler.common.weights import SHARED_WEIGHT_OPTIONS, SharedWeights, compile_shared, validate_shared_weights
+from compiler.common.tests.test_metadata import metadata_pair
 
 
 class TiedViews(torch.nn.Module):
@@ -120,6 +121,31 @@ class SharedWeightBundle(unittest.TestCase):
         directory = self.copy_bundle()
         (directory / "weights.json").write_text("unused old sidecar")
         validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
+
+    def versioned_metadata(self):
+        pair = metadata_pair()
+        for kind, value in pair.items():
+            package = self.bundle / f"{kind}.pt2"
+            value.update(package_bytes=package.stat().st_size, package_sha256=sha256(package),
+                         shared_weights=self.contract)
+        return pair
+
+    def test_versioned_file_facts_fail_before_archive_access(self):
+        for kind in ("prefill", "decode"):
+            for field, value, error in (("package_bytes", 1, "Package file size mismatch"),
+                                        ("package_sha256", "0" * 64, "Package checksum mismatch")):
+                with self.subTest(kind=kind, field=field):
+                    pair = self.versioned_metadata()
+                    pair[kind][field] = value
+                    with patch("compiler.common.weights._manifest") as archive:
+                        with self.assertRaisesRegex(ValueError, error):
+                            validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
+                        archive.assert_not_called()
+
+    def test_versioned_metadata_rejects_a_different_archive_model(self):
+        pair = self.versioned_metadata()
+        with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
+            validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
 
     def test_real_cpu_packages_share_tied_strided_storage(self):
         manifest = validate_shared_weights(self.bundle, self.metadata, self.metadata)

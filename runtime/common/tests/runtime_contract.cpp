@@ -14,17 +14,12 @@ using Trace = std::vector<at::Tensor>;
 const std::vector<at::Tensor>& state(const qwen::Runtime& runtime) { return runtime.cache(); }
 const std::vector<at::Tensor>& state(const qwen35::Runtime& runtime) { return runtime.state(); }
 
-void mutate(qwen::Spec& spec) {
-  spec.max_prompt = spec.capacity = spec.vocab = spec.layers = 0;
-  spec.eos = {-1};
-  spec.cache_shape.clear();
-  spec.cache_stride.clear();
-}
-
-void mutate(qwen35::Spec& spec) {
-  spec.capacity = spec.vocab = 0;
+template <class Spec>
+void mutate(Spec& spec) {
+  spec.max_prompt = spec.capacity = spec.vocab = 0;
   spec.eos = {-1};
   spec.state.clear();
+  spec.prefill_metadata = Json();
   spec.metadata = Json();
 }
 

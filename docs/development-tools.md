@@ -7,10 +7,10 @@ environment and previously exported packages. Use fresh output directories.
 
 Both models use `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` from one
 native build. Each reads the package metadata to select the model-specific
-contract and state policy. New exports set `model_type` to `qwen3` or `qwen35`
-in both entry JSON files. Existing shared-weight bundles remain supported through
-the model identity embedded in `weights.pt`; filenames and tensor counts are
-not used to guess the model.
+contract and state policy. Both entry JSON files require the shared
+[`schema_version: 1` format](package-metadata.md), with an explicit `model_type`
+of `qwen3` or `qwen35`. Unversioned sidecars must be converted or re-exported;
+model selection reads the versioned metadata directly.
 
 The common runner owns package loaders, shared weights, device checks, token
 validation, positions and prefill/decode dispatch. Model policies handle KV

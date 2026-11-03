@@ -13,6 +13,8 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
+from compiler.common.metadata import read_package_metadata
+from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.model import configure_text
@@ -24,14 +26,12 @@ from compiler.common.artifacts import run
 
 def reject_invalid(args, env, metadata):
     metadata = copy.deepcopy(metadata)
-    for item in metadata.values():
-        item.setdefault("model_type", "qwen35")
     directory = args.output / "rejections"
     directory.mkdir()
     cases = [("empty", "", "1", "Expected 1..512"),
              ("oversized", "42 " * 513, "1", "Expected 1..512"),
              ("negative_id", "-1", "1", "Token ID out of range"),
-             ("large_id", str(metadata["decode"]["vocabulary"]), "1", "Token ID out of range"),
+             ("large_id", str(metadata["decode"]["vocab_size"]), "1", "Token ID out of range"),
              ("not_integer", "42junk", "1", "Invalid integer"),
              ("zero_budget", "42", "0", "Generation budget"),
              ("negative_budget", "42", "-1", "Generation budget"),
@@ -52,77 +52,75 @@ def reject_invalid(args, env, metadata):
     assert prompt.read_text() == "42\n"
     passed.append("overwrite")
     mutations = [
+        ("missing_schema_version", lambda m: [v.pop("schema_version") for v in m.values()],
+         "Unsupported package metadata schema version"),
+        ("unknown_schema_version", lambda m: [v.update(schema_version=999) for v in m.values()],
+         "Unsupported package metadata schema version"),
+        ("mixed_schema_version", lambda m: m["prefill"].update(schema_version=999),
+         "Unsupported package metadata schema version"),
         ("mixed_model_types", lambda m: m["prefill"].update(model_type="qwen3"), "Package model types differ"),
         ("missing_prefill_model_type", lambda m: m["prefill"].pop("model_type"), "Package model types differ"),
         ("missing_decode_model_type", lambda m: m["decode"].pop("model_type"), "Package model types differ"),
         ("unknown_model_type", lambda m: [v.update(model_type="unknown") for v in m.values()], "Unsupported model type"),
         ("mixed_checkpoint", lambda m: m["prefill"]["checkpoint"].update(revision="different"), "Package metadata differs: checkpoint"),
         ("mixed_state", lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5), "Package metadata differs: state"),
-        ("legacy_prefill", lambda m: m["prefill"].update(eager_numerics=True),
-         "Legacy eager-numerics packages are unsupported"),
-        ("legacy_decode", lambda m: m["decode"].update(eager_numerics=True),
-         "Legacy eager-numerics packages are unsupported"),
-        ("legacy_pair", lambda m: [v.update(eager_numerics=True) for v in m.values()],
-         "Legacy eager-numerics packages are unsupported"),
-        ("mixed_packing", lambda m: m["prefill"].update(linear_packing={"enabled": "different"}), "Package linear-packing settings differ"),
-        ("entry_point", lambda m: m["prefill"].update(tokens=63),
-         "Expected dynamic T=2..512/T=1 packages"),
-        ("torch_version", lambda m: [v.update(torch="0.0.0") for v in m.values()], "Torch version mismatch"),
-        ("state_dtype", lambda m: [v["state"][0].update(dtype="float32") for v in m.values()], "Invalid state order or dtype"),
-        ("abi_order", lambda m: [v["input_order"].reverse() for v in m.values()], "Invalid tensor ABI order"),
-        ("gpu_arch", lambda m: [v.update(sm=[0, 0]) for v in m.values()], "GPU architecture mismatch"),
+        ("legacy_prefill", lambda m: m["prefill"].update(eager_numerics=True), "Unsupported package metadata: eager_numerics"),
+        ("legacy_decode", lambda m: m["decode"].update(eager_numerics=True), "Unsupported package metadata: eager_numerics"),
+        ("legacy_pair", lambda m: [v.update(eager_numerics=True) for v in m.values()], "Unsupported package metadata: eager_numerics"),
+        ("mixed_packing", lambda m: m["prefill"]["model_specific"].update(linear_packing={"enabled": "different"}),
+         "Package metadata differs: model_specific"),
+        ("entry_point", lambda m: m["prefill"].update(entry_point="decode"), "Unsupported package metadata: entry_point"),
+        ("torch_version", lambda m: [v.update(torch_version="0.0.0") for v in m.values()], "Torch version mismatch"),
+        ("state_dtype", lambda m: [v["state"][0].update(dtype="float32") for v in m.values()], "Unsupported package metadata: state"),
+        ("abi_order", lambda m: [v["input_order"].reverse() for v in m.values()], "Unsupported package metadata: input_order"),
+        ("gpu_arch", lambda m: [v.update(cuda_compute_capability=[99, 0]) for v in m.values()], "GPU architecture mismatch"),
     ]
+    for name, field, invalid in (
+        ("attention_backend", "attention_backend", "efficient_sdpa"),
+        ("cache_contract", "cache_input", "full_capacity"),
+        ("input_mutation", "input_mutation", False),
+    ):
+        mutations.append(("mixed_" + name, lambda m, field=field, invalid=invalid: m["prefill"].update({field: invalid}),
+                          "Package metadata differs: " + field))
+        mutations.append(("invalid_" + name, lambda m, field=field, invalid=invalid: [v.update({field: invalid}) for v in m.values()],
+                          "Unsupported package metadata: " + field))
+    for name, field, update in (
+        ("attention_contract", "custom_attention", {"abi_version": 0}),
+        ("cache_extent", "kv_extent", {"data_read": True}),
+        ("export_options", "export_options", {"backed_size_oblivious": True}),
+    ):
+        mutations.append(("mixed_" + name, lambda m, field=field, update=update: m["prefill"][field].update(update),
+                          "Package metadata differs: " + field))
+        mutations.append(("invalid_" + name, lambda m, field=field, update=update: [v[field].update(update) for v in m.values()],
+                          "Unsupported package metadata: " + field))
+    for field in ("custom_attention", "cache_input", "kv_extent"):
+        mutations.append(("missing_" + field, lambda m, field=field: [v.pop(field) for v in m.values()],
+                          "Unsupported package metadata: " + field))
     mutations += [
-        ("mixed_attention_backend", lambda m: m["prefill"].update(attention_backend="efficient_sdpa"),
-         "Package metadata differs: attention_backend"),
-        ("mixed_attention_contract", lambda m: m["prefill"]["custom_attention"].update(abi_version=0),
-         "Package metadata differs: custom_attention"),
-        ("mixed_cache_contract", lambda m: m["prefill"].update(cache_input="full_capacity"),
-         "Package metadata differs: cache_input"),
-        ("mixed_cache_extent", lambda m: m["prefill"]["kv_extent"].update(data_read=True),
-         "Package metadata differs: kv_extent"),
-        ("mixed_input_mutation", lambda m: m["prefill"].update(input_mutation=False),
-         "Package metadata differs: input_mutation"),
-        ("mixed_export_options", lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=True),
-         "Package metadata differs: export_options"),
-        ("legacy_attention_pair", lambda m: [v.update(attention_backend="efficient_sdpa", input_mutation=False)
-                                             for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("missing_attention_contract", lambda m: [v.pop("custom_attention") for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("unknown_attention_contract", lambda m: [v["custom_attention"].update(abi_version=0) for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("missing_cache_contract", lambda m: [v.pop("cache_input") for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("missing_cache_extent", lambda m: [v.pop("kv_extent") for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("invalid_cache_extent", lambda m: [v["kv_extent"].update(data_read=True) for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("invalid_export_options", lambda m: [v["export_options"].update(backed_size_oblivious=True)
-                                              for v in m.values()],
-         "Legacy attention or state contract is unsupported"),
-        ("mixed_delta_threshold", lambda m: m["prefill"].update(delta_short_threshold=98),
-         "Package DeltaNet policy differs: delta_short_threshold"),
-        ("mixed_delta_algorithm", lambda m: m["prefill"].update(delta_algorithm={"prefill": "different"}),
-         "Package DeltaNet policy differs: delta_algorithm"),
-        ("mixed_delta_tile", lambda m: m["prefill"].update(delta_transform_tile=64),
-         "Package DeltaNet policy differs: delta_transform_tile"),
-        ("prefill_range", lambda m: m["prefill"].update(token_range=[2, 513]), "Expected dynamic T=2..512/T=1 packages"),
-        ("decode_range", lambda m: m["decode"].update(token_range=[1, 2]), "Expected dynamic T=2..512/T=1 packages"),
-        ("mixed_backend", lambda m: m["prefill"].update(delta_backend="invalid"), "Package DeltaNet backends differ"),
-        ("unknown_backend", lambda m: [v.update(delta_backend="invalid") for v in m.values()], "Unsupported DeltaNet backend"),
-        ("mixed_shared_weights", lambda m: m["prefill"]["shared_weights"].update(identity="different"),
-         "Shared weights contracts differ"),
+        ("mixed_delta_threshold", lambda m: m["prefill"]["model_specific"].update(delta_short_threshold=98),
+         "Package metadata differs: model_specific"),
+        ("mixed_delta_algorithm", lambda m: m["prefill"]["model_specific"].update(delta_algorithm={"prefill": "different"}),
+         "Package metadata differs: model_specific"),
+        ("mixed_delta_tile", lambda m: m["prefill"]["model_specific"].update(delta_transform_tile=64),
+         "Package metadata differs: model_specific"),
+        ("prefill_range", lambda m: m["prefill"].update(token_range=[2, 513]), "Unsupported package metadata: token_range"),
+        ("decode_range", lambda m: m["decode"].update(token_range=[1, 2]), "Unsupported package metadata: token_range"),
+        ("mixed_backend", lambda m: m["prefill"]["model_specific"].update(delta_backend="invalid"),
+         "Package metadata differs: model_specific"),
+        ("unknown_backend", lambda m: [v["model_specific"].update(delta_backend="invalid") for v in m.values()],
+         "Unsupported DeltaNet backend"),
+        ("mixed_shared_weights", lambda m: m["prefill"]["shared_weights"].update(identity="0" * 64),
+         "Package metadata differs: shared_weights"),
         ("missing_shared_weights", lambda m: [v.pop("shared_weights") for v in m.values()],
-         "Shared weights metadata is required"),
+         "Unsupported package metadata: shared_weights"),
         ("mixed_archive_checksum", lambda m: m["prefill"]["shared_weights"].update(sha256="0" * 64),
-         "Shared weights contracts differ"),
+         "Package metadata differs: shared_weights"),
         ("wrong_archive_checksum", lambda m: [v["shared_weights"].update(sha256="0" * 64) for v in m.values()],
          "Shared weights archive checksum mismatch"),
     ]
-    if "delta_short_threshold" in metadata["decode"]:
-        mutations.append(("missing_delta_threshold", lambda m: m["prefill"].pop("delta_short_threshold"),
-                          "Package DeltaNet policy differs: delta_short_threshold"))
+    if "delta_short_threshold" in metadata["decode"]["model_specific"]:
+        mutations.append(("missing_delta_threshold", lambda m: m["prefill"]["model_specific"].pop("delta_short_threshold"),
+                          "Package metadata differs: model_specific"))
     for name, mutate, error in mutations:
         packages = directory / name
         packages.mkdir()
@@ -170,18 +168,20 @@ def main():
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "runtime-validation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    metadata = read_package_metadata(args.packages, model_type="qwen35")
+    for entry in metadata.values():
+        validate_model_metadata(entry)
     attention_library = native_attention_library(args.binary)
     if attention_library is None:
         raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
     os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
     load_attention_ops(attention_library)
     configure_text()
-    metadata = {k: json.loads((args.packages / f"{k}.json").read_text()) for k in ("prefill", "decode")}
     for kind, meta in metadata.items():
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
+        assert meta["checkpoint"]["manifest"] == json.loads((args.model_dir / "manifest.json").read_text())
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    assert metadata["prefill"]["delta_backend"] == "triton_op"
+    assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
     cases = fixtures(tokenizer)
     seed = cases[1]["steps"][0]
     for length in (2, 63, 65, 96, 97, 98, 129, 511):
@@ -196,8 +196,7 @@ def main():
         cases.append(dict(name=name, prompt=encode_prompt(tokenizer, text), text=text, limit=24))
     capital = next(c for c in cases if c["name"] == "capital")
     cases += [dict(capital, name="capital_repeat"), dict(capital, name="limit_one", limit=1)]
-    eos = metadata["decode"]["generation_config"]["eos_token_id"]
-    eos = eos if isinstance(eos, list) else [eos]
+    eos = metadata["decode"]["eos_token_ids"]
     runtime = PythonRuntime(args.packages, metadata["decode"]["state"])
     expected = {}
     print("Python AOTI reference", flush=True)
@@ -237,9 +236,9 @@ def main():
     assert native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"]
     assert len(native["cases"]) == len(cases)
     report = dict(comparison="C++ vs Python AOTI", hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
-                  delta_backend=metadata["prefill"]["delta_backend"],
+                  delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
                   attention_backend=metadata["prefill"]["attention_backend"],
-                  linear_packing=metadata["prefill"].get("linear_packing"),
+                  linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
                   shared_weights=metadata["decode"]["shared_weights"],
                   cases=[], teacher_tensors=0, greedy_logit_rows=0, greedy_state_tensors=0,
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
@@ -292,7 +291,7 @@ def main():
     sources = [Path(__file__).relative_to(root), Path("compiler/qwen35/config.py"), Path("compiler/qwen35/prepare.py"),
                Path("runtime/qwen35/runtime.h"), Path("runtime/main.cpp"),
                Path("runtime/validate.cpp")]
-    sources += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    sources += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/validation.py", "compiler/common/weights.py", "compiler/qwen35/reference.py", "compiler/qwen35/tests/common.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     sources += list(NATIVE_RUNTIME_SOURCES)
     sources += ["compiler/common/attention.py", "compiler/qwen35/adapters/attention.py",
                 "runtime/common/attention.cpp", "runtime/common/attention.h"]

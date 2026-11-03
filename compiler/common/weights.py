@@ -14,6 +14,7 @@ import torch
 from compiler.common.artifacts import (
     canonical_json, json_sha256, require, sha256,
 )
+from compiler.common.metadata import finalize_metadata, validate_metadata, validate_metadata_pair
 
 
 SHARED_WEIGHT_OPTIONS = {"aot_inductor.package_constants_in_so": False,
@@ -73,7 +74,18 @@ def validate_shared_weights(directory, prefill, decode):
         options = metadata.get("inductor_configs", {})
         require(all(key in options and options[key] == value for key, value in SHARED_WEIGHT_OPTIONS.items()),
                  "Shared weights require weightless package compiler options")
-    return _manifest(directory, decode["shared_weights"])
+        if "schema_version" in metadata:
+            validate_metadata(metadata)
+            package = Path(directory) / f"{metadata['entry_point']}.pt2"
+            require(package.is_file(), f"Package file is missing: {metadata['entry_point']}")
+            require(package.stat().st_size == metadata["package_bytes"], "Package file size mismatch")
+            require(sha256(package) == metadata["package_sha256"],
+                    f"Package checksum mismatch: {metadata['entry_point']}")
+    manifest = _manifest(directory, decode["shared_weights"])
+    if "schema_version" in decode:
+        model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35"}.get(manifest["identity"].get("model"))
+        require(model_type == decode["model_type"], "Package model identity mismatch")
+    return manifest
 
 
 def _check_storage(tensor, descriptor):
@@ -257,7 +269,18 @@ def compile_shared(directory, export_entry, *, identity, inductor_configs):
         contract = dict(format=2, file="weights.pt", identity=identity_sha256,
                         bytes=archive_path.stat().st_size, sha256=sha256(archive_path))
         for kind, entry_metadata in metadata.items():
-            entry_metadata["shared_weights"] = contract
+            package = staging / f"{kind}.pt2"
+            if "schema_version" in entry_metadata or "model_type" in entry_metadata:
+                metadata[kind] = finalize_metadata(
+                    entry_metadata, package_path=package,
+                    inductor_configs=entry_metadata["inductor_configs"], shared_weights=contract)
+            else:
+                # Isolated operator/CPU fixtures do not describe a full model.
+                metadata[kind] = dict(entry_metadata, shared_weights=contract,
+                                      package_bytes=package.stat().st_size, package_sha256=sha256(package))
+        if any("schema_version" in item for item in metadata.values()):
+            validate_metadata_pair(metadata["prefill"], metadata["decode"])
+        for kind, entry_metadata in metadata.items():
             (staging / f"{kind}.json").write_text(json.dumps(entry_metadata, indent=2) + "\n")
         check_destination()
         os.replace(staging, directory)

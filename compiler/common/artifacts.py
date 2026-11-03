@@ -33,15 +33,6 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def validate_model_type(prefill, decode, expected):
-    """Accept an untagged legacy pair or two matching explicit model tags."""
-    present = "model_type" in decode
-    require(("model_type" in prefill) == present and
-            prefill.get("model_type") == decode.get("model_type"), "Package model types differ")
-    if present:
-        require(decode["model_type"] == expected, "Unsupported model type")
-
-
 def sha256(path):
     with Path(path).open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()

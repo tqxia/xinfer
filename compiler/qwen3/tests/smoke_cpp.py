@@ -10,6 +10,7 @@ import torch
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import sha256
+from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
@@ -33,8 +34,9 @@ linked = subprocess.check_output(['ldd', str(binary)], text=True)
 (out / 'ldd.txt').write_text(linked)
 assert 'not found' not in linked
 assert 'libpython' not in linked and 'libtorch_python' not in linked
-spec = json.loads((packages / 'decode.json').read_text())
-validate_shared_weights(packages, json.loads((packages / 'prefill.json').read_text()), spec)
+metadata = read_package_metadata(packages, model_type='qwen3')
+spec = metadata['decode']
+validate_shared_weights(packages, metadata['prefill'], spec)
 load_package_attention_ops(spec, native=binary)
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
@@ -61,8 +63,8 @@ def compare_native_trace(prompt, generated, trace_path, budget):
     assert len(generated) == budget or generated[-1] in spec['eos_token_ids']
     rows = np.fromfile(trace_path, dtype='<f4').reshape(len(generated), spec['vocab_size'])
     assert np.isfinite(rows).all()
-    cache = tuple(torch.zeros(spec['cache_shape'], dtype=torch.bfloat16, device='cuda')
-                  for _ in range(2 * spec['layers']))
+    cache = tuple(torch.zeros(state['shape'], dtype=getattr(torch, state['dtype']), device='cuda')
+                  for state in spec['state'])
     tokens, position = prompt, 0
     for token, row in zip(generated, rows):
         ids = torch.tensor([tokens], dtype=torch.int64, device='cuda')
@@ -131,21 +133,20 @@ report['rejections'].append('existing_output')
 mixed = out / 'invalid-packages'
 mixed.mkdir()
 package_cases = (
-    ('mixed_numerical_settings', 'Package numerical settings differ'),
-    ('legacy_eager_numerics', 'Legacy eager-numerics packages are unsupported'),
-    ('legacy_efficient', 'Legacy efficient packages are unsupported'),
-    ('mixed_attention_settings', 'Package attention/cache settings differ'),
-    ('missing_custom_attention_contract', 'Flash packages require the custom-op contract'),
-    ('unsupported_custom_attention_contract', 'Unsupported custom attention contract'),
-    ('mixed_cache_padding', 'Package cache padding settings differ'),
+    ('mixed_numerical_settings', 'Package metadata differs: triton_enable_fp_fusion'),
+    ('legacy_eager_numerics', 'Unsupported package metadata: eager_numerics'),
+    ('legacy_efficient', 'Unsupported package metadata: attention_backend'),
+    ('mixed_attention_settings', 'Package metadata differs: attention_backend'),
+    ('missing_custom_attention_contract', 'Unsupported package metadata: custom_attention'),
+    ('unsupported_custom_attention_contract', 'Unsupported package metadata: custom_attention'),
+    ('mixed_cache_padding', 'Package metadata differs: model_specific'),
     ('unsupported_cache_padding', 'Unsupported cache padding'),
     ('invalid_cache_stride', 'Unexpected KV cache strides'),
-    ('mixed_export_settings', 'Package export settings differ'),
+    ('mixed_export_settings', 'Package metadata differs: export_options'),
 )
 for name, message in package_cases:
     for kind in ('prefill', 'decode'):
         metadata = json.loads((packages / (kind + '.json')).read_text())
-        metadata.setdefault('model_type', 'qwen3')
         if name == 'mixed_numerical_settings' and kind == 'prefill':
             metadata['triton_enable_fp_fusion'] = not metadata['triton_enable_fp_fusion']
         elif name == 'legacy_eager_numerics':
@@ -159,11 +160,11 @@ for name, message in package_cases:
         elif name == 'unsupported_custom_attention_contract':
             metadata['custom_attention']['abi_version'] = 2
         elif name == 'mixed_cache_padding' and kind == 'prefill':
-            metadata['cache_padding'] = 1
+            metadata['model_specific']['cache_padding'] = 1
         elif name == 'unsupported_cache_padding':
-            metadata['cache_padding'] = 2
+            metadata['model_specific']['cache_padding'] = 2
         elif name == 'invalid_cache_stride':
-            metadata['cache_stride'][1] += 128
+            metadata['model_specific']['cache_stride'][1] += 128
         elif name == 'mixed_export_settings' and kind == 'prefill':
             metadata['export_options']['backed_size_oblivious'] = True
         (mixed / (kind + '.json')).write_text(json.dumps(metadata))
@@ -185,7 +186,6 @@ def package_fixture(name, metadata, with_weights=False):
     directory = out / name
     directory.mkdir()
     for kind, item in metadata.items():
-        item.setdefault('model_type', 'qwen3')
         (directory / f'{kind}.json').write_text(json.dumps(item))
         (directory / f'{kind}.pt2').symlink_to((packages / f'{kind}.pt2').resolve())
     if with_weights:
@@ -200,6 +200,32 @@ def metadata_with_sizes():
 
 
 # Dispatch failures must not require CUDA or an archive.
+for name, version in (('missing_schema_version', None), ('unknown_schema_version', 99),
+                      ('mixed_schema_version', 2)):
+    directory = out / name
+    directory.mkdir()
+    for kind in ('prefill', 'decode'):
+        item = json.loads((packages / f'{kind}.json').read_text())
+        if version is None:
+            item.pop('schema_version')
+        elif name != 'mixed_schema_version' or kind == 'decode':
+            item['schema_version'] = version
+        (directory / f'{kind}.json').write_text(json.dumps(item))
+        if version is None or item['schema_version'] != 1:
+            try:
+                load_package_attention_ops(item)
+            except ValueError as error:
+                assert 'Unsupported package metadata schema version' in str(error)
+            else:
+                raise AssertionError(f'Python accepted invalid metadata version: {name}')
+    output = directory / 'generated.ids'
+    result = run_native([directory, args.reference / 'capital/prompt.ids', output], name,
+                        environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+    assert result.returncode != 0 and 'Unsupported package metadata schema version' in result.stderr, failure_detail(result, name)
+    assert not output.exists()
+    report['rejections'].append(name)
+
+
 for name, tags, message in (
     ('mixed_model_types', ('qwen3', 'qwen35'), 'Package model types differ'),
     ('missing_prefill_model_type', (None, 'qwen3'), 'Package model types differ'),
@@ -233,7 +259,26 @@ for name, kind, missing in (('wrong_prefill_size', 'prefill', False),
         metadata[kind]['package_bytes'] += 1
     directory = package_fixture(name, metadata)
     output = directory / 'generated.ids'
-    message = 'Package size metadata differs' if missing else 'Package file size mismatch'
+    message = 'Unsupported package metadata: package_bytes' if missing else 'Package file size mismatch'
+    result = run_native([directory, args.reference / 'capital/prompt.ids', output], name,
+                        environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
+    assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
+    assert not output.exists(), name
+    report['rejections'].append(name)
+
+# Each package checksum is required and checked independently of the weight archive.
+for name, kind, missing in (('wrong_prefill_hash', 'prefill', False),
+                            ('wrong_decode_hash', 'decode', False),
+                            ('missing_prefill_hash', 'prefill', True),
+                            ('missing_decode_hash', 'decode', True)):
+    metadata = metadata_with_sizes()
+    if missing:
+        del metadata[kind]['package_sha256']
+    else:
+        metadata[kind]['package_sha256'] = '0' * 64
+    directory = package_fixture(name, metadata)
+    output = directory / 'generated.ids'
+    message = 'Unsupported package metadata: package_sha256' if missing else 'checksum mismatch'
     result = run_native([directory, args.reference / 'capital/prompt.ids', output], name,
                         environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
     assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
@@ -264,21 +309,19 @@ assert not output.exists()
 report['rejections'].append('gpu_architecture')
 
 weight_cases = (
-    ('missing_shared_weights_contract', 'Shared weights metadata is required'),
-    ('mixed_shared_weights_contract', 'Shared weights contracts differ'),
-    ('mixed_weight_archive_checksum', 'Shared weights contracts differ'),
-    ('wrong_weight_archive_checksum', 'Shared weights archive checksum mismatch'),
-    ('missing_weight_archive', 'Shared weights archive is missing'),
-    ('corrupt_weight_archive', 'Shared weights archive checksum mismatch'),
-    ('missing_embedded_weight_metadata', 'Shared weights archive metadata is invalid'),
+    ('missing_shared_weights_contract', 'Shared weights metadata is required', 'Unsupported package metadata: shared_weights'),
+    ('mixed_shared_weights_contract', 'Shared weights contracts differ', 'Package metadata differs: shared_weights'),
+    ('mixed_weight_archive_checksum', 'Shared weights contracts differ', 'Package metadata differs: shared_weights'),
+    ('wrong_weight_archive_checksum', 'Shared weights archive checksum mismatch', 'Shared weights archive checksum mismatch'),
+    ('missing_weight_archive', 'Shared weights archive is missing', 'Shared weights archive is missing'),
+    ('corrupt_weight_archive', 'Shared weights archive checksum mismatch', 'Shared weights archive checksum mismatch'),
+    ('missing_embedded_weight_metadata', 'Shared weights archive metadata is invalid', 'Shared weights archive metadata is invalid'),
 )
-for name, message in weight_cases:
+for name, python_message, native_message in weight_cases:
     damaged = out / name
     damaged.mkdir()
     metadata = {kind: json.loads((packages / (kind + '.json')).read_text())
                 for kind in ('prefill', 'decode')}
-    for item in metadata.values():
-        item.setdefault('model_type', 'qwen3')
     if name == 'missing_shared_weights_contract':
         for item in metadata.values():
             del item['shared_weights']
@@ -304,12 +347,12 @@ for name, message in weight_cases:
     try:
         validate_shared_weights(damaged, metadata['prefill'], metadata['decode'])
     except (ValueError, FileNotFoundError) as error:
-        assert message in str(error), (name, str(error))
+        assert python_message in str(error), (name, str(error))
     else:
         raise AssertionError(f'Python accepted invalid weight bundle: {name}')
     result = run_native([damaged, args.reference / 'capital/prompt.ids', out / 'mixed.ids'], name,
                         environment=env | {'CUDA_VISIBLE_DEVICES': ''}, timeout=20)
-    assert result.returncode != 0 and message in result.stderr, failure_detail(result, name)
+    assert result.returncode != 0 and native_message in result.stderr, failure_detail(result, name)
     report['rejections'].append(name)
 
 seed = ids_from(args.reference / 'capital' / 'prompt.ids')

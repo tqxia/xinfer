@@ -1,5 +1,9 @@
 # Common native runtime: 2026-11-03
 
+The metadata compatibility behavior recorded here was subsequently replaced by
+the [shared versioned format](../package-metadata.md). The original refactor's
+validation results below retain their historical bundle/source identities.
+
 Qwen3 and Qwen3.5 now use one native runner and one executable for each role:
 `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`. The model-specific
 `main.cpp`, benchmark and validation entry points have been removed. Current

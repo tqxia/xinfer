@@ -126,8 +126,13 @@ new pair rather than assuming cross-build bitwise reproducibility.
 The directory contains weightless `prefill.pt2` and `decode.pt2`, matching JSON
 metadata, exported graph text and `weights.pt`. The archive embeds its constant
 mappings in `extra/weights.json`; there is no separate `weights.json` file. Both
-entry metadata files record the archive size and checksum. Metadata also records
-the fixed Flash backend, custom operator
+entry metadata files use the shared `schema_version=1` format and record the
+package and archive sizes and checksums. Common fields include `entry_point`,
+`token_range`, `torch_version`, `torch_cuda_version`, `cuda_compute_capability`,
+`vocab_size`, `eos_token_ids` and explicit state/input/output descriptors.
+Qwen3 geometry and adapter details are nested under `model_specific`; source
+and version information lives in `provenance`, with entry timing/graph results
+in `diagnostics`. Metadata also records the fixed Flash backend, custom operator
 ABI, extent/cache contract, checkpoint, Torch/CUDA versions, GPU architecture,
 C++ ABI and actual numerical settings. Keep these fields even though the CLI no
 longer selects a backend: they prevent incompatible packages being mixed.
@@ -164,11 +169,12 @@ prompt at position zero. Total context capacity is 1,024. Earlier positions
 must already be populated. Runtime checks reject invalid IDs, nonpositive or
 oversized budgets, incompatible metadata and cache overflow before model work.
 The runtime also checks the actual CUDA device against the package's compute
-capability before loading GPU weights. New exports record `package_bytes` for
-each entry, and both declared file sizes are checked before archive loading.
-New exports include `model_type="qwen3"` in both entry metadata files.
-Earlier shared-weight bundles without either size field remain supported;
-the embedded SHA-256 checks still verify both packages in every bundle.
+capability before loading GPU weights. The common metadata reader requires
+the schema version, package sizes and checksums, model identity and all shared
+contracts before archive loading. Missing or unsupported schema versions are
+rejected. Earlier unversioned sidecars must be converted or the bundle
+re-exported; there are no legacy field aliases. `model_type="qwen3"` selects the
+Qwen3 state policy after common parsing.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
 masks, training and attention-weight requests are unsupported.
 

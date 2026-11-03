@@ -13,15 +13,17 @@ from compiler.common.benchmark import (
     memory_stats as memory, measure_request, measure_cases, distribution,
     wait_idle as check_idle, run_worker, resolve_gpu,
 )
-from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, read_json, write_json, validate_model_type, sha256 as digest
+from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, read_json, write_json, sha256 as digest
+from compiler.common.metadata import read_package_metadata, validate_metadata_pair
+from compiler.qwen3.packages import validate_model_metadata
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_FIELDS = (
-    'model_revision', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
-    'layers', 'kv_heads', 'head_dim', 'cache_length', 'vocab_size', 'cxx11_abi',
-    'cuda_compute_capability', 'cache_shape', 'cache_stride', 'flat_input_count',
+    'schema_version', 'model_type', 'checkpoint', 'torch_version', 'torch_cuda_version', 'batch_size', 'dtype',
+    'cache_length', 'vocab_size', 'cxx11_abi', 'cuda_compute_capability', 'state',
+    'input_order', 'output_order', 'logits', 'input_mutation', 'model_specific',
     'eos_token_ids', 'attention_backend', 'cache_input', 'custom_attention',
-    'valid_cache_length', 'kv_extent', 'export_options', 'triton_enable_fp_fusion',
+    'kv_extent', 'export_options', 'tf32', 'triton_enable_fp_fusion',
     'inductor_configs',
 )
 
@@ -103,40 +105,17 @@ def summarize(records, workload, reference='eager'):
 
 def validate_packages(packages):
     """Check the fixed Flash ABI and that prefill/decode describe one model."""
-    from compiler.common.attention import OPERATOR_CONTRACT
-
-    for kind in ('prefill', 'decode'):
-        metadata = packages[kind]['metadata']
-        if metadata.get('attention_backend') != 'flash':
-            raise ValueError('Only Flash Qwen3 packages are supported; re-export prefill and decode')
-        if metadata.get('eager_numerics', False):
-            raise ValueError('Legacy eager-numerics packages are unsupported; re-export prefill and decode')
-        if not metadata.get('shared_weights'):
-            raise ValueError('Qwen3 packages require shared weights; re-export prefill and decode')
-        if metadata.get('custom_attention') != OPERATOR_CONTRACT:
-            raise ValueError('Unsupported custom attention contract')
-        if metadata.get('cache_input') != 'full_capacity_with_extent':
-            raise ValueError('Flash packages require the full-capacity cache with extent input')
-        if metadata.get('kv_extent') != dict(device='cpu', dtype='uint8', shape='[valid_length + 1]', data_read=False):
-            raise ValueError('Unsupported KV extent contract')
-        if metadata.get('entry_point') != kind:
-            raise ValueError(f'Incorrect {kind} package entry point')
     prefill, decode = (packages[kind]['metadata'] for kind in ('prefill', 'decode'))
-    validate_model_type(prefill, decode, 'qwen3')
-    for key in PACKAGE_FIELDS:
-        if prefill[key] != decode[key]:
-            raise ValueError(f'Package metadata differs: {key}')
-    if prefill['shared_weights'] != decode['shared_weights']:
-        raise ValueError('Package metadata differs: shared_weights')
-    if decode['token_length'] != [1, 1] or prefill['token_length'][0] != 2:
-        raise ValueError('Unsupported token-length contract')
+    validate_metadata_pair(prefill, decode, model_type='qwen3')
+    for metadata in (prefill, decode):
+        validate_model_metadata(metadata)
 
 
 def validate_comparison(baseline, candidate, baseline_weights, candidate_weights):
     """Compare model inputs and numerical settings independently of artifact hashes."""
     for kind in ('prefill', 'decode'):
         before, after = (profile[kind]['metadata'] for profile in (baseline, candidate))
-        for key in (*PACKAGE_FIELDS, 'token_length'):
+        for key in (*PACKAGE_FIELDS, 'token_range'):
             if before[key] != after[key]:
                 raise ValueError(f'Incomparable packages: {kind}/{key}')
     for key in ('identity_sha256', 'sources'):
@@ -184,7 +163,7 @@ def run(args):
     source.mkdir()
     for name in (*NATIVE_RUNTIME_SOURCES, 'compiler/qwen3/benchmark.py', 'compiler/qwen3/model.py',
                  'compiler/qwen3/export.py', 'compiler/qwen3/prepare.py', 'compiler/common/attention.py',
-                 'compiler/qwen3/packages.py',
+                 'compiler/qwen3/packages.py', 'compiler/common/metadata.py',
                  'compiler/qwen3/adapters/qwen3_flash.py', 'compiler/qwen3/adapters/__init__.py', 'compiler/common/artifacts.py',
                  'compiler/common/weights.py', 'compiler/common/benchmark.py'):
         (source/name).parent.mkdir(parents=True, exist_ok=True)
@@ -202,7 +181,8 @@ def run(args):
         'nvidia-smi', '-i', gpu, '--query-gpu=name,uuid,driver_version,memory.total,clocks.max.sm,clocks.max.memory',
         '--format=csv'], text=True)
     for label, directory in packages.items():
-        environment['packages'][label] = {kind: dict(metadata=read_json(directory/(kind+'.json')),
+        metadata = read_package_metadata(directory, model_type='qwen3')
+        environment['packages'][label] = {kind: dict(metadata=metadata[kind],
                                                     bytes=(directory/(kind+'.pt2')).stat().st_size,
                                                     sha256=digest(directory/(kind+'.pt2')))
                                            for kind in ('prefill', 'decode')}

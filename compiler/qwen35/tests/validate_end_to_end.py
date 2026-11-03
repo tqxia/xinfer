@@ -14,6 +14,8 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import NATIVE_RUNTIME_SOURCES, sha256, ROOT
+from compiler.common.metadata import read_package_metadata
+from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
 from compiler.qwen35.reference import HFRuntime
@@ -114,20 +116,21 @@ def main():
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "end-to-end")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
+    metadata = read_package_metadata(args.packages, model_type="qwen35")
+    for entry in metadata.values():
+        validate_model_metadata(entry)
     attention_library = native_attention_library(args.native)
     if attention_library is None:
         raise ValueError("Qwen3.5 runtime is missing its required native attention library; rebuild the runtime")
     os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
     load_attention_ops(attention_library)
     configure_text()
-    metadata = {k: json.loads((args.packages / f"{k}.json").read_text()) for k in ("prefill", "decode")}
     for kind, meta in metadata.items():
-        assert meta["torch"] == torch.__version__ and meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"] == json.loads((args.model_dir / "manifest.json").read_text())
+        assert meta["torch_version"] == torch.__version__ and meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
+        assert meta["checkpoint"]["manifest"] == json.loads((args.model_dir / "manifest.json").read_text())
     specs = metadata["decode"]["state"]
-    assert metadata["prefill"]["delta_backend"] == "triton_op"
-    eos = metadata["decode"]["generation_config"]["eos_token_id"]
-    eos = eos if isinstance(eos, list) else [eos]
+    assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
+    eos = metadata["decode"]["eos_token_ids"]
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     chats = [dict(name=name, prompt=encode_prompt(tokenizer, text), text=text, limit=64) for name, text in (
         ("capital", "What is the capital of France? Answer briefly."),
@@ -201,7 +204,7 @@ def main():
             aoti[("mixed_dispatch", i)], aoti[("mixed_dispatch_repeat", i)]))
     # Native parity is established before releasing the Python trace. Mapping
     # avoids retaining two full CPU traces while the native files occupy tmpfs.
-    aoti = mapped_native_trace(args.output / "native", cases, specs, metadata["decode"]["vocabulary"])
+    aoti = mapped_native_trace(args.output / "native", cases, specs, metadata["decode"]["vocab_size"])
     gc.collect()
     print("HF teacher-forced, matched partitions", flush=True)
     model = load_model(args.model_dir)
@@ -220,9 +223,9 @@ def main():
     gc.collect()
     torch.cuda.empty_cache()
     report = dict(limit=0.05, comparisons=[], failures=[], top1_differences=[], greedy=[], greedy_failures=[],
-                  delta_backend=metadata["prefill"]["delta_backend"],
+                  delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
                   attention_backend=metadata["prefill"]["attention_backend"],
-                  linear_packing=metadata["prefill"].get("linear_packing"),
+                  linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
                   shared_weights=metadata["decode"]["shared_weights"],
                   checkpoint=metadata["decode"]["checkpoint"], package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
                   native_sha256=sha256(args.native), native_bitwise=True, teacher_steps=len(aoti),
@@ -256,7 +259,7 @@ def main():
     names = [n for n in ("compiler/qwen35/tests/validate_end_to_end.py", "compiler/qwen35/reference.py",
                       "compiler/qwen35/tests/common.py", "compiler/qwen35/model.py", "compiler/qwen35/config.py", "compiler/qwen35/prepare.py")]
     names += ["runtime/qwen35/runtime.h", "runtime/validate.cpp"]
-    names += ["compiler/common/artifacts.py", "compiler/common/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
+    names += ["compiler/common/artifacts.py", "compiler/common/metadata.py", "compiler/qwen35/packages.py", "compiler/common/validation.py", "compiler/common/weights.py", "runtime/common/io.h", "runtime/common/generation.h", "runtime/common/weights.h", "runtime/common/sha256.h"]
     names += ["compiler/qwen35/adapters/delta.py", "compiler/qwen35/kernels/recurrent.py",
               "compiler/qwen35/kernels/chunked.py",
               "compiler/common/passes/pack_linears.py", "compiler/qwen35/export.py"]

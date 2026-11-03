@@ -216,12 +216,21 @@ export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
 `weights.pt` archive under
-`artifacts/qwen35/0.8b/text`. Metadata records `delta_backend=triton_op`,
-the short/long branch operators and algorithms, `delta_short_threshold=97`,
-`delta_chunk_size=64`, `delta_transform_tile=32` and `delta_dot_precision=ieee`,
-plus `model_type="qwen35"`, per-entry conditional graph counts, token ranges, source
-checksums, toolchain and GPU architecture. Attention metadata records the Flash
-operator contract, shape-only extent input and KV-only mutation policy.
+`artifacts/qwen35/0.8b/text`. Both model families use `schema_version=1`, written
+by `compiler/common/metadata.py` and read by the common Python/C++ metadata
+readers. Common fields include `model_type="qwen35"`, `entry_point`, token ranges,
+Torch/CUDA versions, GPU architecture, vocabulary, EOS IDs and explicit tensor
+state descriptors. `checkpoint` contains the model ID, revision and source
+manifest. Attention fields record the Flash operator, shape-only extent input
+and KV-only mutation policy.
+
+`model_specific` contains the DeltaNet backend, short/long operators and
+algorithms, threshold/chunk/tile settings, layer layout and linear packing.
+`provenance` contains source checksums and dependency versions; `diagnostics`
+contains per-entry graph counts and export/compile timings. Runtimes require
+the versioned format. Retained Flash/shared-weight bundles can migrate by
+rewriting their two JSON sidecars while keeping the compiled graphs and weight
+archive unchanged; unversioned metadata is not read through legacy aliases.
 The archive embeds its mappings in
 `extra/weights.json`; no standalone weight manifest is deployed. Both entry
 metadata files contain the same final archive size and checksum. The exporter
@@ -362,7 +371,7 @@ native library dependency beyond the full-model FlashAttention path.
 
 Exports default to `artifacts/qwen35/0.8b/text`. Use a fresh `--output` directory
 if older unpacked packages already occupy that path. The metadata's
-`linear_packing` field records logical groups and policy version; C++ and Python
+`model_specific.linear_packing` field records logical groups and policy version; C++ and Python
 reject mismatched pairs. The separate `prefill.packing.json` / `decode.packing.json`
 files also map FX outputs and source parameter names to each packed constant,
 which helps profiling attribution.

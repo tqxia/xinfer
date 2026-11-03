@@ -14,6 +14,7 @@ from unittest.mock import patch
 from compiler.common import benchmark
 from compiler.qwen3 import benchmark as qwen3_benchmark
 from compiler.qwen35 import benchmark as qwen35_benchmark
+from compiler.common.tests.test_metadata import metadata_pair
 
 
 class BenchmarkContract(unittest.TestCase):
@@ -74,25 +75,7 @@ class BenchmarkContract(unittest.TestCase):
 
 class SharedWeightComparison(unittest.TestCase):
     def profiles(self):
-        metadata = dict(
-            model_revision='revision-one', torch_version='2.13.0+cu126', torch_cuda_version='12.6',
-            batch_size=1, dtype='bfloat16', layers=28, kv_heads=8, head_dim=128, cache_length=1024,
-            vocab_size=151936, cxx11_abi=True, cuda_compute_capability=[8, 9],
-            cache_shape=[1, 8, 1024, 128], cache_stride=[1048576, 131072, 128, 1],
-            flat_input_count=59, eos_token_ids=[151645], attention_backend='flash',
-            cache_input='full_capacity_with_extent',
-            custom_attention=dict(name='xinfer::flash_attention', abi_version=1, read_only=True),
-            valid_cache_length=[1, 1024],
-            kv_extent=dict(device='cpu', dtype='uint8', shape='[valid_length + 1]', data_read=False),
-            export_options=dict(backed_size_oblivious=False), triton_enable_fp_fusion=True,
-            inductor_configs={'emulate_precision_casts': True,
-                              'aot_inductor.package_constants_in_so': False,
-                              'always_keep_tensor_constants': True},
-            shared_weights=dict(format=2, file='weights.pt', identity='1' * 64,
-                                bytes=1000000, sha256='a' * 64))
-        baseline = {kind: dict(metadata=dict(copy.deepcopy(metadata), entry_point=kind,
-                                            token_length=[2, 512] if kind == 'prefill' else [1, 1]))
-                    for kind in ('prefill', 'decode')}
+        baseline = {kind: dict(metadata=metadata) for kind, metadata in metadata_pair().items()}
         candidate = copy.deepcopy(baseline)
         for entry in candidate.values():
             entry['metadata']['shared_weights'].update(bytes=1000128, sha256='b' * 64)
@@ -318,10 +301,13 @@ class Qwen35GpuRouting(unittest.TestCase):
                 library.write_bytes(b'attention fixture')
                 packages = root / 'packages'
                 packages.mkdir()
+                pair = metadata_pair('qwen35')
                 for kind in ('prefill', 'decode'):
                     package = packages / f'{kind}.pt2'
                     package.write_bytes(b'compiled package fixture')
-                    metadata = dict(checkpoint=manifest, package_sha256=qwen35_benchmark.sha256(package))
+                    metadata = pair[kind]
+                    metadata['checkpoint']['manifest'] = manifest
+                    metadata.update(package_bytes=package.stat().st_size, package_sha256=qwen35_benchmark.sha256(package))
                     (packages / f'{kind}.json').write_text(json.dumps(metadata))
                 args = SimpleNamespace(
                     gpu=selector, warmup=1, repeats=1, rounds=2, decode_steps=1, lengths=[2],

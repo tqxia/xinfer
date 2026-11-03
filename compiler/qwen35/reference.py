@@ -1,13 +1,14 @@
 """HF and Python AOTI runtimes with explicit state and dynamic prefill."""
 
-import json
 import torch
 from transformers import StaticCache
 
 from compiler.qwen35.config import CACHE_LENGTH
-from compiler.common.artifacts import require, validate_model_type
+from compiler.common.artifacts import require
+from compiler.common.metadata import read_package_metadata
 from compiler.common.weights import SharedWeights, validate_shared_weights
-from compiler.common.attention import OPERATOR_CONTRACT, cache_extent, load_attention_ops
+from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.qwen35.packages import validate_model_metadata
 
 
 class HFRuntime:
@@ -52,27 +53,12 @@ class HFRuntime:
 
 class PythonRuntime:
     def __init__(self, packages, specs):
-        metadata = json.loads((packages / "prefill.json").read_text())
-        decode = json.loads((packages / "decode.json").read_text())
-        validate_model_type(metadata, decode, "qwen35")
-        require(not metadata.get("eager_numerics", False) and not decode.get("eager_numerics", False),
-                "Legacy eager-numerics packages are unsupported; re-export Qwen3.5 packages with the current exporter")
-        for field in ("attention_backend", "input_mutation", "cache_input", "kv_extent", "custom_attention", "export_options"):
-            require(metadata.get(field) == decode.get(field), f"Package metadata differs: {field}")
-        require(metadata.get("attention_backend") == "flash" and metadata.get("input_mutation") == "kv_only" and
-                metadata.get("cache_input") == "full_capacity_with_extent" and
-                metadata.get("kv_extent") == dict(device="cpu", dtype="uint8", shape="[valid_length + 1]", data_read=False) and
-                metadata.get("custom_attention") == OPERATOR_CONTRACT and
-                metadata.get("export_options") == dict(backed_size_oblivious=False),
-                "Legacy attention or state contract is unsupported; re-export Qwen3.5 packages with the current exporter")
-        assert metadata.get("linear_packing") == decode.get("linear_packing"), "Package linear-packing settings differ"
-        assert metadata["delta_backend"] == decode["delta_backend"], "Package DeltaNet backends differ"
-        for field in ("delta_preparation", "delta_operator", "delta_algorithm", "delta_short_threshold",
-                      "delta_chunk_size", "delta_transform_tile", "delta_dot_precision"):
-            assert metadata.get(field) == decode.get(field), f"Package DeltaNet policy differs: {field}"
-        assert metadata["delta_backend"] == "triton_op", "Unsupported DeltaNet backend"
-        assert metadata["tokens"] is None and metadata["token_range"] == [2, 512]
+        pair = read_package_metadata(packages, model_type="qwen35")
+        metadata, decode = pair["prefill"], pair["decode"]
+        for entry in pair.values():
+            validate_model_metadata(entry)
         validate_shared_weights(packages, metadata, decode)
+        require(specs == decode["state"], "Runtime state descriptors differ from package")
         load_attention_ops()
         self.weights = SharedWeights(packages, metadata["shared_weights"])
         self.functions = {kind: self.weights.load(kind) for kind in ("prefill", "decode")}

@@ -1,6 +1,7 @@
 """Export Qwen prefill and decode as one shared-weight AOTInductor bundle."""
 
 import argparse
+import importlib.metadata
 import json
 import time
 from pathlib import Path
@@ -8,8 +9,9 @@ from pathlib import Path
 import torch
 
 from compiler.common.weights import compile_shared
+from compiler.common.artifacts import ROOT, sha256
+from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.common.attention import OPERATOR_CONTRACT
 from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model, cache_extent
 from compiler.qwen3.prepare import DEFAULT_MODEL
 
@@ -27,10 +29,11 @@ def main():
     from torch.fx.experimental import _config as symbolic_config
     if symbolic_config.backed_size_oblivious:
         raise ValueError("Flash must export with backed_size_oblivious disabled")
-    export_options = {"backed_size_oblivious": symbolic_config.backed_size_oblivious}
     model = load_model(args.model_dir)
     step = FlashStep(model)
-    revision = json.loads((args.model_dir / "model_manifest.json").read_text())["revision"]
+    manifest = json.loads((args.model_dir / "model_manifest.json").read_text())
+    revision = manifest["revision"]
+    checkpoint = dict(model_id=manifest["repo_id"], revision=revision, manifest=manifest)
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
     options = {"emulate_precision_casts": True}
     from torch._inductor.runtime.triton_helpers import get_backend_options
@@ -64,44 +67,31 @@ def main():
         (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
         print(f"Exported {kind}; compiling...", flush=True)
 
-        def metadata_factory(compiled_path):
-            metadata = {
-                "entry_point": kind,
-                "model_type": "qwen3",
-                "package_bytes": compiled_path.stat().st_size,
-                "torch_version": torch.__version__,
-                "torch_cuda_version": torch.version.cuda,
-                "cxx11_abi": torch._C._GLIBCXX_USE_CXX11_ABI,
-                "cuda_compute_capability": list(torch.cuda.get_device_capability()),
-                "model_revision": revision,
-                "batch_size": 1,
-                "token_length": [length, length] if kind == "decode" else [2, MAX_PROMPT],
-                "cache_length": CACHE_LENGTH,
-                "layers": model.config.num_hidden_layers,
-                "kv_heads": model.config.num_key_value_heads,
-                "head_dim": model.config.head_dim,
-                "vocab_size": model.config.vocab_size,
-                "dtype": "bfloat16",
-                "export_options": export_options,
-                "attention_backend": "flash",
-                "cache_input": "full_capacity_with_extent",
-                "valid_cache_length": [1, CACHE_LENGTH],
-                "kv_extent": {"device": "cpu", "dtype": "uint8", "shape": "[valid_length + 1]", "data_read": False},
-                "triton_enable_fp_fusion": get_backend_options()["enable_fp_fusion"],
-                "flat_input_order": "input_ids, cache_position, K0, V0, K1, V1, ..., kv_extent",
-                "flat_input_count": 3 + len(cache),
-                "input_alignment_bytes": 16,
-                "position_contract": "contiguous absolute positions; populated prefix; final position < cache_length",
-                "cache_shape": list(cache[0].shape),
-                "cache_stride": list(cache[0].stride()),
-                "cache_padding": 0,
-                "output": "last-token logits [1, vocab_size]",
-                "eos_token_ids": model.generation_config.eos_token_id,
-                "export_and_compile_seconds": time.perf_counter() - start,
-            }
-            metadata.update(custom_attention=OPERATOR_CONTRACT, flash_implementation="adapter",
-                            model_adapter=adapter_report)
-            return metadata
+        def metadata_factory(_compiled_path):
+            state = [state_spec(layer, name, list(cache[0].shape), "bfloat16", "inplace")
+                     for layer in range(model.config.num_hidden_layers) for name in ("key", "value")]
+            return make_metadata(
+                model_type="qwen3", entry_point=kind,
+                token_range=[1, 1] if kind == "decode" else [2, MAX_PROMPT],
+                checkpoint=checkpoint, torch_version=torch.__version__, torch_cuda_version=torch.version.cuda,
+                cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
+                cuda_compute_capability=list(torch.cuda.get_device_capability()),
+                cache_length=CACHE_LENGTH, vocab_size=model.config.vocab_size,
+                eos_token_ids=model.generation_config.eos_token_id, state=state,
+                triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
+                model_specific=dict(layers=model.config.num_hidden_layers,
+                                    kv_heads=model.config.num_key_value_heads, head_dim=model.config.head_dim,
+                                    cache_shape=list(cache[0].shape), cache_stride=list(cache[0].stride()),
+                                    cache_padding=0, flash_implementation="adapter", model_adapter=adapter_report),
+                provenance=dict(
+                    strict_export=False,
+                    versions={name: importlib.metadata.version(name) for name in
+                              ("transformers", "triton", "safetensors", "tokenizers", "huggingface-hub")},
+                    source_sha256={name: sha256(ROOT / name) for name in (
+                        "compiler/qwen3/export.py", "compiler/qwen3/model.py", "compiler/qwen3/adapters/qwen3_flash.py",
+                        "compiler/common/metadata.py", "compiler/common/attention.py", "compiler/common/weights.py")}),
+                diagnostics=dict(graph_nodes=len(list(exported.graph.nodes)),
+                                 export_and_compile_seconds=time.perf_counter() - start))
 
         return exported, metadata_factory
 

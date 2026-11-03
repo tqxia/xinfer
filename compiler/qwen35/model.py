@@ -12,6 +12,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5TextConfig, Qwen
 
 from compiler.qwen35.config import CACHE_LENGTH, MODEL_ID, REVISIONS, TEXT_DIR, configure, deltanet_state_shapes
 from compiler.common.artifacts import sha256
+from compiler.common.metadata import state_spec
 
 
 def prepare(directory):
@@ -81,7 +82,8 @@ def state_specs(config):
             tensors = (("key", kv_shape, "bfloat16"), ("value", kv_shape, "bfloat16"))
         else:
             raise ValueError(f"Unsupported layer type: {kind}")
-        specs.extend(dict(name=f"layer_{layer}.{name}", layer=layer, kind=name, shape=list(shape), dtype=dtype)
+        specs.extend(state_spec(layer, name, shape, dtype,
+                                "inplace" if kind == "full_attention" else "replace")
                      for name, shape, dtype in tensors)
     return specs
 
