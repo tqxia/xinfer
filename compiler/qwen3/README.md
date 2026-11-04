@@ -27,8 +27,9 @@ The guide uses `environments/setup.sh` and `environments/check.sh` for setup and
 checking; the Python implementations and tests also live under `environments/`.
 
 `requirements.txt` pins this model's HF dependencies, including Transformers
-4.51.3. Torch and Triton versions belong to the target profile. The existing
-[`environments/l20/qwen3.lock`](../../environments/l20/qwen3.lock) records the
+4.51.3. The Flash adapter enforces this version before importing HF private
+implementation code or modifying the model. Torch and Triton versions belong
+to the target profile. The existing [`environments/l20/qwen3.lock`](../../environments/l20/qwen3.lock) records the
 original L20 environment, including its CUDA packages. It is a historical full
 snapshot, not the GB10 installation recipe.
 
@@ -249,7 +250,15 @@ with `CUDA_VISIBLE_DEVICES`.
   --output artifacts/qwen3-benchmark
 ```
 
-`run` compares HF eager with one compiled profile using identical forced tokens.
+`run` compares ordinary HF eager with one compiled profile using identical
+forced tokens. The `eager` baseline uses the unchanged HF model with its own
+dynamic cache and automatic masks/positions, through the same shared benchmark
+helper as Qwen3.5. Both baselines use normal PyTorch SDPA backend selection.
+Each request starts with no cache; reset discards the cache and initial cache
+allocation belongs to prefill. One-token initial requests use
+the same HF path. Worker reports and the benchmark summary identify this
+baseline as `eager_baseline: hf_dynamic_cache`.
+
 `compare` compares two compiled artifact directories for optimization work.
 Both commands default to the first CUDA-visible GPU, honoring
 `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`. Use `--gpu` with an `nvidia-smi`
@@ -262,4 +271,7 @@ Both preserve rotated process order, warmups, package/binary/workload hashes,
 memory and GPU telemetry. Use the [development tools guide](../../docs/development-tools.md)
 for paired comparisons and numerical diagnostics. Shared-GPU smoke timings
 are provisional; controlled performance measurements require the idle checks.
+Earlier Qwen3 benchmark results used `QwenStep` with a masked 1,024-slot
+`TensorCache`; rerun comparisons before quoting speedups for the dynamic-cache
+baseline. Numerical validation retains its existing matched-cache controls.
 Historical GB10 speedups do not establish a speedup for another toolchain/GPU.

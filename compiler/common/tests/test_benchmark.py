@@ -9,7 +9,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from compiler.common import benchmark
 from compiler.common.artifacts import sha256, write_json
@@ -53,6 +53,137 @@ def worker_report(workload):
             for case in workload["cases"]
         ],
     )
+
+
+class HFEagerBaseline(unittest.TestCase):
+    def test_hf_owns_masks_positions_and_cache_lifecycle(self):
+        import torch
+
+        tensor = torch.tensor
+        calls, returned = [], []
+
+        def model(**kwargs):
+            calls.append(kwargs)
+            cache = object()
+            returned.append(cache)
+            return SimpleNamespace(
+                logits=tensor([[[0.0, 9.0, 0.0], [0.0, 0.0, 9.0]]]),
+                past_key_values=cache,
+            )
+
+        def cpu_tensor(*args, **kwargs):
+            self.assertEqual(kwargs.pop("device"), "cuda")
+            return tensor(*args, **kwargs)
+
+        loader = Mock(return_value=model)
+        reset, predict = benchmark.hf_eager_loader(loader)(Path("checkpoint"))
+        loader.assert_called_once_with(Path("checkpoint"))
+        with patch("torch.tensor", side_effect=cpu_tensor):
+            self.assertEqual(predict([4, 5, 6], 0), 2)
+            self.assertEqual(predict([7], 3), 2)
+            self.assertEqual(predict([8, 9], 4), 2)
+            reset()
+            self.assertEqual(predict([10], 0), 2)
+        for call, tokens in zip(calls, ([4, 5, 6], [7], [8, 9], [10])):
+            self.assertEqual(
+                set(call), {"input_ids", "past_key_values", "use_cache", "logits_to_keep"}
+            )
+            self.assertEqual(call["input_ids"].tolist(), [tokens])
+            self.assertEqual(call["input_ids"].dtype, torch.int64)
+            self.assertIs(call["use_cache"], True)
+            self.assertEqual(call["logits_to_keep"], 1)
+        self.assertIsNone(calls[0]["past_key_values"])
+        self.assertIs(calls[1]["past_key_values"], returned[0])
+        self.assertIs(calls[2]["past_key_values"], returned[1])
+        self.assertIsNone(calls[3]["past_key_values"])
+
+    def test_out_of_order_requests_fail_before_allocation_or_model_execution(self):
+        model = Mock()
+        _, predict = benchmark.hf_eager_loader(lambda _: model)(Path("checkpoint"))
+        with patch("torch.tensor") as allocate:
+            with self.assertRaisesRegex(ValueError, "Consumed position differs"):
+                predict([4], 1)
+        allocate.assert_not_called()
+        model.assert_not_called()
+
+    def test_a_missing_hf_cache_is_rejected(self):
+        import torch
+
+        model = Mock(return_value=SimpleNamespace(past_key_values=None))
+        _, predict = benchmark.hf_eager_loader(lambda _: model)(Path("checkpoint"))
+        with patch("torch.tensor", return_value=torch.empty(1, 1, dtype=torch.int64)):
+            with self.assertRaisesRegex(ValueError, "HF model did not return a cache"):
+                predict([4], 0)
+
+    def test_both_model_hooks_use_the_shared_hf_loader(self):
+        for family, module in (("qwen3", qwen3_benchmark), ("qwen35", qwen35_benchmark)):
+            with self.subTest(model=family):
+                model = SimpleNamespace(load_model=Mock(), configure_text=Mock())
+                sentinel = object()
+                with (
+                    patch.dict(sys.modules, {f"compiler.{family}.model": model}),
+                    patch.object(module, "hf_eager_loader", return_value=sentinel) as helper,
+                    patch("compiler.qwen35.config.configure") as configure,
+                ):
+                    self.assertIs(module.eager_loader(), sentinel)
+                helper.assert_called_once_with(model.load_model)
+                model.configure_text.assert_not_called()
+                if family == "qwen35":
+                    configure.assert_called_once_with()
+                else:
+                    configure.assert_not_called()
+
+    def test_qwen35_benchmark_preserves_sdpa_backend_selection(self):
+        import torch
+
+        def backends():
+            return (
+                torch.backends.cuda.flash_sdp_enabled(),
+                torch.backends.cuda.mem_efficient_sdp_enabled(),
+                torch.backends.cuda.math_sdp_enabled(),
+                torch.backends.cuda.cudnn_sdp_enabled(),
+            )
+
+        model = SimpleNamespace(load_model=Mock(), configure_text=Mock())
+        selected = backends()
+        self.addCleanup(
+            setattr, torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32
+        )
+        self.addCleanup(
+            setattr, torch.backends.cudnn, "allow_tf32", torch.backends.cudnn.allow_tf32
+        )
+        with (
+            patch.dict(sys.modules, {"compiler.qwen35.model": model}),
+            patch("compiler.qwen35.config.importlib.metadata.version", return_value="5.20.2"),
+            patch("compiler.qwen35.config.importlib.util.find_spec", return_value=None),
+            patch("torch.set_num_threads"),
+        ):
+            qwen35_benchmark.eager_loader()
+            self.assertEqual(backends(), selected)
+        model.configure_text.assert_not_called()
+        model.load_model.assert_not_called()
+
+    def test_eager_worker_identifies_the_hf_dynamic_baseline(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = SimpleNamespace(
+                output=Path(temporary) / "worker.json",
+                workload=Path("workload"),
+                model_dir=Path("checkpoint"),
+            )
+            load = Mock(return_value=(Mock(), Mock()))
+            with (
+                patch.object(benchmark, "read_json", return_value={}),
+                patch.object(benchmark, "memory_stats", return_value={}),
+                patch.object(benchmark, "measure_cases", return_value=[]),
+                patch("torch.empty"),
+                patch("torch.cuda.synchronize"),
+                patch("torch.cuda.reset_peak_memory_stats"),
+                patch("torch.set_num_threads"),
+            ):
+                benchmark.eager_worker(args, load, "eager")
+            report = json.loads(args.output.read_text())
+            self.assertEqual(report["eager_baseline"], "hf_dynamic_cache")
+            self.assertEqual(report["profile"], "eager")
 
 
 class BenchmarkContract(unittest.TestCase):
@@ -499,6 +630,10 @@ class ControllerContract(unittest.TestCase):
                     )
                     self.assertEqual(set(summary["profiles"]), labels)
                     self.assertEqual(summary["schema_version"], 1)
+                    if mode == "compare":
+                        self.assertNotIn("eager_baseline", summary)
+                    else:
+                        self.assertEqual(summary["eager_baseline"], "hf_dynamic_cache")
                     self.assertTrue(summary["functional_checks_passed"])
                     self.assertIsNone(summary["numerical_acceptance"]["passed"])
 

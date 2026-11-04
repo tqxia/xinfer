@@ -20,6 +20,10 @@ stacks, not downloadable wheel bundles. Keep the exact wheel/container identity
 with deployment records. Qwen3 and Qwen3.5 have isolated HF environments because
 they require Transformers 4.51.3 and 5.20.2 respectively. Their requirements files
 contain model dependencies; the selected native stack supplies Torch/Triton/CUDA.
+The Qwen3 Flash adapter rejects Transformers versions other than 4.51.3 before
+loading its private HF implementation or modifying model modules. Both
+benchmark eager baselines use ordinary HF dynamic-cache forwards; their reports
+record `eager_baseline: hf_dynamic_cache`.
 
 ## Create model environments
 

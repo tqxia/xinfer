@@ -6,6 +6,7 @@ import shutil
 
 from compiler.common.benchmark import (
     eager_worker as measure_eager,
+    hf_eager_loader,
     run_benchmark,
     resolve_gpu,
     wait_idle,
@@ -16,23 +17,11 @@ from compiler.qwen35.packages import validate_model_metadata
 
 
 def eager_loader():
-    from compiler.qwen35.reference import HFRuntime
-    from compiler.qwen35.model import configure_text, load_model
+    from compiler.qwen35.config import configure
+    from compiler.qwen35.model import load_model
 
-    configure_text()
-
-    def load(model_dir):
-        runtime = HFRuntime(load_model(model_dir))
-        runtime.reset()
-
-        def predict(tokens, position):
-            result = runtime.step(tokens).argmax(-1).item()
-            require(runtime.position == position + len(tokens), "Consumed position differs")
-            return result
-
-        return runtime.reset, predict
-
-    return load
+    configure()
+    return hf_eager_loader(load_model)
 
 
 def worker(args):

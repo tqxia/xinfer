@@ -5,6 +5,7 @@ from pathlib import Path
 
 from compiler.common.benchmark import (
     eager_worker as measure_eager,
+    hf_eager_loader,
     run_benchmark,
     validate_comparison,
 )
@@ -14,33 +15,9 @@ from compiler.qwen3.prepare import DEFAULT_MODEL
 
 
 def eager_loader():
-    import torch
-    from compiler.qwen3.model import QwenStep, allocate_cache, load_model
+    from compiler.qwen3.model import load_model
 
-    def load(model_dir):
-        model = load_model(model_dir)
-        step, cache = QwenStep(model), allocate_cache(model.config)
-
-        def predict(tokens, position):
-            ids = (
-                torch.full((1, 1), tokens[0], device="cuda", dtype=torch.int64)
-                if len(tokens) == 1
-                else torch.tensor(tokens, dtype=torch.int64).unsqueeze(0).to("cuda")
-            )
-            pos = (
-                torch.full((1,), position, device="cuda", dtype=torch.int64)
-                if len(tokens) == 1
-                else torch.arange(position, position + len(tokens), device="cuda")
-            )
-            return step(ids, pos, cache).argmax(-1).item()
-
-        def reset():
-            for tensor in cache:
-                tensor.zero_()
-
-        return reset, predict
-
-    return load
+    return hf_eager_loader(load_model)
 
 
 def eager_worker(args):

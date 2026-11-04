@@ -47,9 +47,11 @@ claim that the new artifact passed. Current refactor verification is recorded in
 
 ## Measurement and next work
 
-The canonical benchmark compares HF eager and one compiled profile. Paired
-baseline/candidate runs remain available for optimizations and record workload,
-package/native identities, numerical settings, rotated process order,
+Both model benchmarks compare ordinary HF dynamic-cache eager and one compiled
+profile through the shared cached-forward helper. Reports mark this baseline
+with `eager_baseline: hf_dynamic_cache`; earlier masked-cache speedups need fresh
+runs. Paired baseline/candidate runs remain available for optimizations and
+record workload, package/native identities, numerical settings, rotated process order,
 warmups, memory and GPU telemetry. Shared-GPU smoke runs establish functionality;
 controlled performance conclusions require idle-boundary checks and repeated
 measurements.

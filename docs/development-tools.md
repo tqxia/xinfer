@@ -75,12 +75,14 @@ for the CMake `Runtime` component, installed layout and prefix relocation.
 Both Python benchmark entry points use `compiler/common/benchmark.py` for
 environment and package records, rotated process order, idle checks,
 worker execution, failure reports and summaries. Model modules provide prompts,
-checkpoint manifests, package checks and eager reset/step hooks. Qwen3 retains
+checkpoint manifests, package checks and model-loading hooks. Both eager workers
+use the common plain-HF cached-forward helper. Qwen3 retains
 paired compiled-profile comparisons; Qwen3.5 attaches its matching end-to-end
 validation result.
 
 Benchmark `summary.json` uses `schema_version: 1` and `model_type`. Its `profiles`
-retain the CLI's profile labels; each case stores prediction agreement as
+retain the CLI's profile labels. Eager worker reports and summaries containing
+an eager profile record `eager_baseline: hf_dynamic_cache`; each case stores
 `prediction_agreement: {reference_profile: matching_count}`. Environment records
 use `packages[profile][entry_point]` for metadata, size and checksum, and
 `shared_weights[profile]` for the archive identity checks.
@@ -122,7 +124,21 @@ report was produced with assertions disabled.
 package pair. The compiled profile is named `aoti`; there is no separate
 eager-numerics compilation profile. Each process receives the same prompts and
 forced decode tokens, so differences in predicted tokens do not change the
-measured workload.
+measured workload. Both model benchmarks start with `past_key_values=None`,
+then carry the cache returned by the unchanged HF model. HF creates its dynamic
+cache and determines masks and positions; no project adapter or fixed-capacity
+attention mask is used. Both baselines use normal PyTorch SDPA backend selection.
+Qwen3.5 benchmark setup preserves that dispatch while its matched validation/export
+controls keep their existing forced efficient backend. Reset discards the cache,
+and the first prefill includes cache allocation. Initial one-token requests use
+the same path.
+
+Previous Qwen3 and Qwen3.5 benchmark baselines used masked 1,024-slot caches,
+with project-owned and HF static caches respectively. Their speedups need fresh
+runs under this protocol. Model-specific Transformers versions and computation
+still differ; a shared baseline protocol does not establish performance across
+models or devices. The matched-cache numerical validation controls are separate
+from these timing baselines.
 
 ```bash
 "$CMAKE" --build "$BUILD" --target xinfer_benchmark -j2

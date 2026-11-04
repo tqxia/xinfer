@@ -59,6 +59,8 @@ def resolve_gpu(device=None):
     return gpu
 
 
+EAGER_BASELINE = "hf_dynamic_cache"
+
 TIMING_FIELDS = (
     "reset_ms",
     "prefill_ms",
@@ -229,6 +231,39 @@ def check_predictions(sample, case):
     )
 
 
+def hf_eager_loader(load_model):
+    """Use ordinary HF cached forwards; HF owns cache creation, positions and masks."""
+
+    def load(model_dir):
+        import torch
+
+        model = load_model(model_dir)
+        cache, consumed = None, 0
+
+        def reset():
+            nonlocal cache, consumed
+            cache, consumed = None, 0
+
+        def predict(tokens, position):
+            nonlocal cache, consumed
+            require(position == consumed, "Consumed position differs")
+            ids = torch.tensor([tokens], dtype=torch.int64, device="cuda")
+            result = model(
+                input_ids=ids,
+                past_key_values=cache,
+                use_cache=True,
+                logits_to_keep=1,
+            )
+            cache = result.past_key_values
+            require(cache is not None, "HF model did not return a cache")
+            consumed += len(tokens)
+            return result.logits[:, -1, :].argmax(-1).item()
+
+        return reset, predict
+
+    return load
+
+
 def eager_worker(args, load_runtime, profile):
     """load_runtime(model_dir) returns the model's reset and predict callbacks."""
     import torch
@@ -250,6 +285,7 @@ def eager_worker(args, load_runtime, profile):
         torch.cuda.synchronize()
         report = dict(
             profile=profile,
+            eager_baseline=EAGER_BASELINE,
             torch_version=torch.__version__,
             cpu_threads=torch.get_num_threads(),
             cuda_init_ms=init_ms,
@@ -554,6 +590,8 @@ def run_benchmark(
             functional_checks_passed=True,
             profiles=summarize(records, workload, reference),
         )
+        if eager:
+            summary["eager_baseline"] = EAGER_BASELINE
         write_json(out / "summary.json", summary)
     except Exception as error:
         write_json(out / "failure.json", dict(error=str(error), completed_runs=len(records)))

@@ -5,6 +5,17 @@ the populated cache prefix. The C++ runtime validates positions and capacity.
 Weights are loaded with HF first; wrappers reuse the original modules in place.
 """
 
+import importlib.metadata
+
+try:
+    _transformers_version = importlib.metadata.version("transformers")
+except importlib.metadata.PackageNotFoundError as error:
+    raise RuntimeError("Qwen3 Flash adapter requires transformers==4.51.3") from error
+if _transformers_version != "4.51.3":
+    raise RuntimeError(
+        f"Qwen3 Flash adapter requires transformers==4.51.3; found {_transformers_version}"
+    )
+
 import torch
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, apply_rotary_pos_emb
 

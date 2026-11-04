@@ -67,10 +67,14 @@ files record its checksum. Deploy the complete five-file package directory. The 
 storage to both loaders with `user_managed`; rebuild with Torch 2.13 or newer
 and re-export existing embedded-weight packages before using the current runtime.
 
-Benchmark measurement boundaries are unchanged: reset, prefill, decode and
-whole request. Both model workers record reset-plus-prefill and consumed
-positions. The Python benchmark controller shares environment capture, rotated
-process order, failure handling and summaries across models. Warmup predictions
+Benchmarks split reset, prefill, decode and whole-request timing. Both model
+eager workers use the unchanged HF model and its dynamic cache, with automatic
+masks and positions; reset discards the cache and initial allocation is timed
+in prefill. Reports identify the baseline as `eager_baseline: hf_dynamic_cache`.
+Earlier masked-cache speedups require fresh comparisons. Both model workers
+record reset-plus-prefill and consumed positions. The Python benchmark
+controller shares environment capture, rotated process order, failure handling
+and summaries across models. Warmup predictions
 are checked as well as measured repeats. Benchmark reports include package,
 binary and workload checksums. Qwen3 keeps HF eager/FP32 references for
 validation, with bounded HF logit error and separate cache/token drift

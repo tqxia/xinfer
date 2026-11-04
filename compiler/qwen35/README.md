@@ -422,12 +422,22 @@ Benchmark workers, idle checks, telemetry and GPU records use the same selected
 UUID, recorded as `gpu_uuid` in `environment.json`. Qwen3 uses the same selection
 policy.
 
-Profiles compare HF full-prompt eager with native AOTI using identical fixed
-tokens. EOS is data during timing. Reports retain numerical acceptance,
+Profiles compare ordinary HF eager (`hf`) with native AOTI (`cpp_aoti`) using
+identical fixed tokens. Both models use the shared HF dynamic-cache benchmark
+helper: the unchanged model creates and carries its own cache and constructs
+its masks and positions. Both baselines use normal PyTorch SDPA backend
+selection. Qwen3.5 retains environment checks while its matched validation/export
+setup keeps the separately forced efficient backend. Reset discards the cache,
+so initial allocation is counted in prefill; one-token initial requests follow the same path. Worker
+reports and the benchmark summary record `eager_baseline: hf_dynamic_cache`.
+EOS is data during timing. Reports retain numerical acceptance,
 reset/prefill/decode timings, memory, workload and telemetry.
 `environment.json` records package, binary and workload checksums.
 `--allow-busy` is for functional checks and marks timings provisional. Final
-measurements require an idle environment.
+measurements require an idle environment. Earlier Qwen3.5 benchmarks used an
+HF `StaticCache` with an explicit 1,024-slot mask; rerun comparisons for the new
+dynamic-cache baseline. The matched static-cache `HFRuntime` remains a numerical
+validation control.
 
 [The Inductor tuning guide](../../docs/experiments/qwen35-inductor-tuning.md)
 defines separate generated-GEMV and GEMM-autotuning experiments, package-pair
