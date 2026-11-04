@@ -20,7 +20,7 @@ class GatedPrefixFlash(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         configure_text()
-        load_attention_ops()
+        load_attention_ops(model="qwen35")
         torch.manual_seed(35)
         cls.config = Qwen3_5TextConfig(
             hidden_size=1024,

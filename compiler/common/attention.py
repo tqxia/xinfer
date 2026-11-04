@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from compiler.common.artifacts import default_build_dir
+
 
 OPERATOR_CONTRACT = {"name": "xinfer::flash_attention", "abi_version": 1, "read_only": True}
 _loaded = None
@@ -34,21 +36,24 @@ def native_attention_library(native):
     return None
 
 
-def load_attention_ops(library=None):
-    import torch
-
+def load_attention_ops(library=None, *, model=None):
     global _loaded
-    library = Path(
-        library
-        or os.environ.get("XINFER_ATTENTION_OPS_LIBRARY")
-        or Path(__file__).resolve().parents[2] / "build/libxinfer_attention_ops.so"
-    ).resolve()
+    selected = library or os.environ.get("XINFER_ATTENTION_OPS_LIBRARY")
+    if not selected and _loaded is not None:
+        return
+    if not selected:
+        if model is None:
+            raise ValueError("Select a model to locate its default native attention library")
+        selected = default_build_dir(model) / "libxinfer_attention_ops.so"
+    library = Path(selected).resolve()
     if _loaded is not None:
         if _loaded != library:
             raise ValueError("Cannot load two different attention libraries in one Python process")
         return
     if not library.is_file():
         raise FileNotFoundError(f"Build the native attention library first: {library}")
+    import torch
+
     torch.ops.load_library(str(library))
 
     @torch.library.register_fake("xinfer::flash_attention")

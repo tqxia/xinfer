@@ -21,8 +21,8 @@ and package ABI. Qwen3.5 retains its separate adapter, environment and policy.
 L20 and GB10 use the same compiler, attention adapter and C++ runtime. Start with
 [the target environment guide](../../environments/README.md) to select the native
 Torch/Triton/CUDA stack, create the isolated model environment, and build/export
-into target-specific directories. Export-time Torch and native LibTorch must
-come from the same selected installation.
+with the `build/qwen3/` native directory and target-specific packages.
+Export-time Torch and native LibTorch must come from the same selected installation.
 The guide uses `environments/setup.sh` and `environments/check.sh` for setup and
 checking; the Python implementations and tests also live under `environments/`.
 
@@ -40,7 +40,7 @@ for GB10.
 
 ```bash
 Q3_PY="$PWD/work/l20/qwen3-torch213-venv/bin/python"
-BUILD="$PWD/work/l20/build-torch213"
+BUILD="$PWD/build/qwen3"
 ```
 
 ## Prepare offline inputs
@@ -89,15 +89,17 @@ library and matching LibTorch/CUDA. The first CMake configuration fetches the
 pinned nlohmann/json headers; later builds reuse the cached dependency.
 
 Follow the target guide's native build command, including its CUDA runtime
-selection on L20, then select that build for Python:
+selection on L20. Python tools default to the native executables and attention
+library in the repository's `build/qwen3/`. Existing `--native` options select
+another executable. To override the Python attention library:
 
 ```bash
 export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 ```
 
-Python defaults to `build/libxinfer_attention_ops.so`; the environment variable
-selects another build directory. Native binaries link the library directly and
-must be deployed with it and their matching LibTorch/CUDA libraries. A `.pt2`
+The library override is optional; the default is
+`build/qwen3/libxinfer_attention_ops.so`. Native binaries link the library directly
+and must be deployed with it and their matching LibTorch/CUDA libraries. A `.pt2`
 package does not bundle this external operator. Native linkage must remain free
 of `libpython` and `libtorch_python`.
 The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)

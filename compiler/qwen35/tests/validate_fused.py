@@ -16,7 +16,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     torch_recurrent_gated_delta_rule,
 )
 
-from compiler.common.artifacts import ROOT, read_json, sha256, write_json
+from compiler.common.artifacts import default_build_dir, ROOT, read_json, sha256, write_json
 from compiler.common.tests.validation import (
     bits_equal,
     compare_file,
@@ -256,7 +256,7 @@ def compare(report, label, actual, expected, exact_tensors=()):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path("work/qwen35/build/qwen35_fused"))
+    parser.add_argument("--binary", type=Path, default=default_build_dir("qwen35") / "qwen35_fused")
     parser.add_argument("--block-dir", type=Path, default=MODEL_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "fused-validation")
     args = parser.parse_args()

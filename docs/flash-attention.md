@@ -38,8 +38,10 @@ module paths by adding an `original` component.
 Qwen3 always builds and links `libxinfer_attention_ops.so`. Build before export,
 using matching LibTorch/CUDA and the toolchain commands in the
 [Qwen3 guide](../compiler/qwen3/README.md#build-before-export). Python resolves
-`build/libxinfer_attention_ops.so`, or `XINFER_ATTENTION_OPS_LIBRARY` for a separate
-build directory. Native targets link it directly; `.pt2` does not bundle it.
+`build/qwen3/libxinfer_attention_ops.so` for Qwen3 and
+`build/qwen35/libxinfer_attention_ops.so` for Qwen3.5 by default;
+`XINFER_ATTENTION_OPS_LIBRARY` optionally selects another build or installed
+library. Native targets link it directly; `.pt2` does not bundle it.
 Deploy the library alongside the binaries and their matching dependencies.
 
 The runtime validates fixed `attention_backend: flash`, cache/extent settings,
@@ -52,14 +54,15 @@ must use the [versioned metadata contract](package-metadata.md). Unversioned
 sidecars can be converted without changing those compiled graphs or weights.
 
 ```bash
-# First build with the matching toolchain from the Qwen3 guide.
-.venv/bin/python -m compiler.qwen3.tests.custom_attention \
+# First select Q3_PY and build with the matching target toolchain.
+BUILD="$PWD/build/qwen3"
+"$Q3_PY" -m compiler.qwen3.tests.custom_attention \
   --output artifacts/attention-check-new
-.venv/bin/python -m compiler.qwen3.tests.attention_adapter \
+"$Q3_PY" -m compiler.qwen3.tests.attention_adapter \
   --output artifacts/adapter-check-new
-.venv/bin/python -m compiler.qwen3.export --output artifacts/qwen3-flash
-AOTI_RUNTIME_CHECK_INPUTS=1 .venv/bin/python -m compiler.qwen3.tests.validate_cpp \
-  --packages artifacts/qwen3-flash --native build/xinfer_validate \
+"$Q3_PY" -m compiler.qwen3.export --output artifacts/qwen3-flash
+AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
+  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
   --output artifacts/flash-validation-new
 ```
 

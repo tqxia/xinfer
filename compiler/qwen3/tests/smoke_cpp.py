@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
-from compiler.common.artifacts import sha256
+from compiler.common.artifacts import default_build_dir, sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
@@ -18,7 +18,7 @@ from compiler.qwen3.tests.numerics import ids_from
 
 
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("--native", type=Path, default=Path("build/xinfer_aoti"))
+parser.add_argument("--native", type=Path, default=default_build_dir("qwen3") / "xinfer_aoti")
 parser.add_argument("--reference", type=Path, default=Path("artifacts/reference"))
 parser.add_argument("--packages", type=Path, default=Path("artifacts/aoti"))
 parser.add_argument("--output", type=Path, default=Path("artifacts/native-smoke"))

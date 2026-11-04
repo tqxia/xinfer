@@ -10,7 +10,7 @@ from compiler.common.benchmark import (
     resolve_gpu,
     wait_idle,
 )
-from compiler.common.artifacts import read_json, require, sha256
+from compiler.common.artifacts import default_build_dir, read_json, require, sha256
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.qwen35.packages import validate_model_metadata
 
@@ -106,7 +106,9 @@ def main():
     runner = commands.add_parser("run")
     runner.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     runner.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
-    runner.add_argument("--native", type=Path, default=Path("work/qwen35/build/xinfer_benchmark"))
+    runner.add_argument(
+        "--native", type=Path, default=default_build_dir("qwen35") / "xinfer_benchmark"
+    )
     runner.add_argument("--validation", type=Path, default=ARTIFACT_DIR / "end-to-end/summary.json")
     runner.add_argument("--output", type=Path, required=True)
     runner.add_argument(

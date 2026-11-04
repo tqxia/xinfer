@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
-from compiler.common.artifacts import run, sha256
+from compiler.common.artifacts import default_build_dir, run, sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
@@ -120,7 +120,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
-    parser.add_argument("--native", type=Path, default=Path("work/qwen35/build/xinfer_validate"))
+    parser.add_argument(
+        "--native", type=Path, default=default_build_dir("qwen35") / "xinfer_validate"
+    )
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "end-to-end")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)

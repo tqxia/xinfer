@@ -94,10 +94,13 @@ retains one dynamic prefill range, T=2..512. AOTI packages both branches and
 generates a native shape comparison; T=1 uses a separate decode package.
 
 The fused and conditional validators share the block helpers in `tests/block.py`.
+Select `Q35_PY` using the [target environment guide](../../environments/README.md)
+and set `BUILD="$PWD/build/qwen35"`.
 To prepare a missing layer-0 checkpoint fixture, run this once; reuse an existing
 fixture on subsequent runs:
 
 ```bash
+QWEN_PY="$Q35_PY"
 "$QWEN_PY" -m compiler.qwen35.tests.block
 ```
 
@@ -105,7 +108,7 @@ Run the conditional validator with the native fused runner:
 
 ```bash
 "$QWEN_PY" -m compiler.qwen35.tests.validate_cond \
-  --binary work/qwen35/build/qwen35_fused \
+  --binary "$BUILD/qwen35_fused" \
   --output artifacts/qwen35/0.8b/cond-validation-new
 ```
 
@@ -170,9 +173,10 @@ references; the runtime continues to load packaged Triton without Python.
 
 L20 and GB10 use the same model adapter, GDN kernels and C++ runtime. Follow
 [the target environment guide](../../environments/README.md) for the native
-Torch/Triton/CUDA stack, isolated model environments and target-specific
-build/package directories. `requirements.txt` contains this model's HF pins,
-including Transformers 5.20.2; native stack pins live in the target profiles.
+Torch/Triton/CUDA stack, isolated model environments, the `build/qwen35/`
+native directory and target-specific packages. `requirements.txt` contains this
+model's HF pins, including Transformers 5.20.2; native stack pins live in the
+target profiles.
 Use `environments/setup.sh` and `environments/check.sh` through that guide;
 environment tooling and its tests live under `environments/`.
 Export-time Torch and native LibTorch must come from the same installation.
@@ -183,20 +187,22 @@ Use the Torch 2.13 target profiles for the current shared-weight format. Keep
 older Torch 2.7 bundles with their matching runtime for historical comparisons.
 Rebuild and re-export on the target GPU and toolchain; compiled SM89 packages
 remain specific to their deployment stack. The shared target guide sets
-`Q35_PY`, `BUILD`, the matching CUDA runtime link flags and build tools.
+`Q35_PY`, the matching CUDA runtime link flags and build tools. Use
+`BUILD="$PWD/build/qwen35"` for this model.
 
 Run from the repository root. One export invocation compiles both entry points
 sequentially. Choose a new or empty `--output` directory for each experiment;
 export refuses to replace a populated directory.
 
-Build the native targets first using the target environment guide, then select
-their FlashAttention library for Python export and validation:
+Build the native targets first using the target environment guide. Qwen3.5
+Python tools default to native executables and the FlashAttention library in
+the repository's `build/qwen35/`. To select another library for Python:
 
 ```bash
 export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 ```
 
-Without that variable Python defaults to `build/libxinfer_attention_ops.so`.
+The override is optional; the default is `build/qwen35/libxinfer_attention_ops.so`.
 Native full-model targets link the library directly. Deploy it with the native
 executable and matching LibTorch/CUDA; it is not embedded in the `.pt2` files.
 The standalone GDN validation targets do not depend on the attention library.
@@ -288,7 +294,7 @@ change floating-point results.
 ```bash
 "$QWEN_PY" -m compiler.qwen35.prepare encode \
   --prompt "What is 17 + 25?" --output work/prompt.ids
-work/qwen35/build/xinfer_aoti artifacts/qwen35/0.8b/text \
+"$BUILD/xinfer_aoti" artifacts/qwen35/0.8b/text \
   work/prompt.ids work/generated.ids
 "$QWEN_PY" -m compiler.qwen35.prepare decode --input work/generated.ids
 

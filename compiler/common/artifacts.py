@@ -8,6 +8,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def default_build_dir(model):
+    """Locate the model's native build independently of the working directory."""
+    return ROOT / "build" / model
+
+
 def canonical_json(value):
     """Encode metadata deterministically for hashing and archive records."""
     return json.dumps(value, sort_keys=True, separators=(",", ":"))

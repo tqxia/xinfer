@@ -82,7 +82,7 @@ class FlashStep(torch.nn.Module):
         super().__init__()
         # Construct all replacements before modifying the model. No weight copies.
         replacements = [FlashAttention(layer.self_attn) for layer in model.model.layers]
-        load_attention_ops()
+        load_attention_ops(model="qwen3")
         for layer, attention in zip(model.model.layers, replacements):
             layer.self_attn = attention
         self.model = model

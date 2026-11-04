@@ -31,14 +31,12 @@ README gives the recorded installation on each existing host.
 TARGET=l20                         # or gb10
 NATIVE_PY=/absolute/path/to/native-stack/bin/python
 CMAKE=cmake
-# L20 uses versioned paths so the Torch 2.7 environments remain available.
+# L20 uses versioned Python paths so the Torch 2.7 environments remain available.
 ENV_SUFFIX=-venv
-BUILD="$PWD/work/$TARGET/build"
 if [ "$TARGET" = l20 ]; then
   NATIVE_PY="$PWD/work/l20/native-torch213/bin/python"
   CMAKE=/data/workspace/abo/.venv/bin/cmake
   ENV_SUFFIX=-torch213-venv
-  BUILD="$PWD/work/l20/build-torch213"
 fi
 RUN=baseline-001                    # choose a fresh name for each export/test run
 export PATH="$(dirname "$NATIVE_PY"):$PATH"  # host tools, including Ninja if installed there
@@ -77,9 +75,10 @@ Failures exit nonzero and are still written to the requested JSON report. A
 profile match establishes the declared environment contract; keep the recorded
 build provenance as well.
 
-## Build one native runtime set per target
+## Build native runtimes for each model
 
-Both model venvs use the same selected LibTorch and native executables. CMake derives the C++ standard
+Both model venvs use the same selected LibTorch. Each model has its own native
+build directory, `build/qwen3/` or `build/qwen35/`. CMake derives the C++ standard
 from that Torch build. Use a fresh build directory when changing native stacks.
 The host also needs CMake 3.24 or newer, Ninja, a C++ compiler and a compatible
 CUDA toolkit. The setup helper does not install these executables.
@@ -87,6 +86,8 @@ CUDA toolkit. The setup helper does not install these executables.
 ```bash
 Q3_PY="$PWD/work/$TARGET/qwen3$ENV_SUFFIX/bin/python"
 Q35_PY="$PWD/work/$TARGET/qwen35$ENV_SUFFIX/bin/python"
+Q3_BUILD="$PWD/build/qwen3"
+Q35_BUILD="$PWD/build/qwen35"
 TORCH_PREFIX=$("$Q3_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
 CUDA_ARCH=$("$Q3_PY" -c 'import torch; print("%d.%d" % torch.cuda.get_device_capability())')
 NVCC=/usr/local/cuda/bin/nvcc         # compatible toolkit used for this build
@@ -96,16 +97,15 @@ if [ "$TARGET" = l20 ]; then
   CUDA_RUNTIME_FLAGS=("-DCUDA_cudart_LIBRARY=$CUDA_RUNTIME" "-DCUDA_CUDART_LIBRARY=$CUDA_RUNTIME")
 fi
 
-"$CMAKE" -S . -B "$BUILD" -G Ninja \
-  -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
-  "${CUDA_RUNTIME_FLAGS[@]}" \
-  -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
-  -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
-"$CMAKE" --build "$BUILD" --target \
-  xinfer_aoti xinfer_validate xinfer_benchmark qwen35_fused qwen_runtime_contract -j2
-
-export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 for MODEL in qwen3 qwen35; do
+  BUILD="$PWD/build/$MODEL"
+  "$CMAKE" -S . -B "$BUILD" -G Ninja \
+    -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
+    "${CUDA_RUNTIME_FLAGS[@]}" \
+    -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
+    -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
+  "$CMAKE" --build "$BUILD" --target \
+    xinfer_aoti xinfer_validate xinfer_benchmark qwen35_fused qwen_runtime_contract -j2
   bash environments/check.sh --python "$PWD/work/$TARGET/$MODEL$ENV_SUFFIX/bin/python" \
     --target "$TARGET" --model "$MODEL" --build "$BUILD" \
     --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
@@ -116,6 +116,9 @@ The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for b
 model families. Model selection comes from the package metadata; there is no
 separate full-model build switch. `qwen35_fused` remains a focused GDN validation
 tool, built with `QWEN_BUILD_VALIDATION`.
+Each model's Python tools default to executables and the attention library in
+its `build/<model>/` directory. Existing native-path options and
+`XINFER_ATTENTION_OPS_LIBRARY` optionally select another build or installed runtime.
 
 `--build` verifies that CMake selected the active environment's LibTorch, resolving
 symlinks to the shared native installation. Build before either full-model
@@ -187,6 +190,8 @@ in addition to compile-cache space.
 ## Install and relocate the runtime
 
 After building, install the project's runtime component into a fresh prefix.
+Either model's build contains the shared executables supporting both models;
+the example below installs from `build/qwen3/`.
 GNUInstallDirs selects executable and library directories, typically `bin/`
 and `lib/` or `lib64/`. `xinfer_aoti` is always included;
 `xinfer_benchmark` and `xinfer_validate` are included when their build options
@@ -196,6 +201,7 @@ the layout and must be relative paths. The following commands read the configure
 library directory from the build cache and use the default `bin/` directory.
 
 ```bash
+BUILD="$Q3_BUILD"
 PREFIX="$PWD/work/$TARGET/runtime-install"
 MOVED_PREFIX="$PWD/work/$TARGET/runtime-relocated"
 INSTALL_LIBDIR=$(sed -n 's/^CMAKE_INSTALL_LIBDIR:[^=]*=//p' "$BUILD/CMakeCache.txt")
@@ -240,27 +246,27 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   environments.tests.test_entrypoints compiler.qwen35.tests.test_text_cache \
   compiler.common.tests.test_weights
 "$Q35_PY" -m compiler.qwen35.tests.validate_cond \
-  --binary "$BUILD/qwen35_fused" --output "$Q35_ROOT/cond-validation"
+  --binary "$Q35_BUILD/qwen35_fused" --output "$Q35_ROOT/cond-validation"
 
 # Generate independent HF fixtures once for this run, or supply verified saved fixtures.
 "$Q3_PY" -m compiler.qwen3.tests.validate \
   --model-dir "$Q3_MODEL" --output "$Q3_ROOT/reference"
 AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
   --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
-  --native "$BUILD/xinfer_validate" --output "$Q3_ROOT/runtime-validation"
+  --native "$Q3_BUILD/xinfer_validate" --output "$Q3_ROOT/runtime-validation"
 "$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
   --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
-  --native "$BUILD/xinfer_aoti" --output "$Q3_ROOT/native-smoke"
+  --native "$Q3_BUILD/xinfer_aoti" --output "$Q3_ROOT/native-smoke"
 
 "$Q35_PY" -m compiler.qwen35.tests.validate_model \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" --output "$Q35_ROOT/model-validation"
 "$Q35_PY" -m compiler.qwen35.tests.validate_runtime \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
-  --binary "$BUILD/xinfer_validate" --cli "$BUILD/xinfer_aoti" \
+  --binary "$Q35_BUILD/xinfer_validate" --cli "$Q35_BUILD/xinfer_aoti" \
   --output "$Q35_ROOT/runtime-validation"
 "$Q35_PY" -m compiler.qwen35.tests.validate_end_to_end \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
-  --native "$BUILD/xinfer_validate" --output "$Q35_ROOT/end-to-end"
+  --native "$Q35_BUILD/xinfer_validate" --output "$Q35_ROOT/end-to-end"
 ```
 
 The standalone GDN suite uses synthetic inputs and adds a checkpoint case when

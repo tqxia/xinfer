@@ -66,7 +66,7 @@ class Qwen3PackageContract(unittest.TestCase):
         ):
             load_package_attention_ops(metadata(), native=native)
             resolve.assert_called_once_with(native)
-            load.assert_called_once_with(library)
+            load.assert_called_once_with(library, model="qwen3")
 
     def test_geometry_validation_precedes_loading(self):
         cases = (

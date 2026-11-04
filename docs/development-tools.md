@@ -2,6 +2,11 @@
 
 Run these commands from the repository root with the matching Python/LibTorch
 environment and previously exported packages. Use fresh output directories.
+Select `Q3_PY` and `CMAKE` with the
+[target environment guide](../environments/README.md), and set
+`BUILD="$PWD/build/qwen3"` for the Qwen3 commands below. Each model's Python
+tools default to executables and the attention library in `build/<model>/`;
+existing path options and `XINFER_ATTENTION_OPS_LIBRARY` override those defaults.
 
 ## Formatting
 
@@ -32,9 +37,9 @@ git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry
 
 ## Shared native executables
 
-Both models use `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` from one
-native build. Each reads the package metadata to select the model-specific
-contract and state policy. Both entry JSON files require the shared
+Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
+targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
+reads the package metadata to select the model-specific contract and state policy. Both entry JSON files require the shared
 [`schema_version: 1` format](package-metadata.md), with an explicit `model_type`
 of `qwen3` or `qwen35`. Unversioned sidecars must be converted or re-exported;
 model selection reads the versioned metadata directly.
@@ -119,11 +124,10 @@ forced decode tokens, so differences in predicted tokens do not change the
 measured workload.
 
 ```bash
-cmake -S . -B build -DQWEN_BUILD_BENCHMARK=ON
-cmake --build build --target xinfer_benchmark -j2
-.venv/bin/python -m compiler.qwen3.benchmark run \
+"$CMAKE" --build "$BUILD" --target xinfer_benchmark -j2
+"$Q3_PY" -m compiler.qwen3.benchmark run \
   --packages artifacts/aoti \
-  --native build/xinfer_benchmark \
+  --native "$BUILD/xinfer_benchmark" \
   --output artifacts/benchmark-new
 ```
 
@@ -154,11 +158,11 @@ measured requests per prompt length in each process. Loading and first use are
 reported separately from steady-state latency.
 
 ```bash
-.venv/bin/python -m compiler.qwen3.benchmark compare \
+"$Q3_PY" -m compiler.qwen3.benchmark compare \
   --baseline-packages artifacts/aoti-baseline \
   --candidate-packages artifacts/aoti-candidate \
   --baseline-label baseline --candidate-label candidate \
-  --native build/xinfer_benchmark \
+  --native "$BUILD/xinfer_benchmark" \
   --output artifacts/comparison-new
 ```
 
@@ -178,7 +182,7 @@ acceptance. GPU-idle checks run before and after each worker. Use
 ## Validate runtime correctness and report HF differences
 
 ```bash
-.venv/bin/python -m compiler.qwen3.tests.validate_cpp \
+"$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
   --packages artifacts/aoti-candidate \
   --output artifacts/validation-candidate-new
 ```

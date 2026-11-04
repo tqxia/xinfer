@@ -68,6 +68,6 @@ def install_attention(model):
             replacement = FlashAttention(layer.self_attn)
             replacement.train(layer.self_attn.training)
             replacements.append((layer, replacement))
-    load_attention_ops()
+    load_attention_ops(model="qwen35")
     for layer, replacement in replacements:
         layer.self_attn = replacement

@@ -49,7 +49,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     torch.set_num_threads(1)
     torch.manual_seed(42)
-    load_attention_ops()
+    load_attention_ops(model="qwen3")
     op = torch.ops.xinfer.flash_attention.default
     from torch.fx.experimental import _config as symbolic_config
 

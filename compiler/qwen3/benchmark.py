@@ -8,7 +8,7 @@ from compiler.common.benchmark import (
     run_benchmark,
     validate_comparison,
 )
-from compiler.common.artifacts import require
+from compiler.common.artifacts import default_build_dir, require
 from compiler.qwen3.packages import validate_model_metadata
 from compiler.qwen3.prepare import DEFAULT_MODEL
 
@@ -103,7 +103,9 @@ def main():
         runner = commands.add_parser(name)
         runner.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
         runner.add_argument("--reference", type=Path, default=Path("artifacts/reference"))
-        runner.add_argument("--native", type=Path, default=Path("build/xinfer_benchmark"))
+        runner.add_argument(
+            "--native", type=Path, default=default_build_dir("qwen3") / "xinfer_benchmark"
+        )
         if name == "compare":
             runner.add_argument(
                 "--baseline-packages", type=Path, default=Path("artifacts/aoti-baseline")

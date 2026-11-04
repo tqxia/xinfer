@@ -17,7 +17,7 @@ os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
 import torch
 from transformers.models.qwen3_5 import modeling_qwen3_5
 
-from compiler.common.artifacts import ROOT, read_json, sha256, write_json
+from compiler.common.artifacts import default_build_dir, ROOT, read_json, sha256, write_json
 from compiler.common.tests.validation import bits_equal, compare_file, cpu_copy
 from compiler.qwen35.config import ARTIFACT_DIR, configure
 from compiler.qwen35.tests.block import MODEL_DIR
@@ -421,7 +421,7 @@ def validate(args, report):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", type=Path, default=Path("work/qwen35/build/qwen35_fused"))
+    parser.add_argument("--binary", type=Path, default=default_build_dir("qwen35") / "qwen35_fused")
     parser.add_argument("--block-dir", type=Path, default=MODEL_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "cond-validation")
     args = parser.parse_args()

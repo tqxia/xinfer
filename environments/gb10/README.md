@@ -21,6 +21,8 @@ Ninja is in the native venv's `bin/` directory; the shared workflow adds that
 directory to `PATH`. The local CUDA compiler is `/usr/local/cuda/bin/nvcc`.
 Use the shared workflow's Bash entry points: `setup.sh` to create a model venv,
 then `check.sh --python PATH` to inspect that model environment.
+The shared workflow builds into `build/qwen3/` and `build/qwen35/`, matching
+each model's Python defaults for native executables and the attention library.
 
 The repository does not contain the GB10 wheels or a verified public download
 URL for this Torch build. Provision the same verified native stack separately

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
+from compiler.common.artifacts import default_build_dir
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
@@ -60,7 +61,9 @@ def main():
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--packages", type=Path, default=Path("artifacts/aoti"))
     parser.add_argument("--reference", type=Path, default=Path("artifacts/reference"))
-    parser.add_argument("--native", type=Path, default=Path("build/xinfer_validate"))
+    parser.add_argument(
+        "--native", type=Path, default=default_build_dir("qwen3") / "xinfer_validate"
+    )
     parser.add_argument("--output", type=Path, default=Path("artifacts/three-path"))
     args = parser.parse_args()
     if args.output.exists():

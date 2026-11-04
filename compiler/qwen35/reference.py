@@ -72,7 +72,7 @@ class PythonRuntime:
             validate_model_metadata(entry)
         validate_shared_weights(packages, metadata, decode)
         require(specs == decode["state"], "Runtime state descriptors differ from package")
-        load_attention_ops()
+        load_attention_ops(model="qwen35")
         self.weights = SharedWeights(packages, metadata["shared_weights"])
         self.functions = {kind: self.weights.load(kind) for kind in ("prefill", "decode")}
         self.specs = specs

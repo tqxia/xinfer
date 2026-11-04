@@ -66,7 +66,7 @@ def main():
     torch.set_num_threads(1)
     torch.manual_seed(42)
     torch.backends.cuda.matmul.allow_tf32 = False
-    load_attention_ops()
+    load_attention_ops(model="qwen3")
     model = load_model(args.model_dir)
     original = model.model.layers[0].self_attn
     hf = AttentionProbe(original, model.model.rotary_emb)

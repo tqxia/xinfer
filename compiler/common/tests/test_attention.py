@@ -13,7 +13,7 @@ from compiler.common.attention import cache_extent, load_attention_ops
 class PrefixFlash(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        load_attention_ops()
+        load_attention_ops(model="qwen3")
         cls.op = torch.ops.xinfer.flash_attention.default
 
     def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1):

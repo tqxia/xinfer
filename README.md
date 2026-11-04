@@ -23,7 +23,8 @@ stops at EOS or the token budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
 Tests and focused diagnostics live beside their model. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
-generated venvs, builds and scratch scripts belong in `work/`. Both are ignored.
+generated native builds belong in `build/<model>/`; venvs and scratch scripts
+belong in `work/`. These directories are ignored.
 
 Use the pinned Ruff and clang-format tools with the repository settings; see
 [formatting commands](docs/development-tools.md#formatting).
@@ -49,6 +50,11 @@ see its guide for the fixed package contract. Build from the repository root
 with CMake. Each model retains its own compiler environment and numerical policy.
 The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
 shows how to install and move the native runtime prefix with its attention library.
+Python tools default to native executables and the attention library in the
+repository's `build/qwen3/` or `build/qwen35/` directory for their model.
+Existing executable-path options and
+`XINFER_ATTENTION_OPS_LIBRARY` remain optional overrides for another build or an
+installed runtime.
 
 CPU portability remains a known limitation: AOTI package wrappers inherit the build
 host's instruction set (including AVX-512 on L20), and the project does not enforce

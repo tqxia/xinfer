@@ -15,14 +15,15 @@ The profile selects the Torch 2.13 CUDA 12.6 stack on the Linux x86-64 host
 
 The selected native Python is
 `/data/workspace/develop/qwen3-aoti-poc/work/l20/native-torch213/bin/python`.
-Use it as `NATIVE_PY` in the [shared workflow](../README.md). The model
-venvs and native build use explicit versioned paths:
+Use it as `NATIVE_PY` in the [shared workflow](../README.md). The model venvs use
+explicit versioned paths; native builds use each model's default directory:
 
 ```bash
 NATIVE_PY="$PWD/work/l20/native-torch213/bin/python"
 Q3_PY="$PWD/work/l20/qwen3-torch213-venv/bin/python"
 Q35_PY="$PWD/work/l20/qwen35-torch213-venv/bin/python"
-BUILD="$PWD/work/l20/build-torch213"
+Q3_BUILD="$PWD/build/qwen3"
+Q35_BUILD="$PWD/build/qwen35"
 CMAKE=/data/workspace/abo/.venv/bin/cmake
 ```
 
@@ -36,6 +37,8 @@ by `check.sh --python PATH`. The default setup paths `work/l20/qwen3-venv` and
 `work/l20/qwen35-venv`, the old `work/l20/build`, and
 `/data/workspace/abo/.venv` retain Torch 2.7 for rollback. They are not selected
 by the current profile; do not overwrite or rename them.
+The earlier Torch 2.13 build at `work/l20/build-torch213` is also retained;
+new builds use `build/qwen3/` and `build/qwen35/`.
 
 The separate native installation was provisioned with the following command
 from the repository root. Run it only when the destination does not exist;

@@ -56,4 +56,4 @@ def load_package_attention_ops(metadata, native=None):
         raise ValueError(
             "Qwen3 runtime is missing its required native attention library; rebuild the runtime"
         )
-    load_attention_ops(library)
+    load_attention_ops(library, model="qwen3")
