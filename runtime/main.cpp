@@ -1,5 +1,4 @@
 #include "common/model.h"
-#include <ATen/Parallel.h>
 #include <chrono>
 #include <iostream>
 
@@ -38,9 +37,6 @@ int main(int argc, char **argv) {
               "Trace path must differ from input and output");
       require(trace_path.empty() || !fs::exists(trace_path), "Trace path already exists");
       c10::InferenceMode inference;
-      at::set_num_threads(1);
-      at::globalContext().setAllowTF32CuBLAS(false);
-      at::globalContext().setAllowTF32CuDNN(false);
       const auto load_start = Clock::now();
       auto runtime = make_runtime();
       torch::cuda::synchronize();

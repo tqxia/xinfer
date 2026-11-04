@@ -9,11 +9,11 @@ import subprocess
 import numpy as np
 import torch
 
+from compiler.common.attention import cache_extent
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import default_build_dir, sha256
 from compiler.common.metadata import RUNTIME_ABI_VERSION, SCHEMA_VERSION, read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
-from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
 
 

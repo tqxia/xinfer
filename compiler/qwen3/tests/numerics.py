@@ -5,7 +5,6 @@ from compiler.common.tests.validation import (
     compare_tensors,
     relative_limits,
     tensor_metrics,
-    token_differences,
     within_limits,
 )
 

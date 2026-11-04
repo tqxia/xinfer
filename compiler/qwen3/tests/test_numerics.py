@@ -4,7 +4,8 @@ import unittest
 
 import torch
 
-from compiler.qwen3.tests.numerics import compare, error_metrics, token_differences
+from compiler.qwen3.tests.numerics import compare, error_metrics
+from compiler.common.tests.validation import token_differences
 
 
 class NumericalPolicyTest(unittest.TestCase):

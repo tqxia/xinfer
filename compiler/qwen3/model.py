@@ -4,8 +4,6 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers.cache_utils import Cache
 
-from compiler.common.attention import cache_extent
-
 
 CACHE_LENGTH = 1024
 MAX_PROMPT = 512

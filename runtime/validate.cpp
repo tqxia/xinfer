@@ -1,6 +1,5 @@
 // Shared native validator with adapters for the retained trace file layouts.
 #include "common/model.h"
-#include <ATen/Parallel.h>
 #include <iostream>
 #include <unordered_set>
 
@@ -121,9 +120,6 @@ int main(int argc, char **argv) {
       const auto cases = parse_cases(manifest, spec, output);
       const bool qwen3 = spec.model_type == ModelType::Qwen3;
       c10::InferenceMode inference;
-      at::set_num_threads(1);
-      at::globalContext().setAllowTF32CuBLAS(false);
-      at::globalContext().setAllowTF32CuDNN(false);
       auto runtime = make_runtime();
       fs::create_directories(output);
       std::vector<const void *> persistent;

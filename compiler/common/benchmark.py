@@ -414,7 +414,7 @@ def capture_environment(args, out, gpu, model_type, packages, manifest_name, val
     from compiler.common.weights import validate_shared_weights
 
     binary = args.native.resolve()
-    require(binary.is_file(), "Build xinfer_benchmark with -DQWEN_BUILD_BENCHMARK=ON first")
+    require(binary.is_file(), "Build xinfer_benchmark with -DXINFER_BUILD_BENCHMARK=ON first")
     linked = subprocess.check_output(
         ["ldd", str(binary)], env=worker_environment(gpu, native=True), text=True
     )

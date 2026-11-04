@@ -107,7 +107,7 @@ for MODEL in qwen3 qwen35; do
     -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
     "${CUDA_RUNTIME_FLAGS[@]}" \
     -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
-    -DQWEN_BUILD_VALIDATION=ON -DQWEN_BUILD_BENCHMARK=ON
+    -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
   "$CMAKE" --build "$BUILD" --target \
     xinfer_aoti xinfer_validate xinfer_benchmark qwen35_fused qwen_runtime_contract -j2
   bash environments/check.sh --python "$PWD/work/$TARGET/$MODEL$ENV_SUFFIX/bin/python" \
@@ -119,7 +119,7 @@ done
 The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for both
 model families. Model selection comes from the package metadata; there is no
 separate full-model build switch. `qwen35_fused` remains a focused GDN validation
-tool, built with `QWEN_BUILD_VALIDATION`.
+tool, built with `XINFER_BUILD_VALIDATION`.
 Each model's Python tools default to executables and the attention library in
 its `build/<model>/` directory. Existing native-path options and
 `XINFER_ATTENTION_OPS_LIBRARY` optionally select another build or installed runtime.

@@ -1,6 +1,6 @@
 // Run fused GDN fixtures through packaged Triton, without Python/custom-op libraries.
 #include "../../common/io.h"
-#include <ATen/Parallel.h>
+#include "../../common/settings.h"
 #include <c10/core/InferenceMode.h>
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <iostream>
@@ -22,7 +22,7 @@ int main(int argc, char **argv) {
     const fs::path fixtures(argv[1]), output(argv[2]);
     require(!fs::exists(output), "Output directory already exists");
     c10::InferenceMode inference;
-    at::set_num_threads(1);
+    configure_runtime();
     std::map<std::string, std::unique_ptr<torch::inductor::AOTIModelPackageLoader>> packages;
     for (const std::string dtype : {"bf16", "fp32"})
       for (const std::string mode : {"decode", "prefill"}) {

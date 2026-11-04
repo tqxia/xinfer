@@ -21,9 +21,6 @@ int main(int argc, char **argv) {
           require(id >= 0 && id < spec.vocab, "Decode token ID out of range");
       }
       c10::InferenceMode inference;
-      at::set_num_threads(1);
-      at::globalContext().setAllowTF32CuBLAS(false);
-      at::globalContext().setAllowTF32CuDNN(false);
       const auto init = Clock::now();
       checked_device(spec);
       at::empty({0}, at::TensorOptions().device(at::kCUDA));

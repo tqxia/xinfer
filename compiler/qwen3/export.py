@@ -8,10 +8,11 @@ from pathlib import Path
 
 import torch
 
+from compiler.common.attention import cache_extent
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model, cache_extent
+from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
 
 

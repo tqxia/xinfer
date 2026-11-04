@@ -1,9 +1,9 @@
 #pragma once
 #include "attention.h"
 #include "io.h"
+#include "settings.h"
 #include "weights.h"
 
-#include <ATen/Parallel.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <torch/cuda.h>
 #include <torch/version.h>
@@ -306,11 +306,9 @@ inline c10::Device checked_device(const SpecBase &spec) {
   return {c10::kCUDA, 0};
 }
 
-inline void configure(const SpecBase &spec) {
-  checked_device(spec);
-  at::set_num_threads(1);
-  at::globalContext().setAllowTF32CuBLAS(false);
-  at::globalContext().setAllowTF32CuDNN(false);
+inline c10::Device configured_device(const SpecBase &spec) {
+  configure_runtime();
+  return checked_device(spec);
 }
 
 inline std::vector<int64_t> read_ids(const fs::path &path, const SpecBase &spec) {

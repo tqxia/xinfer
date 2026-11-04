@@ -11,12 +11,13 @@ import numpy as np
 import torch
 from transformers import StaticCache
 
+from compiler.common.attention import cache_extent
 from compiler.common.artifacts import default_build_dir
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
-from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model, cache_extent
+from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
-from compiler.common.tests.validation import record_failure
+from compiler.common.tests.validation import record_failure, token_differences
 from compiler.qwen3.tests.numerics import (
     MAX_RELATIVE_ERROR,
     compare,
@@ -25,7 +26,6 @@ from compiler.qwen3.tests.numerics import (
     model_passed,
     policy,
     reference_limits_passed,
-    token_differences,
 )
 
 
@@ -69,7 +69,7 @@ def main():
     if args.output.exists():
         parser.error("Output directory already exists; choose a fresh --output")
     if not args.native.is_file():
-        parser.error("Build with -DQWEN_BUILD_VALIDATION=ON first")
+        parser.error("Build with -DXINFER_BUILD_VALIDATION=ON first")
     args.output.mkdir(parents=True)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False

@@ -5,12 +5,10 @@
 namespace qwen35 {
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
-using xinfer::configure;
 using xinfer::integer;
 using xinfer::read_ids;
 using xinfer::read_json;
 using xinfer::require;
-constexpr int64_t max_prompt = 512;
 
 struct Spec : xinfer::SpecBase {
   explicit Spec(const fs::path &packages) : Spec(xinfer::SpecBase(packages)) {}

@@ -7,13 +7,14 @@ from pathlib import Path
 import torch
 from transformers import StaticCache
 
+from compiler.common.attention import cache_extent
 from compiler.common.tests.validation import bits_equal
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
-from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, cache_extent, load_model
+from compiler.qwen3.model import CACHE_LENGTH, QwenStep, allocate_cache, load_model
 from compiler.qwen3.prepare import DEFAULT_MODEL
-from compiler.common.tests.validation import record_failure
+from compiler.common.tests.validation import record_failure, token_differences
 from compiler.qwen3.tests.numerics import (
     MAX_RELATIVE_ERROR,
     compare,
@@ -22,7 +23,6 @@ from compiler.qwen3.tests.numerics import (
     model_passed,
     policy,
     reference_limits_passed,
-    token_differences,
 )
 
 

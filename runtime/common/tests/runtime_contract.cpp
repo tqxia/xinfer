@@ -1,6 +1,7 @@
 // Regression for caller-independent Spec ownership and constructor preflight.
 #include "qwen3/runtime.h"
 #include "qwen35/runtime.h"
+#include "common/settings.h"
 
 #include <iostream>
 #include <memory>
@@ -48,7 +49,15 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
   std::vector<int64_t> expected_ids;
   {
     Spec caller(validated);
+    // Library callers may start with unrelated process-wide settings.
+    at::set_num_threads(2);
+    at::globalContext().setAllowTF32CuBLAS(true);
+    at::globalContext().setAllowTF32CuDNN(true);
     Runtime runtime(packages, caller);
+    require(at::get_num_threads() == 1 && !at::globalContext().allowTF32CuBLAS() &&
+                !at::globalContext().allowTF32CuDNN(),
+            "Runtime did not configure threads and TF32");
+    report["runtime_settings_applied"] = true;
     expected = trace(runtime);
     expected_ids = runtime.generate({42, 13}, 3, nullptr);
     // This fails deterministically with the old borrowed Spec, before the
@@ -159,9 +168,6 @@ int main(int argc, char **argv) {
             "Usage: qwen_runtime_contract qwen3|qwen35 PACKAGE_DIR OUTPUT_JSON [--files-only]");
     const bool files_only = argc == 5;
     c10::InferenceMode inference;
-    at::set_num_threads(1);
-    at::globalContext().setAllowTF32CuBLAS(false);
-    at::globalContext().setAllowTF32CuDNN(false);
     const std::string model(argv[1]);
     Json report = {{"model", model},
                    {"packages", std::filesystem::absolute(argv[2]).string()},
@@ -182,7 +188,7 @@ int main(int argc, char **argv) {
       if (files_only) {
         check_file_preflight<qwen35::Spec, qwen35::Runtime>(argv[2], spec, argv[3], report);
       } else {
-        qwen35::configure(spec);
+        xinfer::checked_device(spec);
         check_ownership<qwen35::Spec, qwen35::Runtime>(argv[2], spec, report);
       }
     } else {

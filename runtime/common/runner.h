@@ -59,11 +59,10 @@ public:
 
 private:
   Runner(const Spec &spec, ValidatedBundle bundle)
-      : spec_(spec), device_(checked_device(spec_)),
+      : spec_(spec), device_(configured_device(spec_)),
         weights_(std::move(bundle), spec_.shared_weights),
         prefill_(weights_.package_path("prefill").string()),
         decode_(weights_.package_path("decode").string()), state_(spec_, device_) {
-    configure(spec_);
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
     extent_ =

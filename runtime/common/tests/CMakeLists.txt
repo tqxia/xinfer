@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(qwen_weight_memory LANGUAGES CXX)
+project(xinfer_weight_memory LANGUAGES CXX)
 
 find_package(Torch 2.13 REQUIRED)
 find_package(CUDAToolkit REQUIRED)

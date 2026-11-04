@@ -1,6 +1,7 @@
 // Run in a fresh process; cudaMemGetInfo also counts AOTI's raw CUDA allocations.
 #include "qwen3/runtime.h"
 #include "qwen35/runtime.h"
+#include "common/settings.h"
 #include <cuda_runtime_api.h>
 
 #include <chrono>
@@ -45,9 +46,7 @@ int main(int argc, char **argv) {
   try {
     xinfer::require(argc == 4, "Usage: qwen_weight_memory qwen3|qwen35 PACKAGE_DIR REPORT_JSON");
     c10::InferenceMode inference;
-    at::set_num_threads(1);
-    at::globalContext().setAllowTF32CuBLAS(false);
-    at::globalContext().setAllowTF32CuDNN(false);
+    xinfer::configure_runtime();
     const std::string model(argv[1]);
     Json report = {{"model", model},
                    {"packages", std::filesystem::absolute(argv[2]).string()},

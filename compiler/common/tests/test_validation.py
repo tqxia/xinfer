@@ -194,7 +194,7 @@ class ModelAcceptancePolicies(unittest.TestCase):
             "aoti_vs_hf",
             {("case", 0): (reference, actual)},
             {("case", 0): (reference, reference)},
-            [{"name": "conv", "kind": "conv"}],
+            [{"layer": 0, "kind": "conv"}],
         )
         self.assertFalse(model_passed(q35))
         self.assertFalse(end_to_end_passed(q35))
