@@ -1,5 +1,6 @@
 """Full-model fixtures and per-state acceptance policy shared by Qwen3.5 tests."""
 
+from compiler.common.metadata import state_name
 from compiler.common.tests.validation import (
     DEFAULT_RELATIVE_LIMIT,
     record_failure,
@@ -59,7 +60,7 @@ def compare(report, name, actual, expected, specs, enforce=True):
     for key, values in actual.items():
         row = dict(comparison=name, case=key[0], step=key[1], tensors={})
         for i, (a, b) in enumerate(zip(values, expected[key])):
-            label = "logits" if i == 0 else specs[i - 1]["name"]
+            label = "logits" if i == 0 else state_name(specs[i - 1])
             axis = 0 if i == 0 else (1 if specs[i - 1]["kind"] == "conv" else 2)
             error = metrics(a, b, axis)
             row["tensors"][label] = error

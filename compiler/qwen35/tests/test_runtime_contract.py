@@ -58,15 +58,13 @@ class PythonRuntimeContract(unittest.TestCase):
                 token_range=[2, 512] if kind == "prefill" else [1, 1],
                 checkpoint=dict(model_id="Qwen/Qwen3.5-0.8B", revision="fixture", manifest={}),
                 torch_version="2.13.0",
-                torch_cuda_version="12.6",
                 cxx11_abi=True,
                 cuda_compute_capability=[8, 9],
                 cache_length=1024,
                 vocab_size=100,
                 eos_token_ids=[99],
                 state=state,
-                return_state=True,
-                model_specific=dict(delta_backend="triton_op", layer_types=["linear_attention"]),
+                model_specific=dict(delta_backend="triton_op"),
             )
             value.update(
                 package_bytes=1,
@@ -149,7 +147,7 @@ class PythonRuntimeContract(unittest.TestCase):
                     self.reject(metadata, f"Package metadata differs: {field}")
 
     def test_unversioned_unknown_and_mixed_versions_are_rejected(self):
-        for versions in ((None, None), (999, 999), (1, 999), (True, True)):
+        for versions in ((None, None), (1, 1), (999, 999), (2, 999), (True, True)):
             with self.subTest(versions=versions):
                 metadata = self.metadata()
                 for kind, version in zip(("prefill", "decode"), versions):
@@ -159,7 +157,7 @@ class PythonRuntimeContract(unittest.TestCase):
                         metadata[kind]["schema_version"] = version
                 self.reject(metadata, "Unsupported package metadata schema version")
 
-    def test_old_aliases_are_not_accepted_in_v1(self):
+    def test_old_aliases_are_not_accepted_in_v2(self):
         for field in (
             "eager_numerics",
             "torch",
@@ -179,9 +177,13 @@ class PythonRuntimeContract(unittest.TestCase):
         def reverse_state(metadata):
             for entry in metadata.values():
                 entry["state"].reverse()
-                names = [s["name"] for s in entry["state"]]
-                entry["input_order"] = ["input_ids", "cache_position", *names, "kv_extent"]
-                entry["output_order"] = ["last_logits", *names]
+
+        def mismatched_kv_shapes(metadata):
+            for entry in metadata.values():
+                entry["state"] = [
+                    state_spec(0, "key", [1, 2, 1024, 256], "bfloat16", "inplace"),
+                    state_spec(0, "value", [1, 3, 1024, 256], "bfloat16", "inplace"),
+                ]
 
         for mutate, error in (
             (
@@ -189,10 +191,15 @@ class PythonRuntimeContract(unittest.TestCase):
                 "Unsupported DeltaNet backend",
             ),
             (
-                lambda m: [v["model_specific"].update(layer_types=[]) for v in m.values()],
+                lambda m: [v["state"].pop() for v in m.values()],
                 "Invalid state count",
             ),
             (reverse_state, "Invalid state order or dtype"),
+            (mismatched_kv_shapes, "K/V shapes differ"),
+            (
+                lambda m: [s.update(layer=1) for v in m.values() for s in v["state"]],
+                "Invalid state order or dtype",
+            ),
         ):
             metadata = self.metadata()
             mutate(metadata)

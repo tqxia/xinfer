@@ -11,7 +11,7 @@ import torch
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import default_build_dir, sha256
-from compiler.common.metadata import read_package_metadata
+from compiler.common.metadata import SCHEMA_VERSION, read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
@@ -173,9 +173,9 @@ package_cases = (
     ("mixed_attention_settings", "Package metadata differs: attention_backend"),
     ("missing_custom_attention_contract", "Unsupported package metadata: custom_attention"),
     ("unsupported_custom_attention_contract", "Unsupported package metadata: custom_attention"),
-    ("mixed_cache_padding", "Package metadata differs: model_specific"),
-    ("unsupported_cache_padding", "Unsupported cache padding"),
-    ("invalid_cache_stride", "Unexpected KV cache strides"),
+    ("mixed_state_layout", "Package metadata differs: state"),
+    ("odd_state_count", "Unsupported package metadata: state"),
+    ("invalid_cache_shape", "Unsupported Flash cache shape"),
     ("mixed_export_settings", "Package metadata differs: export_options"),
 )
 for name, message in package_cases:
@@ -193,12 +193,12 @@ for name, message in package_cases:
             del metadata["custom_attention"]
         elif name == "unsupported_custom_attention_contract":
             metadata["custom_attention"]["abi_version"] = 2
-        elif name == "mixed_cache_padding" and kind == "prefill":
-            metadata["model_specific"]["cache_padding"] = 1
-        elif name == "unsupported_cache_padding":
-            metadata["model_specific"]["cache_padding"] = 2
-        elif name == "invalid_cache_stride":
-            metadata["model_specific"]["cache_stride"][1] += 128
+        elif name == "mixed_state_layout" and kind == "prefill":
+            metadata["state"][0]["shape"][-1] += 1
+        elif name == "odd_state_count":
+            metadata["state"].pop()
+        elif name == "invalid_cache_shape":
+            metadata["state"][0]["shape"][1] = 4
         elif name == "mixed_export_settings" and kind == "prefill":
             metadata["export_options"]["backed_size_oblivious"] = True
         (mixed / (kind + ".json")).write_text(json.dumps(metadata))
@@ -249,7 +249,7 @@ def metadata_with_sizes():
 for name, version in (
     ("missing_schema_version", None),
     ("unknown_schema_version", 99),
-    ("mixed_schema_version", 2),
+    ("mixed_schema_version", SCHEMA_VERSION + 1),
 ):
     directory = out / name
     directory.mkdir()
@@ -260,7 +260,7 @@ for name, version in (
         elif name != "mixed_schema_version" or kind == "decode":
             item["schema_version"] = version
         (directory / f"{kind}.json").write_text(json.dumps(item))
-        if version is None or item["schema_version"] != 1:
+        if version is None or item["schema_version"] != SCHEMA_VERSION:
             try:
                 load_package_attention_ops(item)
             except ValueError as error:

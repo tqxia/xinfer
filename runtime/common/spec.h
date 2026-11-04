@@ -12,6 +12,7 @@
 #include <limits>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace xinfer {
@@ -72,7 +73,6 @@ inline const std::vector<std::string> &metadata_fields() {
                                                "entry_point",
                                                "token_range",
                                                "torch_version",
-                                               "torch_cuda_version",
                                                "cxx11_abi",
                                                "cuda_compute_capability",
                                                "batch_size",
@@ -82,9 +82,6 @@ inline const std::vector<std::string> &metadata_fields() {
                                                "eos_token_ids",
                                                "checkpoint",
                                                "state",
-                                               "input_order",
-                                               "output_order",
-                                               "logits",
                                                "input_mutation",
                                                "attention_backend",
                                                "custom_attention",
@@ -97,16 +94,14 @@ inline const std::vector<std::string> &metadata_fields() {
                                                "package_bytes",
                                                "package_sha256",
                                                "shared_weights",
-                                               "model_specific",
-                                               "provenance",
-                                               "diagnostics"};
+                                               "model_specific"};
   return fields;
 }
 
 inline void check_metadata_schema(const Json &metadata) {
   require(metadata.is_object() && metadata.contains("schema_version") &&
               metadata_integer(metadata.at("schema_version"), 1) &&
-              metadata.at("schema_version") == 1,
+              metadata.at("schema_version") == 2,
           "Unsupported package metadata schema version; convert retained metadata or re-export "
           "both packages");
 }
@@ -142,8 +137,9 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   metadata_check(tokens.is_array() && tokens.size() == 2 && metadata_integer(tokens[0], 1) &&
                      metadata_integer(tokens[1], 1) && tokens == expected_tokens,
                  "token_range");
-  for (const auto *field : {"torch_version", "torch_cuda_version"})
-    metadata_check(m.at(field).is_string() && !m.at(field).get<std::string>().empty(), field);
+  metadata_check(m.at("torch_version").is_string() &&
+                     !m.at("torch_version").get<std::string>().empty(),
+                 "torch_version");
   metadata_check(m.at("cxx11_abi").is_boolean(), "cxx11_abi");
   const auto &sm = m.at("cuda_compute_capability");
   metadata_check(sm.is_array() && sm.size() == 2 && metadata_integer(sm[0], 1) &&
@@ -175,21 +171,21 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                  "export_options");
   metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
   metadata_check(m.at("triton_enable_fp_fusion").is_boolean(), "triton_enable_fp_fusion");
-  metadata_check(m.at("inductor_configs").is_object(), "inductor_configs");
+  const Json compiler = {{"emulate_precision_casts", true},
+                         {"aot_inductor.package_constants_in_so", false},
+                         {"always_keep_tensor_constants", true}};
+  metadata_check(metadata_equal(m.at("inductor_configs"), compiler), "inductor_configs");
   const auto &states = m.at("state");
   metadata_check(states.is_array() && !states.empty(), "state");
-  Json inputs = {"input_ids", "cache_position"}, outputs = {"last_logits"};
   std::unordered_set<std::string> names;
   for (const auto &item : states) {
-    metadata_check(
-        metadata_keys(item, {"name", "layer", "kind", "shape", "stride", "dtype", "update"}),
-        "state");
+    metadata_check(metadata_keys(item, {"layer", "kind", "shape", "dtype", "update"}), "state");
     metadata_check(item.at("kind").is_string() && metadata_integer(item.at("layer")), "state");
     const auto kind = item.at("kind").get<std::string>();
     const bool kv = kind == "key" || kind == "value";
     metadata_check(kv || kind == "conv" || kind == "recurrent", "state");
     const auto name = "layer_" + std::to_string(item.at("layer").get<int64_t>()) + "." + kind;
-    metadata_check(item.at("name") == name && names.insert(name).second, "state");
+    metadata_check(names.insert(name).second, "state");
     const auto &shape = item.at("shape");
     metadata_check(shape.is_array() && shape.size() == (kind == "conv" ? 3 : 4), "state");
     int64_t elements = 1;
@@ -200,28 +196,11 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
       elements *= dim.get<int64_t>();
     }
     metadata_check(shape[0] == 1, "state");
-    const auto &stride = item.at("stride");
-    metadata_check(stride.is_array() && stride.size() == shape.size(), "state");
-    int64_t step = 1;
-    for (size_t i = shape.size(); i-- > 0;) {
-      metadata_check(metadata_integer(stride[i], 1) && stride[i].get<int64_t>() == step, "state");
-      step *= shape[i].get<int64_t>();
-    }
     metadata_check(item.at("dtype") == (kind == "recurrent" ? "float32" : "bfloat16"), "state");
     metadata_check(item.at("update") == (kv ? "inplace" : "replace"), "state");
     if (kv)
       metadata_check(shape[2] == m.at("cache_length"), "state");
-    inputs.push_back(name);
-    outputs.push_back(name);
   }
-  inputs.push_back("kv_extent");
-  metadata_check(metadata_equal(m.at("input_order"), inputs), "input_order");
-  metadata_check(metadata_equal(m.at("output_order"), Json::array({"last_logits"})) ||
-                     metadata_equal(m.at("output_order"), outputs),
-                 "output_order");
-  metadata_check(metadata_equal(m.at("logits"),
-                                Json({{"shape", {1, m.at("vocab_size")}}, {"dtype", "bfloat16"}})),
-                 "logits");
   metadata_check(metadata_integer(m.at("package_bytes"), 1), "package_bytes");
   metadata_check(metadata_digest(m.at("package_sha256")), "package_sha256");
   const auto &weights = m.at("shared_weights");
@@ -231,8 +210,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
           weights.at("file") == "weights.pt" && metadata_integer(weights.at("bytes"), 1) &&
           metadata_digest(weights.at("identity")) && metadata_digest(weights.at("sha256")),
       "shared_weights");
-  for (const auto *field : {"model_specific", "provenance", "diagnostics"})
-    metadata_check(m.at(field).is_object(), field);
+  metadata_check(m.at("model_specific").is_object(), "model_specific");
 }
 
 inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
@@ -244,8 +222,8 @@ inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
     require(m->contains("model_type") && m->at("model_type").is_string() &&
                 (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
             "Unsupported model type");
-  static const std::unordered_set<std::string> entry_fields{
-      "entry_point", "token_range", "package_bytes", "package_sha256", "diagnostics"};
+  static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",
+                                                            "package_bytes", "package_sha256"};
   for (const auto &field : metadata_fields())
     if (!entry_fields.contains(field))
       require(prefill.contains(field) == decode.contains(field) &&
@@ -279,13 +257,21 @@ struct SpecBase {
     require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
     require(attention_ops_abi_version() == 1, "Unsupported native attention ABI");
-    for (const auto &item : metadata.at("state"))
-      state.push_back({item.at("name").get<std::string>(), item.at("kind").get<std::string>(),
-                       item.at("layer").get<int64_t>(),
-                       item.at("shape").get<std::vector<int64_t>>(),
-                       item.at("stride").get<std::vector<int64_t>>(),
+    for (const auto &item : metadata.at("state")) {
+      const auto kind = item.at("kind").get<std::string>();
+      const auto layer = item.at("layer").get<int64_t>();
+      auto shape = item.at("shape").get<std::vector<int64_t>>();
+      std::vector<int64_t> stride(shape.size());
+      int64_t step = 1;
+      for (size_t i = shape.size(); i-- > 0;) {
+        stride[i] = step;
+        step *= shape[i];
+      }
+      state.push_back({"layer_" + std::to_string(layer) + "." + kind, kind, layer, std::move(shape),
+                       std::move(stride),
                        item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
                        item.at("update") == "inplace"});
+    }
   }
 
   ModelType model_type;

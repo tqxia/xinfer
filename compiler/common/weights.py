@@ -276,6 +276,10 @@ def _compile_entry(kind, directory, export_entry, data, storages, inductor_confi
     exported, metadata_factory = export_entry(kind, directory)
     compiled_path = directory / f"{kind}.pt2"
     options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
+    print(
+        json.dumps(dict(event="compile_options", entry_point=kind, inductor_configs=options)),
+        flush=True,
+    )
     with _capture_constants() as captured:
         torch._inductor.aoti_compile_and_package(
             exported, package_path=str(compiled_path), inductor_configs=options

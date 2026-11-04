@@ -78,13 +78,12 @@ def main():
                 for layer in range(model.config.num_hidden_layers)
                 for name in ("key", "value")
             ]
-            return make_metadata(
+            metadata = make_metadata(
                 model_type="qwen3",
                 entry_point=kind,
                 token_range=[1, 1] if kind == "decode" else [2, MAX_PROMPT],
                 checkpoint=checkpoint,
                 torch_version=torch.__version__,
-                torch_cuda_version=torch.version.cuda,
                 cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                 cuda_compute_capability=list(torch.cuda.get_device_capability()),
                 cache_length=CACHE_LENGTH,
@@ -92,34 +91,38 @@ def main():
                 eos_token_ids=model.generation_config.eos_token_id,
                 state=state,
                 triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-                model_specific=dict(
-                    layers=model.config.num_hidden_layers,
-                    kv_heads=model.config.num_key_value_heads,
-                    head_dim=model.config.head_dim,
-                    cache_shape=list(cache[0].shape),
-                    cache_stride=list(cache[0].stride()),
-                    cache_padding=0,
-                    flash_implementation="adapter",
-                    model_adapter=adapter_report,
-                ),
-                provenance=dict(
-                    strict_export=False,
-                    versions={
-                        name: importlib.metadata.version(name)
-                        for name in (
-                            "transformers",
-                            "triton",
-                            "safetensors",
-                            "tokenizers",
-                            "huggingface-hub",
-                        )
-                    },
-                ),
-                diagnostics=dict(
-                    graph_nodes=len(list(exported.graph.nodes)),
-                    export_and_compile_seconds=time.perf_counter() - start,
-                ),
+                model_specific={},
             )
+            print(
+                json.dumps(
+                    dict(
+                        event="export",
+                        model_type="qwen3",
+                        entry_point=kind,
+                        build=dict(
+                            strict_export=False,
+                            torch_cuda_version=torch.version.cuda,
+                            versions={
+                                name: importlib.metadata.version(name)
+                                for name in (
+                                    "transformers",
+                                    "triton",
+                                    "safetensors",
+                                    "tokenizers",
+                                    "huggingface-hub",
+                                )
+                            },
+                        ),
+                        diagnostics=dict(
+                            graph_nodes=len(list(exported.graph.nodes)),
+                            export_and_compile_seconds=time.perf_counter() - start,
+                            model_adapter=adapter_report,
+                        ),
+                    )
+                ),
+                flush=True,
+            )
+            return metadata
 
         return exported, metadata_factory
 

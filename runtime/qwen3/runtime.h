@@ -17,43 +17,17 @@ struct Spec : xinfer::SpecBase {
 
   explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen3, "Unsupported model type");
-    const auto &specific = metadata.at("model_specific");
-    for (const auto *field :
-         {"layers", "kv_heads", "head_dim", "cache_shape", "cache_stride", "cache_padding"})
-      xinfer::metadata_check(specific.contains(field), "model_specific");
-    for (const auto *field : {"layers", "kv_heads", "head_dim", "cache_padding"})
-      xinfer::metadata_check(
-          xinfer::metadata_integer(specific.at(field), std::numeric_limits<int64_t>::min()),
-          "model_specific");
-    const auto layers = specific.at("layers").get<int64_t>();
-    const auto heads = specific.at("kv_heads").get<int64_t>(),
-               dim = specific.at("head_dim").get<int64_t>();
-    require(layers > 0 && layers <= std::numeric_limits<int64_t>::max() / 2 && heads > 0 && dim > 0,
-            "Invalid model dimensions");
-    require(specific.at("cache_padding") == 0, "Unsupported cache padding");
-    for (const auto *field : {"cache_shape", "cache_stride"}) {
-      xinfer::metadata_check(specific.at(field).is_array(), "model_specific");
-      for (const auto &value : specific.at(field))
-        xinfer::metadata_check(xinfer::metadata_integer(value, std::numeric_limits<int64_t>::min()),
-                               "model_specific");
-    }
-    const auto shape = specific.at("cache_shape").get<std::vector<int64_t>>();
-    const auto stride = specific.at("cache_stride").get<std::vector<int64_t>>();
-    require(shape == std::vector<int64_t>{1, 8, 1024, 128}, "Unsupported Flash cache shape");
-    require(shape == std::vector<int64_t>{1, heads, capacity, dim}, "Invalid KV cache shape");
-    require(stride == std::vector<int64_t>{8 * 1024 * 128, 1024 * 128, 128, 1},
-            "Unexpected KV cache strides");
-    xinfer::metadata_check(state.size() == size_t(2 * layers), "state");
+    xinfer::metadata_check(metadata.at("model_specific").empty(), "model_specific");
+    xinfer::metadata_check(!state.empty() && state.size() % 2 == 0, "state");
+    const std::vector<int64_t> shape{1, 8, 1024, 128};
     for (size_t i = 0; i < state.size(); ++i) {
       const auto &item = state[i];
       xinfer::metadata_check(item.layer == int64_t(i / 2) &&
-                                 item.kind == (i % 2 ? "value" : "key") && item.shape == shape &&
-                                 item.stride == stride && item.dtype == at::kBFloat16 &&
-                                 item.inplace,
+                                 item.kind == (i % 2 ? "value" : "key") &&
+                                 item.dtype == at::kBFloat16 && item.inplace,
                              "state");
+      require(item.shape == shape, "Unsupported Flash cache shape");
     }
-    xinfer::metadata_check(metadata.at("output_order") == Json::array({"last_logits"}),
-                           "output_order");
   }
 };
 

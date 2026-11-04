@@ -170,7 +170,7 @@ Serialize compilation and GPU validation. Each export invocation compiles both
 entries sequentially and requires a new or empty output directory.
 The default numerical settings and algorithms are shared across targets; this
 workflow leaves optional Inductor tuning off. Package pairs must have matching
-metadata, compiler settings and checkpoint identity. Re-export and rebuild for each
+metadata, numerical settings and checkpoint identity. Re-export and rebuild for each
 native stack/GPU; keep all existing runtime compatibility checks enabled.
 Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
 files, and one shared `weights.pt`. Deploy all five files together. The archive
@@ -178,8 +178,11 @@ embeds the exact constant mappings and tensor views in `extra/weights.json`;
 there is no separate weight manifest. Both entry metadata files hold the archive
 size and SHA-256 checksum. Each export writes the archive once, records its
 checksum in both metadata files, and publishes the complete directory after
-both entries succeed. One entry alone is an incomplete bundle. Current
-Python/native runtimes require shared-weight format 2
+both entries succeed. One entry alone is an incomplete bundle. Dependency
+versions, full compiler options and graph/timing diagnostics are written to
+export logs. The deployment sidecars use metadata schema 2 and retain only the
+runtime, integrity, checkpoint and numerical contract. Current Python/native
+runtimes require shared-weight format 2
 and Torch 2.13 or newer; re-export embedded-weight and earlier shared bundles.
 Keep old Torch 2.7 package pairs with their original runtime. Rebuild and
 re-export for Torch 2.13; a version match does not establish compatibility with

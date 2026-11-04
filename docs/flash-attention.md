@@ -50,8 +50,8 @@ actual numerical settings before loading packages. These metadata fields remain
 important without a CLI selector. Old efficient packages are incompatible and
 must be re-exported; legacy eager-numerics packages are also rejected. Existing
 ordinary Flash packages retain the same native ABI, but their JSON sidecars
-must use the [versioned metadata contract](package-metadata.md). Unversioned
-sidecars can be converted without changing those compiled graphs or weights.
+must use the [schema 2 metadata contract](package-metadata.md). Schema 1 and
+unversioned sidecars can be converted without changing those compiled graphs or weights.
 
 ```bash
 # First select Q3_PY and build with the matching target toolchain.

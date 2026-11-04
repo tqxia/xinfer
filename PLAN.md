@@ -17,7 +17,8 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
   shape-only CPU extent input. Capacity is 1,024 tokens; one-token prompts use
   decode at position zero.
 - Keep BF16 cast emulation, TF32 disabled and normal compiler fusion. Record
-  actual toolchain/architecture/compiler settings in package metadata.
+  runtime compatibility and numerical settings in package metadata; keep full
+  build details and diagnostics in export logs.
 - Build/link the native attention operator for all Qwen3 targets. Deploy it with
   matching LibTorch/CUDA; reject old efficient packages with re-export guidance.
 - Run C++ prefill/decode, cache management, greedy selection and EOS stopping
@@ -48,7 +49,7 @@ claim that the new artifact passed. Current refactor verification is recorded in
 
 The canonical benchmark compares HF eager and one compiled profile. Paired
 baseline/candidate runs remain available for optimizations and record workload,
-source/package hashes, actual compiler settings, rotated process order,
+package/native identities, numerical settings, rotated process order,
 warmups, memory and GPU telemetry. Shared-GPU smoke runs establish functionality;
 controlled performance conclusions require idle-boundary checks and repeated
 measurements.
@@ -67,7 +68,7 @@ The [Qwen3.5 text-only pipeline](compiler/qwen35/README.md) currently supports
 with packaged Triton DeltaNet kernels and shared native valid-prefix
 FlashAttention. Caller-owned KV buffers update in place; conv/recurrent inputs
 remain unchanged, and returned tensors become the next state. Both entries share
-one weight pool and use metadata schema version 1, the common runner and shared
+one weight pool and use metadata schema version 2, the common runner and shared
 native generation, benchmark and validation executables.
 
 Native/Python AOTI parity is validated for 0.8B; HF numerical acceptance remains

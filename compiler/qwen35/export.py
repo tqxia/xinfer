@@ -158,14 +158,12 @@ def main():
                     manifest=checkpoint,
                 ),
                 torch_version=torch.__version__,
-                torch_cuda_version=torch.version.cuda,
                 cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                 cuda_compute_capability=torch.cuda.get_device_capability(),
                 cache_length=CACHE_LENGTH,
                 vocab_size=config.vocab_size,
                 eos_token_ids=model.generation_config.eos_token_id,
                 state=state_specs(config),
-                return_state=True,
                 triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
                 model_specific=dict(
                     delta_backend="triton_op",
@@ -181,48 +179,41 @@ def main():
                     delta_chunk_size=CHUNK_SIZE,
                     delta_transform_tile=TRANSFORM_TILE,
                     delta_dot_precision="ieee",
-                    triton_delta_ops=triton_ops,
-                    linear_packing=dict(
-                        enabled=True,
-                        version=1,
-                        groups=[
-                            {
-                                key: group[key]
-                                for key in (
-                                    "packed_parameter",
-                                    "source_parameters",
-                                    "output_widths",
-                                )
-                            }
-                            for group in packing["groups"]
-                        ],
-                    ),
-                    hidden_size=config.hidden_size,
-                    layer_types=config.layer_types,
-                    parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
-                    rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
-                    tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,
-                    enable_inductor_optimization=args.enable_inductor_optimization,
+                    linear_packing=dict(enabled=True, version=1),
                 ),
-                provenance=dict(
-                    strict_export=True,
-                    versions={
-                        name: importlib.metadata.version(name)
-                        for name in (
-                            "transformers",
-                            "triton",
-                            "safetensors",
-                            "huggingface-hub",
-                            "tokenizers",
-                        )
-                    },
-                ),
-                diagnostics=diagnostics,
             )
             print(
                 json.dumps(
                     dict(
-                        entry_point=kind, package_bytes=compiled_path.stat().st_size, **diagnostics
+                        event="export",
+                        model_type="qwen35",
+                        entry_point=kind,
+                        package_bytes=compiled_path.stat().st_size,
+                        build=dict(
+                            strict_export=True,
+                            torch_cuda_version=torch.version.cuda,
+                            versions={
+                                name: importlib.metadata.version(name)
+                                for name in (
+                                    "transformers",
+                                    "triton",
+                                    "safetensors",
+                                    "huggingface-hub",
+                                    "tokenizers",
+                                )
+                            },
+                        ),
+                        diagnostics=dict(
+                            **diagnostics,
+                            triton_delta_ops=triton_ops,
+                            linear_packing=packing,
+                            hidden_size=config.hidden_size,
+                            layer_types=config.layer_types,
+                            parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
+                            rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
+                            tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,
+                            enable_inductor_optimization=args.enable_inductor_optimization,
+                        ),
                     )
                 ),
                 flush=True,

@@ -40,8 +40,9 @@ git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry
 Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
 targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
 reads the package metadata to select the model-specific contract and state policy. Both entry JSON files require the shared
-[`schema_version: 1` format](package-metadata.md), with an explicit `model_type`
-of `qwen3` or `qwen35`. Unversioned sidecars must be converted or re-exported;
+[`schema_version: 2` format](package-metadata.md), with an explicit `model_type`
+of `qwen3` or `qwen35`. Schema 1 and unversioned sidecars must be converted or
+re-exported;
 model selection reads the versioned metadata directly.
 
 The common runner owns package loaders, shared weights, device checks, token
@@ -168,7 +169,9 @@ reported separately from steady-state latency.
 
 Both package pairs must use the fixed FlashAttention operator and extent-input
 ABI, with matching checkpoint, toolchain, tensor contracts and numerical
-compilation settings. Each pair's prefill/decode metadata is checked as well.
+compilation settings. General compiler tuning options are retained in export
+logs rather than used to reject a comparison. Each pair's prefill/decode
+metadata is checked as well.
 Labels name the measurements; they do not select another execution backend.
 `--reference` selects the directory containing the saved capital prompt and
 continuation; it defaults to `artifacts/reference`.

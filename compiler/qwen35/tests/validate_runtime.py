@@ -146,9 +146,9 @@ def reject_invalid(args, env, metadata):
             "Unsupported package metadata: state",
         ),
         (
-            "abi_order",
-            lambda m: [v["input_order"].reverse() for v in m.values()],
-            "Unsupported package metadata: input_order",
+            "state_order",
+            lambda m: [v["state"].reverse() for v in m.values()],
+            "Invalid state order or dtype",
         ),
         (
             "gpu_arch",

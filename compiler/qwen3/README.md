@@ -131,16 +131,22 @@ new pair rather than assuming cross-build bitwise reproducibility.
 The directory contains weightless `prefill.pt2` and `decode.pt2`, matching JSON
 metadata, exported graph text and `weights.pt`. The archive embeds its constant
 mappings in `extra/weights.json`; there is no separate `weights.json` file. Both
-entry metadata files use the shared `schema_version=1` format and record the
+entry metadata files use the shared `schema_version=2` format and record the
 package and archive sizes and checksums. Common fields include `entry_point`,
-`token_range`, `torch_version`, `torch_cuda_version`, `cuda_compute_capability`,
-`vocab_size`, `eos_token_ids` and explicit state/input/output descriptors.
-Qwen3 geometry and adapter details are nested under `model_specific`; export
-strictness and dependency versions live in `provenance`, with entry timing/graph
-results in `diagnostics`. Metadata also records the fixed Flash backend, custom
-operator ABI, extent/cache contract, checkpoint, Torch/CUDA versions, GPU architecture,
-C++ ABI and actual numerical settings. Keep these fields even though the CLI no
-longer selects a backend: they prevent incompatible packages being mixed.
+`token_range`, `torch_version`, `cuda_compute_capability`, `vocab_size`,
+`eos_token_ids` and ordered state descriptors. Each state gives its layer, kind,
+shape, dtype and update policy; readers derive contiguous strides and names.
+The fixed model ABI defines input order, output order and logits shape.
+Qwen3 needs no additional `model_specific` fields because its geometry is
+available in the state descriptors. Metadata retains the fixed Flash backend,
+custom operator ABI, extent/cache contract, checkpoint, Torch version, GPU
+architecture, C++ ABI and numerical settings.
+
+Export logs contain JSON events with dependency versions, Torch's CUDA version,
+export strictness, adapter counts, graph counts and compilation timings. These
+build and diagnostic details are not required deployment metadata. The full
+resolved Inductor options are also logged; metadata retains the precision-cast
+and two weightless-package options needed for the package contract.
 
 Both entry points compile with `aot_inductor.package_constants_in_so=False` and
 `always_keep_tensor_constants=True`. The common exporter saves each immutable
@@ -148,7 +154,7 @@ constant once and records exact per-package constant names. Python and C++ load
 one CUDA weight pool, retain its owner until both loaders are destroyed, and
 inject its tensors with `user_managed=True`. Loading verifies the metadata,
 archive identity and every constant's shape/dtype; missing or mixed weights are
-errors. Export stages both packages and their diagnostics, writes the archive
+errors. Export stages both packages and graph dumps, writes the archive
 once, and publishes the completed directory after both entries succeed. Both
 metadata files contain the same final archive checksum. Deploy the five required
 files (two `.pt2`, two `.json` and `weights.pt`) together with the native attention
@@ -177,7 +183,7 @@ The runtime also checks the actual CUDA device against the package's compute
 capability before loading GPU weights. The common metadata reader validates
 the schema version, model identity and all shared contracts. Native file
 preflight verifies package and archive sizes and checksums before GPU weight
-allocation. Missing or unsupported schema versions are rejected. Earlier
+allocation. Missing or unsupported schema versions are rejected. Schema 1 and
 unversioned sidecars must be converted or the bundle re-exported; there are no
 legacy field aliases. `model_type="qwen3"` selects the Qwen3 state policy after
 common parsing.

@@ -106,7 +106,7 @@ class PackingContract(unittest.TestCase):
             (3, 1, 2),
         )
         self.assertEqual(len(report["groups"]), 1)
-        json.dumps(report)  # The report is embedded in package provenance.
+        json.dumps(report)  # The report is JSON-serializable for export logs.
         self.assertEqual(linear_count(exported), 1)
         self.assertEqual(exported.call_spec, call_spec)
         self.assertEqual(dict(exported.range_constraints), ranges)
