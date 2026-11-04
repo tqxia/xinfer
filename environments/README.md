@@ -170,7 +170,7 @@ Serialize compilation and GPU validation. Each export invocation compiles both
 entries sequentially and requires a new or empty output directory.
 The default numerical settings and algorithms are shared across targets; this
 workflow leaves optional Inductor tuning off. Package pairs must have matching
-metadata, compiler settings and source identity. Re-export and rebuild for each
+metadata, compiler settings and checkpoint identity. Re-export and rebuild for each
 native stack/GPU; keep all existing runtime compatibility checks enabled.
 Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
 files, and one shared `weights.pt`. Deploy all five files together. The archive
@@ -287,4 +287,4 @@ for both model environments, dependency checks, LibTorch build matching and
 failure-status checks passed from outside the repository. These reports are in
 `artifacts/<target>/environment-refactor-20261101/` in each validation checkout;
 this refactor did not repeat model compilation. Retain environment reports,
-source hashes, package/native identities and validation summaries for each run.
+package/native identities and validation summaries for each run.

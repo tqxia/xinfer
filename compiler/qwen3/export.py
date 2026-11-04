@@ -9,7 +9,6 @@ from pathlib import Path
 import torch
 
 from compiler.common.weights import compile_shared
-from compiler.common.artifacts import ROOT, sha256
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
 from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model, cache_extent
@@ -113,17 +112,6 @@ def main():
                             "safetensors",
                             "tokenizers",
                             "huggingface-hub",
-                        )
-                    },
-                    source_sha256={
-                        name: sha256(ROOT / name)
-                        for name in (
-                            "compiler/qwen3/export.py",
-                            "compiler/qwen3/model.py",
-                            "compiler/qwen3/adapters/qwen3_flash.py",
-                            "compiler/common/metadata.py",
-                            "compiler/common/attention.py",
-                            "compiler/common/weights.py",
                         )
                     },
                 ),

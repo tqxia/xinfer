@@ -235,7 +235,7 @@ and KV-only mutation policy.
 
 `model_specific` contains the DeltaNet backend, short/long operators and
 algorithms, threshold/chunk/tile settings, layer layout and linear packing.
-`provenance` contains source checksums and dependency versions; `diagnostics`
+`provenance` contains export strictness and dependency versions; `diagnostics`
 contains per-entry graph counts and export/compile timings. Runtimes require
 the versioned format. Retained Flash/shared-weight bundles can migrate by
 rewriting their two JSON sidecars while keeping the compiled graphs and weight

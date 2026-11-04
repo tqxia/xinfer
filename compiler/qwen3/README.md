@@ -135,10 +135,10 @@ entry metadata files use the shared `schema_version=1` format and record the
 package and archive sizes and checksums. Common fields include `entry_point`,
 `token_range`, `torch_version`, `torch_cuda_version`, `cuda_compute_capability`,
 `vocab_size`, `eos_token_ids` and explicit state/input/output descriptors.
-Qwen3 geometry and adapter details are nested under `model_specific`; source
-and version information lives in `provenance`, with entry timing/graph results
-in `diagnostics`. Metadata also records the fixed Flash backend, custom operator
-ABI, extent/cache contract, checkpoint, Torch/CUDA versions, GPU architecture,
+Qwen3 geometry and adapter details are nested under `model_specific`; export
+strictness and dependency versions live in `provenance`, with entry timing/graph
+results in `diagnostics`. Metadata also records the fixed Flash backend, custom
+operator ABI, extent/cache contract, checkpoint, Torch/CUDA versions, GPU architecture,
 C++ ABI and actual numerical settings. Keep these fields even though the CLI no
 longer selects a backend: they prevent incompatible packages being mixed.
 

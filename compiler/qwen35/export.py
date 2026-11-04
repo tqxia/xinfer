@@ -2,16 +2,13 @@
 
 import argparse
 import importlib.metadata
-import inspect
 import json
 import time
 from pathlib import Path
 
 import torch
-from transformers.models.qwen3_5 import modeling_qwen3_5
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
-from compiler.common.artifacts import sha256, ROOT
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.weights import compile_shared
 from compiler.common.attention import cache_extent
@@ -217,27 +214,6 @@ def main():
                             "safetensors",
                             "huggingface-hub",
                             "tokenizers",
-                        )
-                    },
-                    hf_source_sha256=sha256(inspect.getfile(modeling_qwen3_5)),
-                    source_sha256={
-                        name: sha256(ROOT / name)
-                        for name in (
-                            "compiler/qwen35/config.py",
-                            "compiler/qwen35/model.py",
-                            "compiler/qwen35/export.py",
-                            "compiler/qwen35/adapters/attention.py",
-                            "compiler/common/attention.py",
-                            "compiler/common/artifacts.py",
-                            "compiler/common/metadata.py",
-                            "compiler/qwen35/packages.py",
-                            "compiler/qwen35/adapters/delta.py",
-                            "compiler/qwen35/kernels/recurrent.py",
-                            "compiler/qwen35/kernels/chunked.py",
-                            "compiler/common/passes/pack_linears.py",
-                            "compiler/common/weights.py",
-                            "runtime/common/attention.cpp",
-                            "runtime/common/attention.h",
                         )
                     },
                 ),

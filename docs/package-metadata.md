@@ -15,7 +15,7 @@ validate their supported tensor ABI and retain their state-update policies.
 | `export_options`, `tf32`, `triton_enable_fp_fusion`, `inductor_configs` | Actual export and numerical settings |
 | `package_bytes`, `package_sha256`, `shared_weights` | Package and archive integrity |
 | `model_specific` | Stable model geometry, adapters, DeltaNet policies and packing settings |
-| `provenance`, `diagnostics` | Source/version provenance and per-entry graph/timing diagnostics |
+| `provenance`, `diagnostics` | Export strictness, dependency versions and per-entry graph/timing diagnostics |
 
 Every state descriptor gives its layer, kind, shape, contiguous strides, dtype
 and `update` policy. KV inputs use `inplace`; conv/recurrent inputs use

@@ -43,7 +43,7 @@ FIELDS = (
     "package_sha256",  # SHA-256 checksum of the compiled .pt2 file.
     "shared_weights",  # Archive format, filename, identity, size and checksum.
     "model_specific",  # Model-family extras, such as geometry or DeltaNet settings.
-    "provenance",  # Exporter source hashes, dependency versions and capture settings.
+    "provenance",  # Dependency versions and graph capture settings.
     "diagnostics",  # Per-entry compilation timings and graph diagnostics.
 )
 ENTRY_FIELDS = {"entry_point", "token_range", "package_bytes", "package_sha256", "diagnostics"}
