@@ -65,8 +65,9 @@ for each investigation rather than maintaining profiling infrastructure here.
 
 ## Supported Qwen3.5 pipeline and scaling work
 
-The [Qwen3.5 text-only pipeline](compiler/qwen35/README.md) currently supports
-0.8B. It exports paired dynamic prefill (2–512 tokens) and single-token decode
+The [Qwen3.5 text-only pipeline](compiler/qwen35/README.md) defaults to 0.8B.
+Full-model 4B bring-up uses the same preparation, export and runtime interfaces.
+It exports paired dynamic prefill (2–512 tokens) and single-token decode
 with packaged Triton DeltaNet kernels and shared native valid-prefix
 FlashAttention. Caller-owned KV buffers update in place; conv/recurrent inputs
 remain unchanged, and returned tensors become the next state. Both entries share
@@ -74,11 +75,12 @@ one weight pool and use metadata schema version 3 with runtime ABI 1, the common
 runner and shared
 native generation, benchmark and validation executables.
 
-Native/Python AOTI parity is validated for 0.8B; HF numerical acceptance remains
-open. Keep the existing HF/FP32 comparisons and Q35-NUM-001/Q35-NUM-002 diagnostics.
+Native/Python AOTI parity is validated for 0.8B and the complete 4B model; HF
+numerical acceptance remains open. Keep the existing HF/FP32 comparisons and
+Q35-NUM-001/Q35-NUM-002 diagnostics.
 The [experiment record](docs/experiments/qwen35.md) preserves earlier block probes,
 fixed-shape packages and export failures as historical evidence. Those results
-do not establish support for 4B in the current full-model Triton path.
+do not establish full-model numerical acceptance.
 
 The first scaling milestone generalizes the kernel geometry while retaining
 the current 0.8B full-model profile:
@@ -96,12 +98,27 @@ the current 0.8B full-model profile:
   or `--value-heads 32`; its HF recurrent/chunked and FP32 controls, state and
   partition checks, and packaged Python/native checks apply to both.
 
-Full-model 4B support remains the next milestone. Prepare the complete pinned
-text checkpoint, export the shared-weight package pair at the existing limits,
-then validate logits, state preservation, reset/reuse, generation and GPU memory.
-Measure export and packed-reference peaks as well as inference memory. Full-model
-FP32 controls need CPU/offloading or a larger GPU; focused FP32 block/kernel
-controls remain available on L20.
+The full-model 4B milestone selects its pinned checkpoint with
+`compiler.qwen35.model --model Qwen/Qwen3.5-4B`; its default preparation directory
+is `work/qwen35/4b/text`. Export and validation use that explicit `--model-dir`
+and a separate `artifacts/qwen35/4b/text` package directory. The 0.8B defaults
+remain unchanged. Both sizes require a verified prepared manifest, tied
+embeddings and default RoPE.
+
+Validate the complete shared-weight pair at the existing limits: logits,
+state preservation, reset/reuse, generation and GPU memory. Measure export and
+packed-reference peaks as well as inference memory. Use the
+[L20 Docker testing environment](environments/l20/docker/README.md) for
+the real 4B checkpoint. Export uses ordinary strict tracing and linear packing;
+the standard validators run HF BF16 and full-model FP32 controls alongside the
+adapter, packed graphs and AOTI packages. Preserve all existing numerical,
+state, native/Python bitwise and generation gates, including the 5% HF limits.
+Retain complete reports before accepting the full-model milestone.
+
+The [real 4B L20 rerun](docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
+completed ordinary export, full FP32 controls, native parity, generation and
+shared-weight memory checks without OOM. Its required HF/adapter/packing
+numerical gates still fail, so the full-model milestone is not yet accepted.
 
 The longer-input target is 8,192 prompt tokens with 16,384 total context capacity.
 Make export, metadata and runtime profile bounds consistent, add common prompt

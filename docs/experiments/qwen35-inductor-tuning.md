@@ -11,9 +11,9 @@ baseline change; its projection count is 97. Compare packed and unpacked
 checkouts separately once a tuning configuration has been selected. The current
 exporter has also retired `--eager-numerics`; the historical control keeps it off.
 
-Host 103 measured about 3.70 ms/token: 187 GEMVs account for about 75% of summed
-GPU kernel time. The 248,320-by-1,024 LM-head matrix contains about 509 MB of
-BF16 weights. There is a weight-bandwidth limit; a smaller kernel count or
+The measured control reached about 3.70 ms/token: 187 GEMVs account for about
+75% of summed GPU kernel time. The 248,320-by-1,024 LM-head matrix contains about
+509 MB of BF16 weights. There is a weight-bandwidth limit; a smaller kernel count or
 higher occupancy alone does not establish a speedup.
 
 This guide specifies experiments, not measured tuning wins. Current HF numerical
@@ -23,10 +23,10 @@ acceptance remains open. Preserve all existing precision settings and thresholds
 
 Run in a separate test checkout on the measurement host, using its existing
 model environment and matching LibTorch. Keep the same Torch/CUDA/Triton/ABI,
-checkpoint, GPU, CPU-thread settings and target-only version-guard patch as the
-host-103 comparison. Do not upgrade dependencies during this comparison.
-The source checks behind this guide use Torch 2.7.0; host 103 uses 2.7.0a0, so
-verify option availability and generated code there.
+checkpoint, GPU, CPU-thread settings and target-only version-guard patch used for
+the comparison. Do not upgrade dependencies during this comparison. The source
+checks behind this guide use Torch 2.7.0; the measured environment uses
+Torch 2.7.0a0. Verify option availability and generated code there.
 
 In `compiler/qwen35/export.py`, replace the existing `options` assignment with
 this explicit common configuration, then add the chosen arm's override:
@@ -91,8 +91,8 @@ those already validated on the target host. Use Bash for these examples.
 
 ```bash
 QWEN_PY=work/qwen35/venv/bin/python
-QWEN_BUILD=work/profile103/build  # Or work/qwen35/build in a normal checkout.
-QWEN_GPU=1                     # Physical nvidia-smi index on host 103.
+QWEN_BUILD=work/profile/build  # Or work/qwen35/build in a normal checkout.
+QWEN_GPU=0                    # Select an idle physical nvidia-smi GPU index.
 QWEN_UUID=$(nvidia-smi -i "$QWEN_GPU" --query-gpu=uuid --format=csv,noheader)
 export CUDA_VISIBLE_DEVICES="$QWEN_UUID"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -121,7 +121,8 @@ Verify the installed config accepts the requested keys before starting an arm;
 use `getattr(torch._inductor.config, key)` for the keys in its dictionary.
 Record Torch's full version/git version, Triton/CUDA versions, C++ ABI, GPU UUID
 and SM, source commit/diff, and the complete options dictionary. Preserve the
-host-103 exact-build guard; do not weaken version checks to make a package load.
+exact-build guard used in the comparison; do not weaken version checks to make
+a package load.
 
 **Autotuning itself needs an idle GPU.** A busy compile can bake in poor kernel
 choices even when the final benchmark runs idle. Serialize all compilation,
@@ -200,11 +201,12 @@ timing; compare operator/kernel timings only within matching measurement scopes.
 ## 4. Measure native control versus native candidate
 
 Use the current untuned e0 packages as A and one tuned arm as B, with the same
-rebuilt runtime binary. Reuse the exact host-103 fixed-token workload:
+rebuilt runtime binary. Reuse the exact fixed-token workload from the measurement
+host:
 
 ```bash
 QWEN_CONTROL=artifacts/qwen35/0.8b/inductor-tuning/e0-control/packages
-QWEN_WORKLOAD=artifacts/qwen35/0.8b/comparison103/clean-workload.json
+QWEN_WORKLOAD=artifacts/qwen35/0.8b/comparison/clean-workload.json
 ```
 
 That workload has six prompt lengths, two additional warmups, five measured
@@ -212,8 +214,9 @@ requests per worker and 64 fixed decode inputs. It produces 65 predictions per
 request, including the prediction after prefill. EOS remains data. Keep input
 IDs identical across arms.
 
-Use the existing host-103 paired-comparison driver with package paths changed,
-or alternate fresh native workers as A/B, B/A, A/B, B/A. For example, one worker:
+Use the existing paired-comparison driver on the measurement host with package
+paths changed, or alternate fresh native workers as A/B, B/A, A/B, B/A. For
+example, one worker:
 
 ```bash
 (

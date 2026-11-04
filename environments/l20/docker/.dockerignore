@@ -1,0 +1,11 @@
+*
+!.dockerignore
+!Dockerfile
+!README.md
+!launch.sh
+!native.lock
+!qwen3.lock
+!qwen35.lock
+!SHA256SUMS
+!payload/
+!payload/**

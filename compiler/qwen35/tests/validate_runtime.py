@@ -441,7 +441,7 @@ def main():
     assert len(native["cases"]) == len(cases)
     report = dict(
         comparison="C++ vs Python AOTI",
-        hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
+        hf_numerical_acceptance="evaluated separately by model and end-to-end validators",
         delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
         runtime_abi_version=metadata["prefill"]["runtime_abi_version"],
         linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),

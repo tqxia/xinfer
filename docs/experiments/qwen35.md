@@ -20,6 +20,61 @@ sequence helpers were subsequently retired; their last containing commit is
 `a63eb21`. The active fused/conditional GDN validators and rounding diagnostic
 still use `tests/block.py`.
 
+## Full 4B L20 validation: 2026-11-04
+
+The complete text checkpoint at revision
+`851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` was verified and exported in the
+`xinfer-l20` container. The environment uses Torch `2.13.0+cu126`,
+Triton `3.7.1` and Transformers `5.20.2`, with a full L20 exposed as CUDA device
+zero. The checkpoint contains 426 text tensors and 8,411,502,592 weight bytes.
+Ordinary strict export and independent linear packing are restored; the
+standard validators run in process with their original cases and numerical
+limits. Prefill remains 2–512 tokens and total capacity remains 1,024.
+
+| Stage | Time | Sampled device peak | Result |
+| --- | ---: | ---: | --- |
+| Paired export | 163.2 s | 23,632 MiB | Passed |
+| Model validation | 217.5 s | 34,630 MiB | Numerical gate failed |
+| Native runtime validation | 186.2 s | 17,703 MiB | Passed |
+| End-to-end validation | 236.9 s | 25,022 MiB | Numerical gate failed; native parity passed |
+
+These are one-second whole-device samples, not exact allocation peaks or
+performance benchmarks. No stage ran out of memory. CPU checks passed: 96 common
+tests and 32 Qwen3.5 tests, with 14 CUDA-dependent tests skipped in those CPU runs.
+
+Native validation matched Python AOTI bitwise for 6,955 teacher tensors, 35
+greedy logit rows and 384 greedy state tensors; all 58 rejection cases passed.
+End-to-end validation matched 301 teacher steps and 19,565 tensors bitwise,
+preserved cache mutation/masking/reset contracts and matched all three HF greedy
+continuations. All 301 teacher top-token choices also agreed with HF.
+
+The existing 5% numerical gates still fail. Model validation records 16,503
+required failures across adapter/HF, AOTI/HF, packing/adapter, AOTI/adapter and
+AOTI/packing: 75 logit rows and 16,428 state tensors. The AOTI/HF logit maximum
+relative L2 is 36.36%. End-to-end records 60 failing logit rows and 11,851 state
+tensors, with a maximum logit relative L2 of 41.49%. Every shared comparison
+metric and required failure matches the earlier dev-box run: 444 model rows and
+301 end-to-end rows. This establishes equality of recorded metrics, not a
+cross-run bitwise comparison of complete traces.
+
+Full FP32 controls now cover all 87 model steps and the original six end-to-end
+cases (100 steps). They are diagnostic: BF16 HF and AOTI both exceed the FP32
+comparison bounds, despite agreeing on top tokens. They do not excuse the
+required failures or establish that one implementation is uniformly more
+accurate. Full-model numerical acceptance remains open.
+
+The shared archive is 8,411,833,455 bytes. A fresh-process `cudaMemGetInfo` probe
+measured 7.9844 GiB growth after loading both entries and 8.0273 GiB growth after
+an eight-token prefill plus one decode; absolute device use was 8.3927 GiB after
+decode. This is a short native inference measurement, not a full-context peak.
+The two entries use one externally managed weight pool. Device memory remained
+reserved after runtime destruction in this probe; process exit released it.
+
+The validation run retains the packages, complete validator reports, export
+logs, stage status, device samples, verified checkpoint-transfer record and
+native memory report. Run-specific paths and deployment details belong in
+local validation records.
+
 ## Prefix Flash and in-place KV: 2026-11-02
 
 The six full-attention layers now reuse the shared native prefix-Flash operator
@@ -179,7 +234,7 @@ after restart.
 
 Validation uses development Torch `2.7.0+cu126`, Triton `3.3.0`, SM89 L20 and
 C++11 ABI enabled. The GPU remains busy; no performance result is claimed.
-Host 103's alpha Torch/Triton 3.2 stack still needs its own functional run.
+The separate alpha Torch/Triton 3.2 stack still needs its own functional run.
 
 ## Standalone conditional GDN dispatch: 2026-10-30
 
@@ -191,7 +246,7 @@ The following records its original isolated validation.
 `torch.cond(qkv.shape[1] <= 97, short, long, operands)`. Short requests reuse
 the existing fused preparation/recurrence kernel; long requests use C64
 chunking with the B3 32-column U/W transform. The copied transform is
-AST-identical to the host-103 B3 source apart from its function name. Existing
+AST-identical to the original B3 source apart from its function name. Existing
 chunk kernels are unchanged; their launcher gains a static transform/grid
 override whose defaults preserve the full-model path. The full model does not
 call this diagnostic dispatcher.
@@ -258,7 +313,7 @@ can disappear after restart. The existing C++ runner needs no source change.
 
 This run uses the development L20 with Torch `2.7.0+cu126`, Triton `3.3.0` and
 C++11 ABI enabled. The GPU is fully loaded; no timing claim is made. The pinned
-host-103 alpha Torch/Triton 3.2 environment still needs its own functional run
+separate alpha Torch/Triton 3.2 environment still needs its own functional run
 before using this dispatcher there. Full-model integration is a later step.
 
 ## Chunked GDN prefill PoC: 2026-10-30
@@ -361,7 +416,7 @@ limited. These files can disappear after restart; re-export on the target
 host with its matching Torch/LibTorch and GPU architecture.
 
 The shared development GPU is at 100% utilization, so no latency or speedup is
-claimed. Host-103 profiling should compare the committed token-sequential
+claimed. Further profiling should compare the committed token-sequential
 baseline and this chunked candidate with the same Inductor optimization flags,
 precision settings, workload and native build. Existing full-model numerical
 differences must remain explicit during that comparison.

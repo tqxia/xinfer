@@ -1,5 +1,8 @@
 # L20 native stack
 
+For the offline Docker testing environment, use the
+[Docker build and launch guide](docker/README.md).
+
 The profile selects the Torch 2.13 CUDA 12.6 stack on the Linux x86-64 host
 `kikoxia-any4.devcloud.woa.com`, SSH port `36000`:
 

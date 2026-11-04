@@ -1,13 +1,19 @@
 # Qwen3.5 text-only AOTI / C++
 
-The target is **Qwen/Qwen3.5-0.8B**, pinned to
-`2fc06364715b967f1860aea9cf38778875588b17`. Vision and MTP are outside this
-experiment. Python prepares the model and tokenizes/decodes offline; C++ loads
-the compiled packages and performs generation.
+The default target is **Qwen/Qwen3.5-0.8B**, pinned to
+`2fc06364715b967f1860aea9cf38778875588b17`. Full-model 4B bring-up uses
+**Qwen/Qwen3.5-4B**, pinned to `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`,
+through the same text preparation, export and runtime interfaces. Vision and MTP
+are outside this experiment. Python prepares the model and tokenizes/decodes
+offline; C++ loads the compiled packages and performs generation.
 
-The DeltaNet kernels also accept the 4B head geometry for focused block/kernel
-validation. Full-model 4B export and longer prompts remain later milestones;
-the prepared full-model default and generation commands below still target 0.8B.
+Use the explicit 4B paths below to select that checkpoint. Defaults remain 0.8B.
+Kernel/block validation and full-model numerical acceptance are separate gates;
+longer prompts remain a later milestone.
+
+The [real 4B L20 run](../../docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
+validates export, shared-weight loading and native/Python parity. Full HF/FP32
+controls ran; the required numerical limits remain unmet.
 
 Generation, fixed-token timing and native validation use the shared
 `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executables. Package
@@ -15,16 +21,22 @@ metadata selects Qwen3.5 and its mixed-state policy; no model CLI flag is needed
 
 Prefill is always dynamic: each input of 2–512 tokens uses one prefill call.
 A single token uses the decode package. Batch size is one and context capacity
-is 1,024. BF16 weights/activations, FP32 RoPE frequencies, and 48 explicit state
-tensors cover 18 conv/recurrent pairs and six KV pairs. Recurrent states use
-FP32. The caller owns the KV buffers, which are updated in place at the appended
+is 1,024. Both sizes use BF16 weights/activations and FP32 RoPE frequencies.
+State geometry comes from the selected checkpoint:
+
+| Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | KV shape |
+| --- | --- | --- | --- | --- | --- |
+| 0.8B | 24 | 18 | 6 | 48 | `[1,2,1024,256]` |
+| 4B | 32 | 24 | 8 | 64 | `[1,4,1024,256]` |
+
+Recurrent states use FP32. The caller owns the KV buffers, which are updated in place at the appended
 positions. Returned KV tensors alias those buffers; conv/recurrent inputs remain
 unchanged and their returned tensors replace the previous state.
 
-The six full-attention layers use native FlashAttention over the populated cache
+Full-attention layers use native FlashAttention over the populated cache
 prefix, with grouped KV heads and no explicit head expansion. The original HF
 projections, Q/K normalization, RoPE and sigmoid output gate remain in the model.
-The 18 DeltaNet layers retain their packaged Triton kernels.
+DeltaNet layers retain their packaged Triton kernels.
 
 One functional dispatcher selects fused recurrence for T<=97 and B3/C64
 chunked FP32 prefill for longer requests. The threshold is provisional. Focused
@@ -63,9 +75,9 @@ Both entry points accept the same state interface:
 step(input_ids, cache_position, state, kv_extent) -> last_logits, *next_state
 ```
 
-`state` contains two tensors per layer in layer order. The six BF16 KV pairs
-have shape `[1,2,1024,256]`. Updates use in-place `index_copy_`, writing only the
-current token rows. The 18 conv/recurrent pairs retain their functional update
+`state` contains two tensors per layer in layer order, with shapes from the
+table above. Updates use in-place `index_copy_`, writing only the
+current token rows. Conv/recurrent pairs retain their functional update
 contract: the DeltaNet adapter reads the caller's tensors directly without
 cloning them and returns fresh tensors for the next call. KV outputs alias the
 input buffers.
@@ -203,6 +215,9 @@ model's HF pins, including Transformers 5.20.2; native stack pins live in the
 target profiles.
 Use `environments/setup.sh` and `environments/check.sh` through that guide;
 environment tooling and its tests live under `environments/`.
+For full-model 4B work, use the
+[offline L20 Docker testing environment](../../environments/l20/docker/README.md).
+It provides `Q35_PY` and the matching native stack for the commands below.
 Export-time Torch and native LibTorch must come from the same installation.
 Optional `fla` and `causal_conv1d` must be absent so the surrounding HF operations
 use the validated tensor implementation.
@@ -245,6 +260,22 @@ export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
 "$QWEN_PY" -m compiler.qwen35.model
 "$QWEN_PY" -m compiler.qwen35.export
 ```
+
+For 4B, select its pinned checkpoint and keep its prepared weights and compiled
+bundle separate from the 0.8B defaults:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.model \
+  --model Qwen/Qwen3.5-4B --output work/qwen35/4b/text
+"$QWEN_PY" -m compiler.qwen35.export \
+  --model-dir work/qwen35/4b/text --output artifacts/qwen35/4b/text
+```
+
+Preparation refuses an existing output directory; reuse the complete verified
+directory on later runs. Its manifest records the selected model ID and pinned
+revision, checksums of source shards and all prepared files. Loading rejects an
+unsupported model/revision or incomplete file manifest before allocating model
+weights. Both supported checkpoints require tied embeddings and default RoPE.
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
@@ -349,6 +380,32 @@ cross-checks the HF path against the same FP32 control. Python JIT, Python AOTI
 and standalone C++ must agree bitwise. Inspect complete reports before treating
 a nonzero exit as an expected numerical gate.
 
+Use matching model, package and tokenization paths for the complete 4B model:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.prepare --model-dir work/qwen35/4b/text encode \
+  --prompt "What is 17 + 25?" --output work/qwen35/4b/prompt.ids
+"$BUILD/xinfer_aoti" artifacts/qwen35/4b/text \
+  work/qwen35/4b/prompt.ids work/qwen35/4b/generated.ids
+"$QWEN_PY" -m compiler.qwen35.prepare --model-dir work/qwen35/4b/text decode \
+  --input work/qwen35/4b/generated.ids
+"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
+  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
+  --output artifacts/qwen35/4b/model-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
+  --output artifacts/qwen35/4b/runtime-new
+"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
+  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
+  --output artifacts/qwen35/4b/end-to-end-new
+```
+
+Run the standard model, runtime and end-to-end validators against the same
+prepared checkpoint and package pair. Full-model validation includes the
+independent FP32 control, all requested cases, native/Python bitwise comparisons,
+and carried-state and generation checks. HF numerical checks retain their
+existing 5% limits. Review the complete reports before accepting a new package.
+
 For the 4B kernel geometry, prepare a pinned layer-0 fixture once, then select
 32 value heads in the same validator:
 
@@ -411,7 +468,7 @@ exclusive storage and no other graph consumers; shared/tied/trainable weights
 are skipped. Packed parameters are created once during export. Replaced
 parameters are removed, and there is no inference-time weight concatenation.
 
-For this model, 48 groups combine DeltaNet inputs, MLP gate/up and attention QKV,
+For 0.8B, 48 groups combine DeltaNet inputs, MLP gate/up and attention QKV,
 reducing 187 linear calls to 97. Split outputs retain the original BF16 dtype
 and contiguous layout for downstream views. Contiguous copies can cost time
 in prefill; packing reduces launches rather than the number of weight bytes.
@@ -454,6 +511,15 @@ use an unpacked control checkout with the same selected Inductor configuration.
 "$QWEN_PY" -m compiler.qwen35.benchmark run \
   --validation artifacts/qwen35/0.8b/end-to-end-new/summary.json \
   --output artifacts/qwen35/0.8b/benchmark-new
+```
+
+For 4B, pass all three matching paths explicitly:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.benchmark run \
+  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
+  --validation artifacts/qwen35/4b/end-to-end-new/summary.json \
+  --output artifacts/qwen35/4b/benchmark-new
 ```
 
 Both `run` and `check-idle` default to the first CUDA-visible GPU, honoring

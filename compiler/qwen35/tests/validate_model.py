@@ -8,7 +8,7 @@ import torch
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
-from compiler.common.artifacts import sha256, ROOT
+from compiler.common.artifacts import sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import cache_extent
@@ -220,29 +220,6 @@ def main():
         checkpoint=metadata["prefill"]["checkpoint"],
         package_sha256={k: m["package_sha256"] for k, m in metadata.items()},
         shared_weights=metadata["prefill"]["shared_weights"],
-        source_sha256={
-            name: sha256(ROOT / name)
-            for name in (
-                "compiler/qwen35/config.py",
-                "compiler/qwen35/model.py",
-                "compiler/qwen35/tests/validate_model.py",
-                "compiler/qwen35/tests/common.py",
-                "compiler/common/tests/validation.py",
-                "compiler/common/artifacts.py",
-                "compiler/common/metadata.py",
-                "compiler/qwen35/packages.py",
-                "compiler/qwen35/adapters/delta.py",
-                "compiler/qwen35/adapters/attention.py",
-                "compiler/common/attention.py",
-                "runtime/common/attention.cpp",
-                "runtime/common/attention.h",
-                "compiler/qwen35/kernels/recurrent.py",
-                "compiler/qwen35/kernels/chunked.py",
-                "compiler/common/passes/pack_linears.py",
-                "compiler/common/weights.py",
-                "compiler/qwen35/export.py",
-            )
-        },
         checks=check_mask_and_writes(functions, config, cases[1]["steps"][0]),
     )
     seed = cases[1]["steps"][0] * 8
