@@ -9,17 +9,18 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns model-specific package contracts and state policies. Shared file
+`runtime/<model>/` owns model-specific package ABI checks. Shared file
 and benchmark helpers live in `compiler/common/`; numerical validation support
 lives in `compiler/common/tests/validation.py`.
 `environments/` owns project setup, native-stack checks and target profiles;
 its Bash entry points are `setup.sh` and `check.sh`.
-`runtime/common/` owns the runner, device and package preflight, positions,
-prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
+`runtime/common/` owns the runner, state storage, device and package preflight,
+positions, prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
 One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
-both models, selected from package metadata. State policies retain persistent KV
-buffers and, for Qwen3.5, replace functional conv/recurrent state. Generation
-stops at EOS or the token budget. Benchmark requests
+both models, selected from package metadata. One state policy retains persistent
+KV buffers and replaces functional conv/recurrent state using metadata update
+rules and the runtime ABI's output order. Generation stops at EOS or the token
+budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
 Tests and focused diagnostics live beside their model. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;

@@ -39,19 +39,30 @@ git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry
 
 Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
 targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
-reads the package metadata to select the model-specific contract and state policy. Both entry JSON files require the shared
+reads the package metadata to select the model-specific contract. Both entry
+JSON files require the shared
 [`schema_version: 3` format](package-metadata.md), `runtime_abi_version: 1`, and an
 explicit `model_type` of `qwen3` or `qwen35`. Schema 1, schema 2 and unversioned
 sidecars must be converted or re-exported; model selection reads the versioned
 metadata directly.
 
-The common runner owns package loaders, shared weights, device checks, token
-validation, positions and prefill/decode dispatch. Model policies handle KV
-buffer ownership and Qwen3.5's functional conv/recurrent outputs. The generation
-CLI refuses existing output/trace files and path aliases. Native benchmarks use
+The common `Runner<Spec>` owns package loaders, shared weights, device checks,
+token validation, positions and prefill/decode dispatch. Its common state policy
+uses metadata update rules and ABI-derived output positions to retain KV buffers
+and replace functional conv/recurrent outputs. Reset reuses KV storage and zeros
+replacement state. Returned tensors are checked for shape, dtype, device,
+contiguity and required KV aliases before replacement state is adopted. The
+generation CLI refuses existing output/trace files and path aliases. Native benchmarks use
 the same report header and timing boundaries for both models. The validation
 binary retains the existing model-specific trace layouts so current Python
 numerical checks and historical output comparisons remain usable.
+
+With `XINFER_BUILD_VALIDATION=ON`, the `xinfer_state_contract` target checks the
+common state policy on CPU without model packages or a GPU:
+
+```bash
+CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_state_contract
+```
 
 `Spec` validates metadata and the model ABI. Each native runtime construction
 performs fresh file preflight: it hashes prefill and decode once each against the
@@ -65,8 +76,8 @@ Use whole-process elapsed time (`process_ms` in benchmark `runs.json`) to compar
 total startup across that boundary change; first-request and steady-state
 timings remain separate.
 
-The [common runtime record](experiments/common-runtime.md) describes the runner,
-state-policy boundaries, compatibility behavior and validation evidence.
+The [common runtime record](experiments/common-runtime.md) preserves the initial
+runner refactor, its former model-specific state policies and validation evidence.
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
 for the CMake `Runtime` component, installed layout and prefix relocation.
 

@@ -25,8 +25,8 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
   without loading Python. No serving API, native tokenizer or concurrency is
   introduced by this cleanup.
 - Share the package runner and generation/benchmark/validation executables
-  across models. Use common versioned metadata and retain model-specific ABI
-  validation and state policies.
+  across models. Use common versioned metadata, one state policy driven by the
+  metadata and runtime ABI, and model-specific ABI validation.
 
 ## Validation and acceptance
 

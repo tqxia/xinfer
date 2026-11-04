@@ -4,7 +4,8 @@ Both model families use `schema_version: 3` and `runtime_abi_version: 1` in
 `prefill.json` and `decode.json`.
 `compiler/common/metadata.py` builds, finalizes and reads the shared Python
 format. `runtime/common/spec.h` is the common C++ reader. Model-specific modules
-validate their supported tensor ABI and retain their state-update policies.
+validate their supported tensor ABI; `runtime/common/state.h` handles state for
+both models.
 
 | Fields | Meaning |
 | --- | --- |
@@ -21,6 +22,12 @@ Every ordered state descriptor gives its `layer`, `kind`, `shape`, `dtype` and
 Readers derive state names and contiguous strides. Qwen3 cache geometry and
 Qwen3.5 layer types are derived from state rather than duplicated under
 `model_specific`.
+
+The C++ reader also derives each state's optional output position from
+`model_type` and runtime ABI 1. This is an internal descriptor, not an additional
+metadata field. The common state policy uses those positions and update rules
+to validate outputs and retain or replace storage. Reset retains KV allocations,
+fills them with the requested value, and initializes replacement state to zero.
 
 ## Runtime ABI 1
 

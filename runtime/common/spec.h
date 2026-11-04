@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -236,6 +237,8 @@ struct StateSpec {
   std::vector<int64_t> shape, stride;
   at::ScalarType dtype;
   bool inplace;
+  // ABI 1: Qwen3 returns logits only; Qwen3.5 also returns every state.
+  std::optional<size_t> output_index;
 };
 
 struct SpecBase {
@@ -267,7 +270,9 @@ struct SpecBase {
       state.push_back({"layer_" + std::to_string(layer) + "." + kind, kind, layer, std::move(shape),
                        std::move(stride),
                        item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
-                       item.at("update") == "inplace"});
+                       item.at("update") == "inplace",
+                       model_type == ModelType::Qwen35 ? std::optional<size_t>(state.size() + 1)
+                                                       : std::nullopt});
     }
   }
 

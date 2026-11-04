@@ -1,6 +1,7 @@
 #pragma once
 #include "spec.h"
 #include "generation.h"
+#include "state.h"
 
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <utility>
@@ -8,10 +9,10 @@
 
 namespace xinfer {
 
-// Policies own state storage and enforce the model's output/mutation ABI.
-template <class StatePolicy> class Runner {
+// Model specs validate the ABI; common state storage enforces its update rules.
+template <class ModelSpec> class Runner {
 public:
-  using Spec = typename StatePolicy::Spec;
+  using Spec = ModelSpec;
   using Loader = torch::inductor::AOTIModelPackageLoader;
 
   Runner(const fs::path &packages, const Spec &spec)
@@ -62,7 +63,7 @@ private:
       : spec_(spec), device_(configured_device(spec_)),
         weights_(std::move(bundle), spec_.shared_weights),
         prefill_(weights_.package_path("prefill").string()),
-        decode_(weights_.package_path("decode").string()), state_(spec_, device_) {
+        decode_(weights_.package_path("decode").string()), state_(spec_.state, device_) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
     extent_ =

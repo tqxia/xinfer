@@ -31,44 +31,5 @@ struct Spec : xinfer::SpecBase {
   }
 };
 
-class StatePolicy {
-public:
-  using Spec = qwen35::Spec;
-
-  StatePolicy(const Spec &spec, c10::Device device) : specs_(spec.state), device_(device) {}
-
-  void reset(double fill = 0) {
-    tensors_.clear();
-    for (const auto &item : specs_) {
-      auto tensor = at::zeros(item.shape, at::TensorOptions().device(device_).dtype(item.dtype));
-      if (item.inplace && fill != 0)
-        tensor.fill_(fill);
-      tensors_.push_back(std::move(tensor));
-    }
-  }
-
-  const std::vector<at::Tensor> &tensors() const { return tensors_; }
-
-  void accept(const std::vector<at::Tensor> &outputs) {
-    require(outputs.size() == 1 + tensors_.size(), "Incorrect package output count");
-    for (size_t i = 0; i < tensors_.size(); ++i) {
-      const auto &next = outputs[i + 1];
-      require(next.sizes() == tensors_[i].sizes() &&
-                  next.scalar_type() == tensors_[i].scalar_type() && next.device() == device_,
-              "Incorrect state shape/dtype/device");
-      if (specs_[i].inplace)
-        require(next.data_ptr() == tensors_[i].data_ptr() &&
-                    next.strides() == tensors_[i].strides(),
-                "KV outputs must alias caller-owned buffers");
-    }
-    tensors_.assign(outputs.begin() + 1, outputs.end());
-  }
-
-private:
-  std::vector<xinfer::StateSpec> specs_;
-  c10::Device device_;
-  std::vector<at::Tensor> tensors_;
-};
-
-using Runtime = xinfer::Runner<StatePolicy>;
+using Runtime = xinfer::Runner<Spec>;
 } // namespace qwen35

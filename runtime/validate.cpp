@@ -126,8 +126,8 @@ int main(int argc, char **argv) {
       for (const auto &tensor : runtime->state())
         persistent.push_back(tensor.const_data_ptr());
       const auto check_persistent = [&] {
-        if (qwen3)
-          for (size_t i = 0; i < persistent.size(); ++i)
+        for (size_t i = 0; i < persistent.size(); ++i)
+          if (spec.state[i].inplace)
             require(runtime->state()[i].const_data_ptr() == persistent[i],
                     "KV cache storage changed");
       };

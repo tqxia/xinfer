@@ -31,32 +31,5 @@ struct Spec : xinfer::SpecBase {
   }
 };
 
-class StatePolicy {
-public:
-  using Spec = qwen::Spec;
-
-  StatePolicy(const Spec &spec, c10::Device device) : specs_(spec.state), device_(device) {}
-
-  void reset(double fill = 0) {
-    if (tensors_.empty())
-      for (const auto &item : specs_)
-        tensors_.push_back(
-            at::empty(item.shape, at::TensorOptions().device(device_).dtype(item.dtype)));
-    for (auto &tensor : tensors_)
-      tensor.fill_(fill);
-  }
-
-  const std::vector<at::Tensor> &tensors() const { return tensors_; }
-
-  void accept(const std::vector<at::Tensor> &outputs) {
-    require(outputs.size() == 1, "Incorrect package output count");
-  }
-
-private:
-  std::vector<xinfer::StateSpec> specs_;
-  c10::Device device_;
-  std::vector<at::Tensor> tensors_;
-};
-
-using Runtime = xinfer::Runner<StatePolicy>;
+using Runtime = xinfer::Runner<Spec>;
 } // namespace qwen
