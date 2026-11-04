@@ -23,9 +23,10 @@ at::Tensor flash_attention(const at::Tensor &q, const at::Tensor &k, const at::T
   TORCH_CHECK(k.dim() == 4 && v.dim() == 4 && k.size(0) == 1 && k.size(2) == 1024 &&
                   k.size(3) == q.size(3) && v.sizes() == k.sizes(),
               "Expected matching full-capacity K/V inputs [1,kv_heads,1024,head_dim]");
-  TORCH_CHECK((q.size(1) == 16 && k.size(1) == 8 && q.size(3) == 128) ||
-                  (q.size(1) == 8 && k.size(1) == 2 && q.size(3) == 256),
-              "Unsupported query/KV head dimensions");
+  TORCH_CHECK(q.size(1) > 0 && k.size(1) > 0 && q.size(1) % k.size(1) == 0,
+              "Query heads must be a positive multiple of KV heads");
+  TORCH_CHECK(q.size(3) >= 8 && q.size(3) <= 256 && q.size(3) % 8 == 0,
+              "Flash head dimension must be a multiple of 8 in 8..256");
   TORCH_CHECK(extent.device().is_cpu() && extent.scalar_type() == at::kByte && extent.dim() == 1,
               "Expected a CPU uint8 extent vector");
   const int64_t length = extent.size(0) - 1; // Metadata only; never read tensor data.

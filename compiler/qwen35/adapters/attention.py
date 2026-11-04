@@ -13,12 +13,15 @@ class FlashAttention(torch.nn.Module):
         if type(original) is not Qwen3_5Attention:
             raise ValueError("Expected Qwen3.5 full attention")
         config = original.config
-        if (config.num_attention_heads, config.num_key_value_heads, original.head_dim) != (
-            8,
-            2,
-            256,
-        ):
-            raise ValueError("The native Flash op targets Qwen3.5-0.8B head dimensions")
+        heads, kv_heads, dim = (
+            config.num_attention_heads,
+            config.num_key_value_heads,
+            original.head_dim,
+        )
+        if heads <= 0 or kv_heads <= 0 or heads % kv_heads:
+            raise ValueError("Query heads must be a positive multiple of KV heads")
+        if dim < 8 or dim > 256 or dim % 8:
+            raise ValueError("Flash head dimension must be a multiple of 8 in 8..256")
         self.original = original
 
     def forward(

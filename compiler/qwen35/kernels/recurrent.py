@@ -1,6 +1,6 @@
 """Fused recurrence and chunked prefill with graph-level shape dispatch.
 
-Contract: contiguous B=1, H=16, K=V=128; T is a runtime scalar (1..512).
+Contract: B=1, Hk=16, Hv=16 or 32, K=V=128; T is a runtime scalar (1..512).
 Short prefill and decode stay fused; long prefill uses tiled FP32 chunk transforms.
 """
 
@@ -11,7 +11,7 @@ from triton.language.extra.cuda import libdevice
 
 from compiler.qwen35.kernels.chunked import launch_chunked
 
-HEADS, DIM, VALUE_TILE = 16, 128, 32
+DIM, VALUE_TILE = 128, 32
 SHORT_THRESHOLD = 97
 OPTIONS = dict(num_warps=4, num_stages=1)
 
@@ -63,12 +63,16 @@ def fused_kernel(
     NextConv,
     Final,
     tokens,
-    H: tl.constexpr,
+    HK: tl.constexpr,
+    HV: tl.constexpr,
     D: tl.constexpr,
     BV: tl.constexpr,
     C: tl.constexpr,
 ):
     head, tile = tl.program_id(0), tl.program_id(1)
+    group: tl.constexpr = HV // HK
+    channels: tl.constexpr = (2 * HK + HV) * D
+    key_head = head // group
     rows = tl.arange(0, D)
     cols = tile * BV + tl.arange(0, BV)
     offsets = head * D * D + rows[:, None] * D + cols[None, :]
@@ -76,26 +80,27 @@ def fused_kernel(
     scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
     dt = tl.load(DTBias + head).to(tl.float32)
     for t in range(tokens):
-        # Q/K are shared by four value tiles; only tile 0 owns their conv state.
+        # Grouped value heads share Q/K history. One head and tile own its writes.
+        owns_qk = (head % group == 0) & (tile == 0)
         q = _causal_conv(
-            QKV, Conv, Weight, NextConv, head * D + rows, t, tokens, tile == 0, 3 * H * D, C
+            QKV, Conv, Weight, NextConv, key_head * D + rows, t, tokens, owns_qk, channels, C
         )
         k = _causal_conv(
-            QKV, Conv, Weight, NextConv, (H + head) * D + rows, t, tokens, tile == 0, 3 * H * D, C
+            QKV, Conv, Weight, NextConv, (HK + key_head) * D + rows, t, tokens, owns_qk, channels, C
         )
         v = _causal_conv(
-            QKV, Conv, Weight, NextConv, (2 * H + head) * D + cols, t, tokens, True, 3 * H * D, C
+            QKV, Conv, Weight, NextConv, (2 * HK + head) * D + cols, t, tokens, True, channels, C
         )
         beta = (
-            tl.sigmoid(tl.load(B + t * H + head).to(tl.float32))
+            tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32))
             .to(B.dtype.element_ty)
             .to(tl.float32)
         )
-        x = tl.load(A + t * H + head).to(tl.float32) + dt
+        x = tl.load(A + t * HV + head).to(tl.float32) + dt
         softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
         g = scale * softplus
         out, state = _recurrent_step(q, k, v, g, beta, state, D)
-        tl.store(Output + (t * H + head) * D + cols, out)
+        tl.store(Output + (t * HV + head) * D + cols, out)
     tl.store(Final + offsets, state)
 
 
@@ -115,33 +120,41 @@ def prepare_kernel(
     Beta,
     NextConv,
     tokens,
-    H: tl.constexpr,
+    HK: tl.constexpr,
+    HV: tl.constexpr,
     D: tl.constexpr,
     C: tl.constexpr,
 ):
     t, head = tl.program_id(0), tl.program_id(1)
+    group: tl.constexpr = HV // HK
+    channels: tl.constexpr = (2 * HK + HV) * D
+    key_head = head // group
     rows = tl.arange(0, D)
-    q = _causal_conv(QKV, Conv, Weight, NextConv, head * D + rows, t, tokens, True, 3 * H * D, C)
+    owns_qk = head % group == 0
+    q = _causal_conv(
+        QKV, Conv, Weight, NextConv, key_head * D + rows, t, tokens, owns_qk, channels, C
+    )
     k = _causal_conv(
-        QKV, Conv, Weight, NextConv, (H + head) * D + rows, t, tokens, True, 3 * H * D, C
+        QKV, Conv, Weight, NextConv, (HK + key_head) * D + rows, t, tokens, owns_qk, channels, C
     )
     v = _causal_conv(
-        QKV, Conv, Weight, NextConv, (2 * H + head) * D + rows, t, tokens, True, 3 * H * D, C
+        QKV, Conv, Weight, NextConv, (2 * HK + head) * D + rows, t, tokens, True, channels, C
     )
     q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D**-0.5)
     k = k * tl.rsqrt(tl.sum(k * k, 0) + 1e-6)
     beta = (
-        tl.sigmoid(tl.load(B + t * H + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
+        tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
     )
     scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
-    x = tl.load(A + t * H + head).to(tl.float32) + tl.load(DTBias + head).to(tl.float32)
+    x = tl.load(A + t * HV + head).to(tl.float32) + tl.load(DTBias + head).to(tl.float32)
     softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
-    base = (t * H + head) * D + rows
+    # Materialize one Q/K vector per value head for the existing chunked scan.
+    base = (t * HV + head) * D + rows
     tl.store(Q + base, q)
     tl.store(K + base, k)
     tl.store(V + base, v)
-    tl.store(G + t * H + head, scale * softplus)
-    tl.store(Beta + t * H + head, beta)
+    tl.store(G + t * HV + head, scale * softplus)
+    tl.store(Beta + t * HV + head, beta)
 
 
 @torch.library.triton_op("xinfer::delta_cond_short", mutates_args={})
@@ -155,11 +168,13 @@ def short(
     A_log: torch.Tensor,
     dt_bias: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Run unchanged fused preparation/recurrence without a device predicate."""
+    """Run fused preparation/recurrence without a device predicate."""
     tokens = qkv.shape[1]
-    output = qkv.new_empty((1, tokens, HEADS, DIM))
+    value_heads = state.shape[1]
+    key_heads = (qkv.shape[2] // DIM - value_heads) // 2
+    output = qkv.new_empty((1, tokens, value_heads, DIM))
     next_conv, final = torch.empty_like(conv), torch.empty_like(state)
-    torch.library.wrap_triton(fused_kernel)[(HEADS, DIM // VALUE_TILE)](
+    torch.library.wrap_triton(fused_kernel)[(value_heads, DIM // VALUE_TILE)](
         qkv,
         b,
         a,
@@ -172,7 +187,8 @@ def short(
         next_conv,
         final,
         tokens,
-        HEADS,
+        key_heads,
+        value_heads,
         DIM,
         VALUE_TILE,
         4,
@@ -194,14 +210,17 @@ def long(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Run the C64 chunk path with the measured B3 transform implementation."""
     tokens = qkv.shape[1]
-    output = qkv.new_empty((1, tokens, HEADS, DIM))
+    value_heads = state.shape[1]
+    key_heads = (qkv.shape[2] // DIM - value_heads) // 2
+    output = qkv.new_empty((1, tokens, value_heads, DIM))
     next_conv, final = torch.empty_like(conv), torch.empty_like(state)
-    shape = (1, tokens, HEADS, DIM)
+    shape = (1, tokens, value_heads, DIM)
     q, k, v = (torch.empty(shape, device=qkv.device, dtype=torch.float32) for _ in range(3))
     g, beta = (
-        torch.empty((1, tokens, HEADS), device=qkv.device, dtype=torch.float32) for _ in range(2)
+        torch.empty((1, tokens, value_heads), device=qkv.device, dtype=torch.float32)
+        for _ in range(2)
     )
-    torch.library.wrap_triton(prepare_kernel)[(tokens, HEADS)](
+    torch.library.wrap_triton(prepare_kernel)[(tokens, value_heads)](
         qkv,
         b,
         a,
@@ -216,7 +235,8 @@ def long(
         beta,
         next_conv,
         tokens,
-        HEADS,
+        key_heads,
+        value_heads,
         DIM,
         4,
         **OPTIONS,
@@ -244,17 +264,26 @@ def fused(
     dt_bias: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Validate inputs and select fused recurrence or chunked FP32 prefill."""
-    if qkv.ndim != 3 or qkv.shape[0] != 1 or qkv.shape[2] != 3 * HEADS * DIM:
-        raise ValueError("Expected QKV [1,T,6144]")
+    if qkv.ndim != 3 or qkv.shape[0] != 1:
+        raise ValueError("Expected batch-one QKV [1,T,channels]")
     tokens = qkv.shape[1]
     if tokens < 1 or tokens > 512:
         raise ValueError("Token length must be 1..512")
-    if b.shape != (1, tokens, HEADS) or a.shape != b.shape:
-        raise ValueError("Expected A/B [1,T,16]")
-    if conv.shape != (1, 3 * HEADS * DIM, 4) or weight.shape != (3 * HEADS * DIM, 4):
-        raise ValueError("Expected convolution state [1,6144,4] and weights [6144,4]")
-    if state.shape != (1, HEADS, DIM, DIM) or A_log.shape != (HEADS,) or dt_bias.shape != (HEADS,):
-        raise ValueError("Expected recurrent state [1,16,128,128] and decay parameters [16]")
+    if b.ndim != 3 or b.shape[0] != 1 or b.shape[1] != tokens or a.shape != b.shape:
+        raise ValueError("Expected matching A/B [1,T,value_heads]")
+    value_heads = b.shape[2]
+    key_heads = (qkv.shape[2] // DIM - value_heads) // 2
+    channels = (2 * key_heads + value_heads) * DIM
+    if key_heads != 16 or value_heads not in (16, 32) or qkv.shape[2] != channels:
+        raise ValueError("Expected Hk=16, Hv=16 or 32 and K=V=128")
+    if conv.shape != (1, channels, 4) or weight.shape != (channels, 4):
+        raise ValueError("Expected matching width-4 convolution state and weights")
+    if (
+        state.shape != (1, value_heads, DIM, DIM)
+        or A_log.shape != (value_heads,)
+        or dt_bias.shape != (value_heads,)
+    ):
+        raise ValueError("Expected per-value-head recurrent state and decay parameters")
     tensors = (qkv, b, a, conv, weight, A_log, dt_bias)
     if qkv.dtype not in (torch.bfloat16, torch.float32) or any(
         x.dtype != qkv.dtype for x in tensors

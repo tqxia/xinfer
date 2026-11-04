@@ -69,10 +69,12 @@ def load_attention_ops(library=None, *, model=None):
         # Valid-prefix length is checked natively; output metadata depends only on Q.
         torch._check(q.dim() == 4 and k.dim() == 4 and v.dim() == 4)
         torch._check(q.shape[0] == 1)
-        torch._check(
-            ((q.shape[1] == 16) & (k.shape[1] == 8) & (q.shape[3] == 128))
-            | ((q.shape[1] == 8) & (k.shape[1] == 2) & (q.shape[3] == 256))
-        )
+        torch._check(q.shape[1] > 0)
+        torch._check(k.shape[1] > 0)
+        torch._check(q.shape[1] % k.shape[1] == 0)
+        torch._check(q.shape[3] >= 8)
+        torch._check(q.shape[3] <= 256)
+        torch._check(q.shape[3] % 8 == 0)
         torch._check(q.shape[2] >= 1)
         torch._check(q.shape[2] <= 512)
         torch._check(k.shape == (1, k.shape[1], 1024, q.shape[3]))

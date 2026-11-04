@@ -2,7 +2,6 @@
 
 import argparse
 import importlib.metadata
-import inspect
 import os
 from pathlib import Path
 import subprocess
@@ -16,7 +15,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     torch_recurrent_gated_delta_rule,
 )
 
-from compiler.common.artifacts import default_build_dir, ROOT, read_json, sha256, write_json
+from compiler.common.artifacts import default_build_dir, read_json, sha256, write_json
 from compiler.common.tests.validation import (
     bits_equal,
     compare_file,
@@ -27,15 +26,28 @@ from compiler.common.tests.validation import (
 from compiler.qwen35.config import ARTIFACT_DIR, configure
 from compiler.qwen35.tests.block import MODEL_DIR, load_block
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE
-from compiler.qwen35.kernels.recurrent import fused
+from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused
 
 LENGTHS = (1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
 PARTITIONS = (1, 2, 3, 4, 5, 31, 32, 33, 64, 65, 272)
+KEY_HEADS, HEAD_DIM, CONV_WIDTH = 16, 128, 4
 # Predeclared normalized error limits; FP32 reference uses the same input values.
 LIMITS = {"bf16": 0.01, "fp32": 0.0001}
 # Nearly orthogonal Q/K can make a whole output row tiny. Retain normalized
 # metrics, but permit FP32 absolute roundoff below 1e-7 (see experiment record).
 ABS_LIMITS = {"bf16": 0.0, "fp32": 1e-7}
+
+
+def geometry(value_heads):
+    """The two supported DeltaNet profiles share key heads, dimensions and taps."""
+    if value_heads not in (16, 32):
+        raise ValueError("Value heads must be 16 (0.8B) or 32 (4B)")
+    return dict(
+        key_heads=KEY_HEADS,
+        value_heads=value_heads,
+        head_dim=HEAD_DIM,
+        conv_width=CONV_WIDTH,
+    )
 
 
 class Fused(torch.nn.Module):
@@ -53,7 +65,16 @@ def reference(qkv, b, a, conv, state, weight, A_log, dt_bias, *, chunked=False):
         combined = torch.cat((conv, qkv.transpose(1, 2)), dim=-1)
         next_conv = combined[..., -4:].contiguous()
         mixed = causal_conv1d_fn(combined, weight, None, activation="silu")[..., -tokens:]
-    q, k, v = (x.reshape(1, tokens, 16, 128) for x in mixed.transpose(1, 2).split(2048, dim=-1))
+    value_heads, dim = state.shape[1:3]
+    key_heads = (qkv.shape[-1] // dim - value_heads) // 2
+    q, k, v = mixed.transpose(1, 2).split(
+        (key_heads * dim, key_heads * dim, value_heads * dim), dim=-1
+    )
+    q, k = (x.reshape(1, tokens, key_heads, dim) for x in (q, k))
+    v = v.reshape(1, tokens, value_heads, dim)
+    # Match the original HF module's grouped Q/K expansion before recurrence.
+    if value_heads != key_heads:
+        q, k = (x.repeat_interleave(value_heads // key_heads, dim=2) for x in (q, k))
     beta = b.sigmoid()
     g = -A_log.float().exp() * F.softplus(a.float() + dt_bias)
     implementation = (
@@ -74,7 +95,9 @@ def reference(qkv, b, a, conv, state, weight, A_log, dt_bias, *, chunked=False):
     return core, next_conv, final
 
 
-def make_cases(block_dir):
+def make_cases(block_dir, value_heads=16):
+    geometry(value_heads)
+    channels = (2 * KEY_HEADS + value_heads) * HEAD_DIM
     cases = []
     for dtype_name, dtype in (("bf16", torch.bfloat16), ("fp32", torch.float32)):
 
@@ -84,21 +107,21 @@ def make_cases(block_dir):
                 dtype=dtype_name,
                 steps=[
                     (
-                        torch.randn(1, t, 6144).to(dtype),
-                        torch.randn(1, t, 16).to(dtype),
-                        torch.randn(1, t, 16).to(dtype),
+                        torch.randn(1, t, channels).to(dtype),
+                        torch.randn(1, t, value_heads).to(dtype),
+                        torch.randn(1, t, value_heads).to(dtype),
                     )
                     for t in lengths
                 ],
-                conv=(torch.randn(1, 6144, 4) * 0.3).to(dtype)
+                conv=(torch.randn(1, channels, CONV_WIDTH) * 0.3).to(dtype)
                 if nonzero
-                else torch.zeros(1, 6144, 4, dtype=dtype),
-                state=torch.randn(1, 16, 128, 128) * 0.1
+                else torch.zeros(1, channels, CONV_WIDTH, dtype=dtype),
+                state=torch.randn(1, value_heads, HEAD_DIM, HEAD_DIM) * 0.1
                 if nonzero
-                else torch.zeros(1, 16, 128, 128),
-                weight=(torch.randn(6144, 4) * 0.2).to(dtype),
-                A_log=torch.full((16,), -2.0, dtype=dtype),
-                dt_bias=(torch.randn(16) * 0.1).to(dtype),
+                else torch.zeros(1, value_heads, HEAD_DIM, HEAD_DIM),
+                weight=(torch.randn(channels, CONV_WIDTH) * 0.2).to(dtype),
+                A_log=torch.full((value_heads,), -2.0, dtype=dtype),
+                dt_bias=(torch.randn(value_heads) * 0.1).to(dtype),
             )
 
         for tokens in LENGTHS:
@@ -114,7 +137,7 @@ def make_cases(block_dir):
         cases.extend((carry, dict(carry, name=f"{dtype_name}-repeat")))
         gates = case("gate-extremes", (1,) * 8)
         for i, (_, b, a) in enumerate(gates["steps"]):
-            b.copy_(torch.linspace(-80, 80, 16))
+            b.copy_(torch.linspace(-80, 80, value_heads))
             a.fill_((-80, -20, -1, 0, 19, 20, 21, 80)[i])
         cases.append(gates)
         # Reuse whole's seeded data so adding this case leaves old fixtures unchanged.
@@ -128,7 +151,7 @@ def make_cases(block_dir):
         )
         extremes = torch.tensor([-80, -20, -1, 0, 19, 20, 21, 80], dtype=dtype)
         for _, b, a in prefill_gates["steps"]:
-            b.copy_(torch.linspace(-80, 80, 16))
+            b.copy_(torch.linspace(-80, 80, value_heads))
             a.copy_(extremes[torch.arange(a.shape[1]) % len(extremes)].view(1, -1, 1))
         cases.append(prefill_gates)
         zero = case("zero-qkv")
@@ -144,10 +167,32 @@ def make_cases(block_dir):
         cancellation["steps"][0][0].fill_(0.498046875)
         cases.append(cancellation)
 
+    # Slice after the original seeded fixtures so the 0.8B cases stay unchanged.
+    for dtype in ("bf16", "fp32"):
+        for state in ("zero", "state"):
+            source = next(c for c in cases if c["name"] == f"{dtype}-t512-{state}")
+            for tokens in (SHORT_THRESHOLD - 1, SHORT_THRESHOLD, SHORT_THRESHOLD + 1):
+                cases.append(
+                    dict(
+                        source,
+                        name=f"{dtype}-t{tokens}-{state}",
+                        steps=[tuple(x[:, :tokens].clone() for x in source["steps"][0])],
+                    )
+                )
+
     if block_dir.exists():
+        config = read_json(block_dir / "config.json")["text_config"]
+        block_geometry = (
+            config["linear_num_key_heads"],
+            config["linear_num_value_heads"],
+            config["linear_key_head_dim"],
+            config["linear_value_head_dim"],
+        )
+        if block_geometry != (KEY_HEADS, value_heads, HEAD_DIM, HEAD_DIM):
+            raise ValueError("Checkpoint block geometry differs from --value-heads")
         block, _ = load_block(block_dir)
-        conv = torch.randn(1, 6144, 4, device="cuda", dtype=torch.bfloat16) * 0.1
-        state = torch.randn(1, 16, 128, 128, device="cuda") * 0.1
+        conv = torch.randn(1, channels, CONV_WIDTH, device="cuda", dtype=torch.bfloat16) * 0.1
+        state = torch.randn(1, value_heads, HEAD_DIM, HEAD_DIM, device="cuda") * 0.1
         steps = []
         for tokens in (1, 3, 4, 5, 32, 1):
             hidden = torch.randn(
@@ -175,7 +220,7 @@ def make_cases(block_dir):
     return cases
 
 
-def write_cases(directory, cases):
+def write_cases(directory, cases, value_heads=16):
     for case in cases:
         initial = (case[k] for k in ("conv", "state", "weight", "A_log", "dt_bias"))
         (directory / f"{case['name']}-initial.bin").write_bytes(
@@ -188,10 +233,11 @@ def write_cases(directory, cases):
     write_json(
         directory / "cases.json",
         dict(
+            geometry=geometry(value_heads),
             cases=[
                 dict(name=c["name"], dtype=c["dtype"], lengths=[x[0].shape[1] for x in c["steps"]])
                 for c in cases
-            ]
+            ],
         ),
     )
 
@@ -214,7 +260,12 @@ def run_cases(call, cases, fp32=False):
             inputs = (*map(convert, data), conv, state, weight, A_log, dt_bias)
             before = [x.clone() for x in inputs]
             values = call(*inputs)
-            assert len(values) == 3 and values[0].shape == (1, inputs[0].shape[1], 16, 128)
+            assert len(values) == 3 and values[0].shape == (
+                1,
+                inputs[0].shape[1],
+                state.shape[1],
+                state.shape[3],
+            )
             assert values[0].dtype == inputs[0].dtype and values[1].dtype == conv.dtype
             assert values[1].shape == conv.shape and values[2].shape == state.shape
             assert values[2].dtype == torch.float32
@@ -257,17 +308,22 @@ def compare(report, label, actual, expected, exact_tensors=()):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=default_build_dir("qwen35") / "qwen35_fused")
-    parser.add_argument("--block-dir", type=Path, default=MODEL_DIR)
+    parser.add_argument("--block-dir", type=Path)
+    parser.add_argument("--value-heads", type=int, choices=(16, 32), default=16)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "fused-validation")
     args = parser.parse_args()
     configure()
+    block_dir = args.block_dir or (
+        MODEL_DIR.parent.parent / ("0.8b" if args.value_heads == 16 else "4b") / "block"
+    )
     torch.manual_seed(35)
     args.output.mkdir(parents=True, exist_ok=False)
     with torch.inference_mode():
-        cases = make_cases(args.block_dir)
-        write_cases(args.output, cases)
+        cases = make_cases(block_dir, args.value_heads)
+        write_cases(args.output, cases, args.value_heads)
         report = dict(
             seed=35,
+            geometry=geometry(args.value_heads),
             torch=torch.__version__,
             triton=importlib.metadata.version("triton"),
             chunk_size=CHUNK_SIZE,
@@ -279,19 +335,6 @@ def main():
             packages=[],
             checkpoint_case=any(c["name"] == "bf16-checkpoint" for c in cases),
             binary_sha256=sha256(args.binary),
-            hf_source_sha256=sha256(inspect.getfile(causal_conv1d_update)),
-            source_sha256={
-                name: sha256(ROOT / name)
-                for name in (
-                    "compiler/common/tests/validation.py",
-                    "compiler/qwen35/tests/validate_fused.py",
-                    "compiler/qwen35/tests/block.py",
-                    "compiler/qwen35/kernels/recurrent.py",
-                    "compiler/qwen35/kernels/chunked.py",
-                    "runtime/qwen35/tests/fused.cpp",
-                    "runtime/qwen35/CMakeLists.txt",
-                )
-            },
         )
         packages = {}
         destination = args.output / "packages"

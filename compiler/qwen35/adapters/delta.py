@@ -15,13 +15,13 @@ class DeltaCore(torch.nn.Module):
     def __init__(self, block):
         super().__init__()
         self.block = block
-        if (block.num_k_heads, block.num_v_heads, block.head_k_dim, block.head_v_dim) != (
-            16,
-            16,
-            128,
-            128,
+        if (
+            block.num_k_heads != 16
+            or block.num_v_heads not in (16, 32)
+            or block.head_k_dim != 128
+            or block.head_v_dim != 128
         ):
-            raise ValueError("The Triton baseline requires Hq=Hk=Hv=16 and K=V=128")
+            raise ValueError("Fused DeltaNet requires Hk=16, Hv=16 or 32 and K=V=128")
         if (
             block.conv_kernel_size != 4
             or block.conv1d.bias is not None

@@ -5,6 +5,10 @@ The target is **Qwen/Qwen3.5-0.8B**, pinned to
 experiment. Python prepares the model and tokenizes/decodes offline; C++ loads
 the compiled packages and performs generation.
 
+The DeltaNet kernels also accept the 4B head geometry for focused block/kernel
+validation. Full-model 4B export and longer prompts remain later milestones;
+the prepared full-model default and generation commands below still target 0.8B.
+
 Generation, fixed-token timing and native validation use the shared
 `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executables. Package
 metadata selects Qwen3.5 and its mixed-state policy; no model CLI flag is needed.
@@ -46,8 +50,8 @@ No timing result is claimed on the busy development GPU.
   owns shared layer-0 checkpoint fixtures and their preparation command.
 - `diagnostics/`: the retained Q35-NUM-001 rounding reproducer.
 
-`runtime/qwen35/runtime.h` owns the model-specific metadata checks and state
-policy. The runner and shared preflight live in `runtime/common/`; the native
+`runtime/qwen35/runtime.h` owns the model-specific metadata checks. The runner,
+state policy and shared preflight live in `runtime/common/`; the native
 entry points are `runtime/main.cpp`, `runtime/benchmark.cpp` and
 `runtime/validate.cpp`. Standalone GDN probes remain in `runtime/qwen35/`.
 
@@ -71,12 +75,16 @@ Inputs must be unpadded, batch-one contiguous appends to a populated prefix.
 the current append. Only its shape is read; no CUDA scalar is copied back to
 discover the length. FlashAttention receives views of the valid K/V prefix and
 handles grouped heads directly: eight query heads, two KV heads and head
-dimension 256. Its lower-right causal alignment supports both decode and
+dimension 256 for 0.8B. The shared native operator and its Python shape contract
+derive GQA geometry from the inputs: query heads must be a positive multiple of
+KV heads, with positive head dimensions divisible by eight and at most 256. This includes
+4B's 16 query heads, four KV heads and head dimension 256. Its lower-right causal
+alignment supports both decode and
 prefill chunks appended after an existing prefix. Future capacity is neither
 copied by cache updates nor expanded into attention temporaries.
 
-There is one compiled attention profile and no backend selector. Rebuild the
-runtime and re-export packages made with the earlier functional KV and
+Both entries use the same attention implementation and have no backend selector.
+Rebuild the runtime and re-export packages made with the earlier functional KV and
 `efficient_sdpa` contract. The runtimes reject that legacy metadata before
 loading the packages. A backend change can alter floating-point results;
 the existing numerical validators and limits still apply.
@@ -142,20 +150,36 @@ fused(qkv, b, a, conv, state, weight, A_log, dt_bias)
     -> core, next_conv, next_recurrent
 ```
 
-QKV is `[1,T,6144]`, A/B are `[1,T,16]`, convolution state is `[1,6144,4]`,
-convolution weights are `[6144,4]`, and decay parameters are `[16]`. Recurrent
-state is `[1,16,128,128]`; core output is `[1,T,16,128]`. Inputs and parameters
-use matching BF16 or FP32, with recurrent state always FP32. The wrapper
-establishes contiguous inputs and allocates fresh outputs.
+Both geometries use 16 key heads (`Hk`), head dimensions `K=V=128` and a
+bias-free width-four SiLU convolution. The value-head count (`Hv`) is 16 for
+0.8B and 32 for 4B:
+
+| Tensor | 0.8B | 4B |
+| --- | --- | --- |
+| QKV | `[1,T,6144]` | `[1,T,8192]` |
+| A/B gates | `[1,T,16]` | `[1,T,32]` |
+| Convolution state | `[1,6144,4]` | `[1,8192,4]` |
+| Convolution weights | `[6144,4]` | `[8192,4]` |
+| Decay parameters | `[16]` | `[32]` |
+| Recurrent state | `[1,16,128,128]` | `[1,32,128,128]` |
+| Core output | `[1,T,16,128]` | `[1,T,32,128]` |
+
+Inputs and parameters use matching BF16 or FP32, with recurrent state always
+FP32. The wrapper establishes contiguous inputs and allocates fresh outputs.
+Gates, decay and recurrent state belong to each value head. Grouped value heads
+reuse their corresponding Q/K head, matching HF's `repeat_interleave` order.
 
 Decode keeps the existing fused kernel: one program owns one head and 32 value
 columns and combines bias-free width-four convolution/history handling, SiLU,
 beta/log-decay preparation, Q/K normalization, state update and output reduction.
-Four value tiles share Q/K preparation; only tile zero writes their convolution
-history.
+Four value tiles share Q/K preparation. Only tile zero of the first value head
+in each Q/K group writes that group's convolution history, avoiding duplicate
+writes when 4B's two value heads share one key head.
 
 Short prefill reuses fused recurrence. Long prefill prepares Q/K/V and gates in
-parallel across tokens and heads, then runs
+parallel across tokens and value heads, materializing Q/K per value head for
+the existing chunked scan. Its Q/K convolution history also has one writer per
+group. It then runs
 four chunk kernels: cumulative decay and triangular solve, U/W transforms,
 state propagation between chunks, and parallel outputs. The fixed chunk size
 is 64. It is an internal compute tile; dynamic T=2..512 still uses one prefill
@@ -325,6 +349,24 @@ cross-checks the HF path against the same FP32 control. Python JIT, Python AOTI
 and standalone C++ must agree bitwise. Inspect complete reports before treating
 a nonzero exit as an expected numerical gate.
 
+For the 4B kernel geometry, prepare a pinned layer-0 fixture once, then select
+32 value heads in the same validator:
+
+```bash
+"$QWEN_PY" -m compiler.qwen35.tests.block \
+  --model Qwen/Qwen3.5-4B --output work/qwen35/4b/block
+"$QWEN_PY" -m compiler.qwen35.tests.validate_fused \
+  --value-heads 32 --block-dir work/qwen35/4b/block \
+  --binary "$BUILD/qwen35_fused" \
+  --output artifacts/qwen35/4b/fused-validation-new
+```
+
+Reuse a verified existing fixture with `--block-dir` instead of preparing it
+again. The default `--value-heads 16` retains the 0.8B suite; an explicit block
+fixture must match the selected geometry. Both suites retain T=1..512 and the
+97-token dispatch threshold. Kernel/block results do not establish full-model
+4B support or acceptance of longer inputs.
+
 Chunking reorders arithmetic across sequence partitions. Core output and
 recurrent-state partition comparisons use the existing BF16/FP32 numerical
 limits, while convolution history remains exact. Repeated requests and
@@ -334,7 +376,7 @@ Use `--packages` and `--binary`/`--native`/`--cli` to select other artifact and
 build directories. Validation output directories must be fresh.
 Runtime and end-to-end reports include package and native binary checksums.
 The focused fused suite checks preparation, core output and both carried states
-through the `qwen35_fused` native target. Its 83 cases / 400 calls cover BF16/FP32, T=1..512
+through the `qwen35_fused` native target. Each geometry covers BF16/FP32, T=1..512
 boundaries, mixed prefill/decode continuations, whole versus partitioned inputs
 and repeated requests through four fused AOTI packages, including chunk-boundary
 and prefill gate-extreme cases. These describe test coverage, not acceptance.

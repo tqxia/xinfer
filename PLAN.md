@@ -80,18 +80,35 @@ The [experiment record](docs/experiments/qwen35.md) preserves earlier block prob
 fixed-shape packages and export failures as historical evidence. Those results
 do not establish support for 4B in the current full-model Triton path.
 
-4B full-model support remains a later milestone. Before claiming support:
+The first scaling milestone generalizes the kernel geometry while retaining
+the current 0.8B full-model profile:
 
-- Support its separate key/value head counts (16/32), 8,192 convolution channels
-  and per-value-head recurrent state. Update Q/K grouping, channel and gate
-  offsets, convolution write ownership and workspaces in both short and chunked
-  DeltaNet paths.
-- Add the model's attention geometry from its verified config to the shared
-  operator, fake shape contract, adapter and ABI validation. Coordinate any
-  larger context/token ranges across export, metadata and runtime contracts.
-- Regenerate independent HF/FP32 fixtures and validate state preservation,
-  partition/reset behavior, native/Python AOTI parity, generation and GPU memory
-  with the complete shared-weight package pair.
+- DeltaNet supports `Hk=16`, `Hv=16` or `32`, and `K=V=128`: 6,144 or 8,192
+  convolution channels. Both short and chunked paths index gates and recurrent
+  state by value head. Grouped value heads share Q/K, with one convolution
+  history writer per group; the chunked path prepares Q/K per value head.
+- The shared native attention operator, fake shape contract and Qwen3.5 adapter
+  derive grouped-head geometry from inputs. They accept 4B's 16 query heads,
+  four KV heads and dimension 256, alongside the existing models.
+- Batch one, width-four SiLU convolution, T=1..512, 1,024-token capacity, C64
+  chunking and the provisional 97-token dispatch threshold remain unchanged.
+  The focused fused validator selects either geometry with `--value-heads 16`
+  or `--value-heads 32`; its HF recurrent/chunked and FP32 controls, state and
+  partition checks, and packaged Python/native checks apply to both.
 
-Keep unsupported-shape checks until the new profile passes these gates. Preserve
-tested tuning specializations where they still fit the target configuration.
+Full-model 4B support remains the next milestone. Prepare the complete pinned
+text checkpoint, export the shared-weight package pair at the existing limits,
+then validate logits, state preservation, reset/reuse, generation and GPU memory.
+Measure export and packed-reference peaks as well as inference memory. Full-model
+FP32 controls need CPU/offloading or a larger GPU; focused FP32 block/kernel
+controls remain available on L20.
+
+The longer-input target is 8,192 prompt tokens with 16,384 total context capacity.
+Make export, metadata and runtime profile bounds consistent, add common prompt
+chunking, then compare larger per-call prefill bounds with the initial 512-token
+chunks. Validate peak memory and time to first token before choosing a larger
+default. Stream long-context state comparisons and retain selected checkpoints
+to bound validation memory and disk use.
+
+Keep unsupported-shape checks and existing numerical limits. Preserve tested
+tuning specializations where they still fit the target configuration.

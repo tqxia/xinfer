@@ -103,8 +103,15 @@ class PrefixFlash(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"),
             ):
                 self.op(q, k, v, cache_extent(length), 256**-0.5)
-        with self.assertRaisesRegex(RuntimeError, "Unsupported query/KV head dimensions"):
-            self.op(q[:, :4], k, v, cache_extent(3), 256**-0.5)
+        # A positive GQA multiple is valid even outside the original profiles.
+        self.assertEqual(self.op(q[:, :4], k, v, cache_extent(3), 256**-0.5).shape, q[:, :4].shape)
+        with self.assertRaisesRegex(RuntimeError, "Query heads must be a positive multiple"):
+            self.op(q[:, :3], k, v, cache_extent(3), 256**-0.5)
+        for dim in (7, 127, 264):
+            with self.subTest(dim=dim):
+                invalid = self.inputs(8, 2, dim, 2)
+                with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
+                    self.op(*invalid, cache_extent(3), dim**-0.5)
 
 
 if __name__ == "__main__":

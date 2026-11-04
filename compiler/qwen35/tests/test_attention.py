@@ -16,16 +16,20 @@ from compiler.qwen35.model import TextCache, configure_text
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
-class GatedPrefixFlash(unittest.TestCase):
+class GatedPrefixFlash:
+    hidden_size = 1024
+    query_heads = 8
+    kv_heads = 2
+
     @classmethod
     def setUpClass(cls):
         configure_text()
         load_attention_ops(model="qwen35")
         torch.manual_seed(35)
         cls.config = Qwen3_5TextConfig(
-            hidden_size=1024,
-            num_attention_heads=8,
-            num_key_value_heads=2,
+            hidden_size=cls.hidden_size,
+            num_attention_heads=cls.query_heads,
+            num_key_value_heads=cls.kv_heads,
             head_dim=256,
             num_hidden_layers=1,
             layer_types=["full_attention"],
@@ -45,12 +49,16 @@ class GatedPrefixFlash(unittest.TestCase):
         self.assertEqual(self.rotary.inv_freq.dtype, torch.float32)
         for tokens, length in ((1, 1), (1, 129), (2, 3), (16, 129), (2, 1024)):
             with self.subTest(tokens=tokens, length=length):
-                hidden = torch.randn(1, tokens, 1024, device="cuda", dtype=torch.bfloat16)
+                hidden = torch.randn(
+                    1, tokens, self.hidden_size, device="cuda", dtype=torch.bfloat16
+                )
                 positions = torch.arange(length - tokens, length, device="cuda")
                 rotary = self.rotary(hidden, positions.view(1, 1, -1).expand(3, 1, -1))
                 self.assertEqual(rotary[0].shape, (1, tokens, 64))
                 initial = [
-                    torch.randn(1, 2, CACHE_LENGTH, 256, device="cuda", dtype=torch.bfloat16)
+                    torch.randn(
+                        1, self.kv_heads, CACHE_LENGTH, 256, device="cuda", dtype=torch.bfloat16
+                    )
                     for _ in range(2)
                 ]
                 states = [[tensor.clone() for tensor in initial] for _ in range(2)]
@@ -123,6 +131,73 @@ class GatedPrefixFlash(unittest.TestCase):
         install_attention(model)
         self.assertIs(layer.self_attn, attention)
         self.assertEqual({id(parameter) for parameter in model.parameters()}, parameters)
+
+
+class GatedPrefixFlash08B(GatedPrefixFlash, unittest.TestCase):
+    pass
+
+
+class GatedPrefixFlash4B(GatedPrefixFlash, unittest.TestCase):
+    hidden_size = 2560
+    query_heads = 16
+    kv_heads = 4
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+class PrefixFlashGeometry(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        configure_text()
+        load_attention_ops(model="qwen35")
+
+    @staticmethod
+    def inputs(heads, kv_heads, dim, tokens=16, length=129):
+        q = torch.randn(1, heads, tokens, dim, device="cuda", dtype=torch.bfloat16)
+        k, v = (
+            torch.randn(1, kv_heads, CACHE_LENGTH, dim, device="cuda", dtype=torch.bfloat16)
+            for _ in range(2)
+        )
+        return q, k, v, cache_extent(length), max(dim, 1) ** -0.5
+
+    @torch.inference_mode()
+    def test_input_derived_gqa_geometry_and_fake_contract(self):
+        # Include a geometry outside either model to catch a hidden profile whitelist.
+        for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256), (16, 4, 256), (6, 2, 64)):
+            with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
+                inputs = self.inputs(heads, kv_heads, dim)
+                q, k, v, extent, scale = inputs
+                length = extent.numel() - 1
+                key = k[:, :, :length].repeat_interleave(heads // kv_heads, dim=1).float()
+                value = v[:, :, :length].repeat_interleave(heads // kv_heads, dim=1).float()
+                scores = (q.float() @ key.transpose(-2, -1)) * scale
+                # Appended queries attend through their corresponding prefix positions.
+                future = (
+                    torch.arange(length, device="cuda")[None, :]
+                    > torch.arange(length - q.shape[2], length, device="cuda")[:, None]
+                )
+                expected = scores.masked_fill(future, -torch.inf).softmax(-1) @ value
+                actual = torch.ops.xinfer.flash_attention(*inputs)
+                self.assertEqual(actual.shape, q.shape)
+                self.assertTrue(actual.is_contiguous())
+                relative_error = (actual.float() - expected).norm() / expected.norm()
+                self.assertLessEqual(relative_error.item(), 0.01)
+                torch.library.opcheck(
+                    torch.ops.xinfer.flash_attention.default,
+                    inputs,
+                    test_utils=("test_schema", "test_faketensor"),
+                )
+
+    @torch.inference_mode()
+    def test_reject_invalid_head_geometry(self):
+        for heads, kv_heads, dim in ((0, 2, 128), (8, 0, 128), (3, 2, 128)):
+            with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
+                with self.assertRaisesRegex(RuntimeError, "Query heads"):
+                    torch.ops.xinfer.flash_attention(*self.inputs(heads, kv_heads, dim))
+        for dim in (0, 7, 127, 264):
+            with self.subTest(dim=dim):
+                inputs = self.inputs(8, 2, dim)
+                with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
+                    torch.ops.xinfer.flash_attention(*inputs[:-1], 1.0)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 import argparse
 import hashlib
 import importlib.metadata
-import inspect
 import os
 from pathlib import Path
 import re
@@ -15,9 +14,8 @@ import zipfile
 os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
 
 import torch
-from transformers.models.qwen3_5 import modeling_qwen3_5
 
-from compiler.common.artifacts import default_build_dir, ROOT, read_json, sha256, write_json
+from compiler.common.artifacts import default_build_dir, read_json, sha256, write_json
 from compiler.common.tests.validation import bits_equal, compare_file, cpu_copy
 from compiler.qwen35.config import ARTIFACT_DIR, configure
 from compiler.qwen35.tests.block import MODEL_DIR
@@ -28,6 +26,7 @@ from compiler.qwen35.tests.validate_fused import (
     LIMITS,
     PARTITIONS,
     compare,
+    geometry,
     make_cases,
     reference,
     run_cases,
@@ -322,17 +321,20 @@ def validate(args, report):
     configure()
     assert CHUNK_SIZE == 64, "Retain the fixed HF chunk-64 control"
     torch.manual_seed(35)
-    original = make_cases(args.block_dir)
+    block_dir = args.block_dir or (
+        MODEL_DIR.parent.parent / ("0.8b" if args.value_heads == 16 else "4b") / "block"
+    )
+    original = make_cases(block_dir, args.value_heads)
     original_names = {c["name"] for c in original}
     cases = dispatch_cases(original)
-    write_cases(args.output, cases)
+    write_cases(args.output, cases, args.value_heads)
     report.update(
+        geometry=geometry(args.value_heads),
         original_cases=len(original),
         cases=len(cases),
         calls=sum(len(c["steps"]) for c in cases),
         checkpoint_case="bf16-checkpoint" in original_names,
         binary_sha256=sha256(args.binary),
-        hf_source_sha256=sha256(inspect.getfile(modeling_qwen3_5)),
     )
     report["fixture_sha256"] = {p.name: sha256(p) for p in sorted(args.output.glob("*.bin"))}
     packages = compile_packages(cases, args.output, report)
@@ -422,7 +424,8 @@ def validate(args, report):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, default=default_build_dir("qwen35") / "qwen35_fused")
-    parser.add_argument("--block-dir", type=Path, default=MODEL_DIR)
+    parser.add_argument("--block-dir", type=Path)
+    parser.add_argument("--value-heads", type=int, choices=(16, 32), default=16)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "cond-validation")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -437,18 +440,6 @@ def main():
         absolute_limits=ABS_LIMITS,
         hf_chunk_reference=64,
         partition_acceptance=dict(core="numerical", conv="bitwise", recurrent="numerical"),
-        source_sha256={
-            name: sha256(ROOT / name)
-            for name in (
-                "compiler/common/tests/validation.py",
-                "compiler/qwen35/tests/validate_cond.py",
-                "compiler/qwen35/tests/validate_fused.py",
-                "compiler/qwen35/tests/block.py",
-                "compiler/qwen35/kernels/recurrent.py",
-                "compiler/qwen35/kernels/chunked.py",
-                "runtime/qwen35/tests/fused.cpp",
-            )
-        },
         comparisons=[],
         failures=[],
         packages=[],

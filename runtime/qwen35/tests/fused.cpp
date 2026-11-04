@@ -23,6 +23,19 @@ int main(int argc, char **argv) {
     require(!fs::exists(output), "Output directory already exists");
     c10::InferenceMode inference;
     configure_runtime();
+    const auto manifest = read_json(fixtures / "cases.json");
+    const auto &geometry = manifest.at("geometry");
+    require(geometry.is_object() && geometry.size() == 4, "Invalid fixture geometry");
+    for (const auto *field : {"key_heads", "value_heads", "head_dim", "conv_width"})
+      require(geometry.at(field).is_number_integer(), "Invalid fixture geometry");
+    const auto key_heads = geometry.at("key_heads").get<int64_t>();
+    const auto value_heads = geometry.at("value_heads").get<int64_t>();
+    const auto dim = geometry.at("head_dim").get<int64_t>();
+    const auto conv_width = geometry.at("conv_width").get<int64_t>();
+    require(key_heads == 16 && (value_heads == 16 || value_heads == 32) && dim == 128 &&
+                conv_width == 4,
+            "Unsupported fixture geometry");
+    const auto channels = (2 * key_heads + value_heads) * dim;
     std::map<std::string, std::unique_ptr<torch::inductor::AOTIModelPackageLoader>> packages;
     for (const std::string dtype : {"bf16", "fp32"})
       for (const std::string mode : {"decode", "prefill"}) {
@@ -30,12 +43,9 @@ int main(int argc, char **argv) {
         packages[name] = std::make_unique<torch::inductor::AOTIModelPackageLoader>(
             (fs::path(argv[3]) / (name + ".pt2")).string());
       }
-    Json report = {{"calls", 0},
-                   {"packages_loaded", packages.size()},
-                   {"inputs_unchanged", true},
-                   {"decode_calls", 0},
-                   {"prefill_calls", 0}};
-    const auto manifest = read_json(fixtures / "cases.json");
+    Json report = {
+        {"geometry", geometry},     {"calls", 0},        {"packages_loaded", packages.size()},
+        {"inputs_unchanged", true}, {"decode_calls", 0}, {"prefill_calls", 0}};
     for (const auto &item : manifest.at("cases")) {
       const auto name = item.at("name").get<std::string>();
       require(!name.empty() && fs::path(name).filename() == name, "Invalid fixture name");
@@ -43,11 +53,11 @@ int main(int argc, char **argv) {
       require(dtype_name == "bf16" || dtype_name == "fp32", "Invalid fixture dtype");
       const auto dtype = dtype_name == "bf16" ? at::kBFloat16 : at::kFloat;
       std::ifstream initial(fixtures / (name + "-initial.bin"), std::ios::binary);
-      auto conv = read_tensor(initial, {1, 6144, 4}, dtype);
-      auto state = read_tensor(initial, {1, 16, 128, 128}, at::kFloat);
-      auto weight = read_tensor(initial, {6144, 4}, dtype);
-      auto A_log = read_tensor(initial, {16}, dtype);
-      auto dt_bias = read_tensor(initial, {16}, dtype);
+      auto conv = read_tensor(initial, {1, channels, conv_width}, dtype);
+      auto state = read_tensor(initial, {1, value_heads, dim, dim}, at::kFloat);
+      auto weight = read_tensor(initial, {channels, conv_width}, dtype);
+      auto A_log = read_tensor(initial, {value_heads}, dtype);
+      auto dt_bias = read_tensor(initial, {value_heads}, dtype);
       require(initial.peek() == EOF, "Extra initial fixture data");
       require(!item.at("lengths").empty(), "Empty fixture");
       int step = 0;
@@ -56,9 +66,9 @@ int main(int argc, char **argv) {
         require(tokens > 0 && tokens <= 512, "Token length must be 1..512");
         const auto stem = name + "-" + std::to_string(step++);
         std::ifstream file(fixtures / (stem + ".bin"), std::ios::binary);
-        auto qkv = read_tensor(file, {1, tokens, 6144}, dtype);
-        auto b = read_tensor(file, {1, tokens, 16}, dtype);
-        auto a = read_tensor(file, {1, tokens, 16}, dtype);
+        auto qkv = read_tensor(file, {1, tokens, channels}, dtype);
+        auto b = read_tensor(file, {1, tokens, value_heads}, dtype);
+        auto a = read_tensor(file, {1, tokens, value_heads}, dtype);
         require(file.peek() == EOF, "Extra fused input data");
         std::vector<Tensor> inputs{qkv, b, a, conv, state, weight, A_log, dt_bias};
         std::vector<Tensor> before;
@@ -68,7 +78,8 @@ int main(int argc, char **argv) {
         const auto result = packages.at(dtype_name + "-" + mode)->run(inputs);
         for (size_t i = 0; i < inputs.size(); ++i)
           require(at::equal(inputs[i], before[i]), "Input mutation");
-        require(result.size() == 3 && result[0].sizes() == at::IntArrayRef({1, tokens, 16, 128}) &&
+        require(result.size() == 3 &&
+                    result[0].sizes() == at::IntArrayRef({1, tokens, value_heads, dim}) &&
                     result[0].scalar_type() == dtype && result[1].sizes() == conv.sizes() &&
                     result[1].scalar_type() == dtype && result[2].sizes() == state.sizes() &&
                     result[2].scalar_type() == at::kFloat,
@@ -76,6 +87,8 @@ int main(int argc, char **argv) {
         auto destination = output_file(output / (stem + ".bin"), true);
         for (const auto &x : result) {
           require(at::isfinite(x).all().item<bool>(), "Non-finite result");
+          for (const auto &input : inputs)
+            require(!x.is_alias_of(input), "Output aliases input");
           auto cpu = x.cpu().contiguous();
           destination.write(static_cast<const char *>(cpu.const_data_ptr()), cpu.nbytes());
         }
