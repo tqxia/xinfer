@@ -8,29 +8,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from compiler.common.metadata import make_metadata, state_spec
+from compiler.common.metadata import RUNTIME_ABI_VERSION, SCHEMA_VERSION, make_metadata, state_spec
 from compiler.qwen35.reference import PythonRuntime
 
 
-ATTENTION_FIELDS = (
-    "attention_backend",
-    "input_mutation",
-    "cache_input",
-    "kv_extent",
-    "custom_attention",
-    "export_options",
-)
+CONTRACT_FIELDS = ("runtime_abi_version", "export_options")
 INVALID_VALUES = {
-    "attention_backend": "efficient_sdpa",
-    "input_mutation": False,
-    "cache_input": "full_capacity",
-    "kv_extent": {
-        "device": "cpu",
-        "dtype": "uint8",
-        "shape": "[valid_length + 1]",
-        "data_read": True,
-    },
-    "custom_attention": {"name": "xinfer::flash_attention", "abi_version": 0, "read_only": True},
+    "runtime_abi_version": RUNTIME_ABI_VERSION + 1,
     "export_options": {"backed_size_oblivious": True},
 }
 
@@ -99,12 +83,17 @@ class PythonRuntimeContract(unittest.TestCase):
             weights.assert_not_called()
 
     def test_missing_contract_fields_are_rejected_before_loading(self):
-        for field in ATTENTION_FIELDS:
+        for field in CONTRACT_FIELDS:
             with self.subTest(field=field):
                 metadata = self.metadata()
                 for value in metadata.values():
                     value.pop(field)
-                self.reject(metadata, f"Unsupported package metadata: {field}")
+                message = (
+                    "Unsupported runtime ABI version"
+                    if field == "runtime_abi_version"
+                    else f"Unsupported package metadata: {field}"
+                )
+                self.reject(metadata, message)
 
     def test_model_tags_are_required_and_checked_before_loading(self):
         for tags, message in (
@@ -128,7 +117,12 @@ class PythonRuntimeContract(unittest.TestCase):
                 metadata = self.metadata()
                 for value in metadata.values():
                     value[field] = copy.deepcopy(invalid)
-                self.reject(metadata, f"Unsupported package metadata: {field}")
+                message = (
+                    "Unsupported runtime ABI version"
+                    if field == "runtime_abi_version"
+                    else f"Unsupported package metadata: {field}"
+                )
+                self.reject(metadata, message)
 
     def test_mismatched_contract_fields_identify_the_field(self):
         for field, invalid in INVALID_VALUES.items():
@@ -136,18 +130,35 @@ class PythonRuntimeContract(unittest.TestCase):
                 with self.subTest(field=field, kind=kind):
                     metadata = self.metadata()
                     metadata[kind][field] = copy.deepcopy(invalid)
-                    self.reject(metadata, f"Package metadata differs: {field}")
+                    message = (
+                        "Unsupported runtime ABI version"
+                        if field == "runtime_abi_version"
+                        else f"Package metadata differs: {field}"
+                    )
+                    self.reject(metadata, message)
 
-    def test_missing_field_in_one_entry_is_a_pair_mismatch(self):
-        for field in ATTENTION_FIELDS:
+    def test_missing_contract_field_in_one_entry_is_rejected(self):
+        for field in CONTRACT_FIELDS:
             for kind in ("prefill", "decode"):
                 with self.subTest(field=field, kind=kind):
                     metadata = self.metadata()
                     metadata[kind].pop(field)
-                    self.reject(metadata, f"Package metadata differs: {field}")
+                    message = (
+                        "Unsupported runtime ABI version"
+                        if field == "runtime_abi_version"
+                        else f"Package metadata differs: {field}"
+                    )
+                    self.reject(metadata, message)
 
     def test_unversioned_unknown_and_mixed_versions_are_rejected(self):
-        for versions in ((None, None), (1, 1), (999, 999), (2, 999), (True, True)):
+        for versions in (
+            (None, None),
+            (1, 1),
+            (2, 2),
+            (999, 999),
+            (SCHEMA_VERSION, 999),
+            (True, True),
+        ):
             with self.subTest(versions=versions):
                 metadata = self.metadata()
                 for kind, version in zip(("prefill", "decode"), versions):
@@ -157,7 +168,7 @@ class PythonRuntimeContract(unittest.TestCase):
                         metadata[kind]["schema_version"] = version
                 self.reject(metadata, "Unsupported package metadata schema version")
 
-    def test_old_aliases_are_not_accepted_in_v2(self):
+    def test_old_aliases_are_not_accepted_in_v3(self):
         for field in (
             "eager_numerics",
             "torch",
@@ -166,12 +177,38 @@ class PythonRuntimeContract(unittest.TestCase):
             "kind",
             "tokens",
             "generation_config",
+            "batch_size",
+            "dtype",
+            "input_mutation",
+            "attention_backend",
+            "custom_attention",
+            "cache_input",
+            "kv_extent",
         ):
             with self.subTest(field=field):
                 metadata = self.metadata()
                 for value in metadata.values():
                     value[field] = False
                 self.reject(metadata, f"Unsupported package metadata: {field}")
+
+    def test_runtime_abi_versions_are_strict_integers_before_loading(self):
+        for version in (
+            None,
+            -1,
+            0,
+            RUNTIME_ABI_VERSION + 1,
+            True,
+            float(RUNTIME_ABI_VERSION),
+            "1",
+            [],
+            {},
+        ):
+            for kinds in (("prefill",), ("decode",), ("prefill", "decode")):
+                with self.subTest(version=version, kinds=kinds):
+                    metadata = self.metadata()
+                    for kind in kinds:
+                        metadata[kind]["runtime_abi_version"] = version
+                    self.reject(metadata, "Unsupported runtime ABI version")
 
     def test_model_specific_backend_and_state_order_are_checked_before_loading(self):
         def reverse_state(metadata):

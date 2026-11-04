@@ -11,7 +11,7 @@ import torch
 
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import default_build_dir, sha256
-from compiler.common.metadata import SCHEMA_VERSION, read_package_metadata
+from compiler.common.metadata import RUNTIME_ABI_VERSION, SCHEMA_VERSION, read_package_metadata
 from compiler.qwen3.packages import load_package_attention_ops
 from compiler.qwen3.model import cache_extent
 from compiler.qwen3.tests.numerics import ids_from
@@ -169,14 +169,27 @@ mixed.mkdir()
 package_cases = (
     ("mixed_numerical_settings", "Package metadata differs: triton_enable_fp_fusion"),
     ("legacy_eager_numerics", "Unsupported package metadata: eager_numerics"),
-    ("legacy_efficient", "Unsupported package metadata: attention_backend"),
-    ("mixed_attention_settings", "Package metadata differs: attention_backend"),
-    ("missing_custom_attention_contract", "Unsupported package metadata: custom_attention"),
-    ("unsupported_custom_attention_contract", "Unsupported package metadata: custom_attention"),
+    ("missing_runtime_abi", "Unsupported runtime ABI version"),
+    ("unknown_runtime_abi", "Unsupported runtime ABI version"),
+    ("mixed_runtime_abi", "Unsupported runtime ABI version"),
+    ("boolean_runtime_abi", "Unsupported runtime ABI version"),
+    ("float_runtime_abi", "Unsupported runtime ABI version"),
     ("mixed_state_layout", "Package metadata differs: state"),
     ("odd_state_count", "Unsupported package metadata: state"),
     ("invalid_cache_shape", "Unsupported Flash cache shape"),
     ("mixed_export_settings", "Package metadata differs: export_options"),
+)
+package_cases += tuple(
+    ("legacy_field_" + field, "Unsupported package metadata: " + field)
+    for field in (
+        "batch_size",
+        "dtype",
+        "input_mutation",
+        "attention_backend",
+        "custom_attention",
+        "cache_input",
+        "kv_extent",
+    )
 )
 for name, message in package_cases:
     for kind in ("prefill", "decode"):
@@ -185,14 +198,16 @@ for name, message in package_cases:
             metadata["triton_enable_fp_fusion"] = not metadata["triton_enable_fp_fusion"]
         elif name == "legacy_eager_numerics":
             metadata["eager_numerics"] = True
-        elif name == "legacy_efficient":
-            metadata.update(attention_backend="efficient", cache_input="full_capacity")
-        elif name == "mixed_attention_settings" and kind == "prefill":
-            metadata["attention_backend"] = "efficient"
-        elif name == "missing_custom_attention_contract":
-            del metadata["custom_attention"]
-        elif name == "unsupported_custom_attention_contract":
-            metadata["custom_attention"]["abi_version"] = 2
+        elif name.startswith("legacy_field_"):
+            metadata[name.removeprefix("legacy_field_")] = False
+        elif name == "missing_runtime_abi":
+            del metadata["runtime_abi_version"]
+        elif name == "unknown_runtime_abi" or (name == "mixed_runtime_abi" and kind == "prefill"):
+            metadata["runtime_abi_version"] = RUNTIME_ABI_VERSION + 1
+        elif name == "boolean_runtime_abi":
+            metadata["runtime_abi_version"] = True
+        elif name == "float_runtime_abi":
+            metadata["runtime_abi_version"] = float(RUNTIME_ABI_VERSION)
         elif name == "mixed_state_layout" and kind == "prefill":
             metadata["state"][0]["shape"][-1] += 1
         elif name == "odd_state_count":
@@ -202,11 +217,10 @@ for name, message in package_cases:
         elif name == "mixed_export_settings" and kind == "prefill":
             metadata["export_options"]["backed_size_oblivious"] = True
         (mixed / (kind + ".json")).write_text(json.dumps(metadata))
-        if name in (
-            "legacy_eager_numerics",
-            "legacy_efficient",
-            "missing_custom_attention_contract",
-            "unsupported_custom_attention_contract",
+        if (
+            name.startswith("legacy_")
+            or type(metadata.get("runtime_abi_version")) is not int
+            or metadata["runtime_abi_version"] != RUNTIME_ABI_VERSION
         ):
             try:
                 load_package_attention_ops(metadata)

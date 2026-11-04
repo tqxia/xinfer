@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import default_build_dir, run, sha256
-from compiler.common.metadata import read_package_metadata
+from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
 from compiler.qwen35.prepare import encode_prompt
@@ -156,51 +156,63 @@ def reject_invalid(args, env, metadata):
             "GPU architecture mismatch",
         ),
     ]
-    for name, field, invalid in (
-        ("attention_backend", "attention_backend", "efficient_sdpa"),
-        ("cache_contract", "cache_input", "full_capacity"),
-        ("input_mutation", "input_mutation", False),
+    mutations += [
+        (
+            "missing_runtime_abi",
+            lambda m: [v.pop("runtime_abi_version") for v in m.values()],
+            "Unsupported runtime ABI version",
+        ),
+        (
+            "unknown_runtime_abi",
+            lambda m: [v.update(runtime_abi_version=RUNTIME_ABI_VERSION + 1) for v in m.values()],
+            "Unsupported runtime ABI version",
+        ),
+        (
+            "mixed_runtime_abi",
+            lambda m: m["prefill"].update(runtime_abi_version=RUNTIME_ABI_VERSION + 1),
+            "Unsupported runtime ABI version",
+        ),
+        (
+            "boolean_runtime_abi",
+            lambda m: [v.update(runtime_abi_version=True) for v in m.values()],
+            "Unsupported runtime ABI version",
+        ),
+        (
+            "float_runtime_abi",
+            lambda m: [
+                v.update(runtime_abi_version=float(RUNTIME_ABI_VERSION)) for v in m.values()
+            ],
+            "Unsupported runtime ABI version",
+        ),
+        (
+            "mixed_export_options",
+            lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=True),
+            "Package metadata differs: export_options",
+        ),
+        (
+            "invalid_export_options",
+            lambda m: [v["export_options"].update(backed_size_oblivious=True) for v in m.values()],
+            "Unsupported package metadata: export_options",
+        ),
+        (
+            "missing_export_options",
+            lambda m: [v.pop("export_options") for v in m.values()],
+            "Unsupported package metadata: export_options",
+        ),
+    ]
+    for field in (
+        "batch_size",
+        "dtype",
+        "input_mutation",
+        "attention_backend",
+        "custom_attention",
+        "cache_input",
+        "kv_extent",
     ):
         mutations.append(
             (
-                "mixed_" + name,
-                lambda m, field=field, invalid=invalid: m["prefill"].update({field: invalid}),
-                "Package metadata differs: " + field,
-            )
-        )
-        mutations.append(
-            (
-                "invalid_" + name,
-                lambda m, field=field, invalid=invalid: [
-                    v.update({field: invalid}) for v in m.values()
-                ],
-                "Unsupported package metadata: " + field,
-            )
-        )
-    for name, field, update in (
-        ("attention_contract", "custom_attention", {"abi_version": 0}),
-        ("cache_extent", "kv_extent", {"data_read": True}),
-        ("export_options", "export_options", {"backed_size_oblivious": True}),
-    ):
-        mutations.append(
-            (
-                "mixed_" + name,
-                lambda m, field=field, update=update: m["prefill"][field].update(update),
-                "Package metadata differs: " + field,
-            )
-        )
-        mutations.append(
-            (
-                "invalid_" + name,
-                lambda m, field=field, update=update: [v[field].update(update) for v in m.values()],
-                "Unsupported package metadata: " + field,
-            )
-        )
-    for field in ("custom_attention", "cache_input", "kv_extent"):
-        mutations.append(
-            (
-                "missing_" + field,
-                lambda m, field=field: [v.pop(field) for v in m.values()],
+                "legacy_" + field,
+                lambda m, field=field: [v.update({field: False}) for v in m.values()],
                 "Unsupported package metadata: " + field,
             )
         )
@@ -431,7 +443,7 @@ def main():
         comparison="C++ vs Python AOTI",
         hf_numerical_acceptance="open: Q35-NUM-001 and step-3 state failures",
         delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
-        attention_backend=metadata["prefill"]["attention_backend"],
+        runtime_abi_version=metadata["prefill"]["runtime_abi_version"],
         linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
         shared_weights=metadata["decode"]["shared_weights"],
         cases=[],

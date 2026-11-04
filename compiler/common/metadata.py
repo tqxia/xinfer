@@ -6,31 +6,24 @@ from pathlib import Path
 import re
 
 from compiler.common.artifacts import canonical_json, read_json, require, sha256
-from compiler.common.attention import OPERATOR_CONTRACT
 
 
-SCHEMA_VERSION = 2
-KV_EXTENT = dict(device="cpu", dtype="uint8", shape="[valid_length + 1]", data_read=False)
+SCHEMA_VERSION = 3
+RUNTIME_ABI_VERSION = 1
 FIELDS = (
     "schema_version",  # Version of this metadata format.
+    "runtime_abi_version",  # Compiled calling convention, state ownership and attention ABI.
     "model_type",  # Model family used to select runtime behavior.
     "entry_point",  # Package role: prefill or decode.
     "token_range",  # Inclusive [minimum, maximum] tokens accepted per call.
     "torch_version",  # PyTorch version used for export and compilation.
     "cxx11_abi",  # PyTorch's _GLIBCXX_USE_CXX11_ABI setting.
     "cuda_compute_capability",  # Target GPU architecture as [major, minor].
-    "batch_size",  # Fixed inference batch size.
-    "dtype",  # Model activation dtype; state entries specify their own dtypes.
     "cache_length",  # Allocated KV-cache capacity in tokens.
     "vocab_size",  # Vocabulary size and exclusive token-ID upper bound.
     "eos_token_ids",  # Token IDs that stop greedy generation.
     "checkpoint",  # Source model ID, revision and checkpoint manifest.
     "state",  # Ordered contiguous state shapes, dtypes and update policies.
-    "input_mutation",  # Which inputs the graph may modify in place.
-    "attention_backend",  # Attention implementation used by the compiled model.
-    "custom_attention",  # External attention operator name and ABI contract.
-    "cache_input",  # Cache-buffer representation expected by the graph.
-    "kv_extent",  # Contract for the shape-only CPU valid-prefix input.
     "export_options",  # Graph export settings that affect the package contract.
     "tf32",  # Whether CUDA matmul and cuDNN may use TF32.
     "triton_enable_fp_fusion",  # Allow Triton floating-point fusion, such as FMA.
@@ -111,24 +104,18 @@ def make_metadata(
     states = copy.deepcopy(list(state))
     return dict(
         schema_version=SCHEMA_VERSION,
+        runtime_abi_version=RUNTIME_ABI_VERSION,
         model_type=model_type,
         entry_point=entry_point,
         token_range=list(token_range),
         torch_version=str(torch_version),
         cxx11_abi=cxx11_abi,
         cuda_compute_capability=list(cuda_compute_capability),
-        batch_size=1,
-        dtype="bfloat16",
         cache_length=cache_length,
         vocab_size=vocab_size,
         eos_token_ids=eos,
         checkpoint=copy.deepcopy(checkpoint),
         state=states,
-        input_mutation="kv_only",
-        attention_backend="flash",
-        custom_attention=copy.deepcopy(OPERATOR_CONTRACT),
-        cache_input="full_capacity_with_extent",
-        kv_extent=dict(KV_EXTENT),
         export_options=dict(backed_size_oblivious=False),
         tf32=False,
         triton_enable_fp_fusion=triton_enable_fp_fusion,
@@ -145,9 +132,18 @@ def _schema(metadata):
     )
 
 
+def _runtime_abi(metadata):
+    require(
+        type(metadata.get("runtime_abi_version")) is int
+        and metadata["runtime_abi_version"] == RUNTIME_ABI_VERSION,
+        "Unsupported runtime ABI version; convert retained metadata or re-export both packages",
+    )
+
+
 def validate_metadata(metadata, model_type=None, entry_point=None):
-    """Validate a complete v2 descriptor without loading Torch, files or CUDA."""
+    """Validate a complete v3 descriptor without loading Torch, files or CUDA."""
     _schema(metadata)
+    _runtime_abi(metadata)
     require(
         metadata.get("model_type") in ("qwen3", "qwen35")
         and (model_type is None or metadata["model_type"] == model_type),
@@ -163,8 +159,6 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and (entry_point is None or m["entry_point"] == entry_point),
         "entry_point",
     )
-    _check(type(m["batch_size"]) is int and m["batch_size"] == 1, "batch_size")
-    _check(m["dtype"] == "bfloat16", "dtype")
     _check(type(m["cache_length"]) is int and m["cache_length"] == 1024, "cache_length")
     _check(_integer(m["vocab_size"], 1), "vocab_size")
     tokens = m["token_range"]
@@ -199,11 +193,6 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and isinstance(checkpoint["manifest"], dict),
         "checkpoint",
     )
-    _check(m["attention_backend"] == "flash", "attention_backend")
-    _check(_same_json(m["custom_attention"], OPERATOR_CONTRACT), "custom_attention")
-    _check(m["cache_input"] == "full_capacity_with_extent", "cache_input")
-    _check(m["input_mutation"] == "kv_only", "input_mutation")
-    _check(_same_json(m["kv_extent"], KV_EXTENT), "kv_extent")
     _check(_same_json(m["export_options"], {"backed_size_oblivious": False}), "export_options")
     _check(m["tf32"] is False, "tf32")
     _check(type(m["triton_enable_fp_fusion"]) is bool, "triton_enable_fp_fusion")
@@ -260,6 +249,7 @@ def validate_metadata_pair(prefill, decode, model_type=None):
     """Reject mixed schema/model/contracts before file, archive or device access."""
     for m in (prefill, decode):
         _schema(m)
+        _runtime_abi(m)
     require(prefill.get("model_type") == decode.get("model_type"), "Package model types differ")
     for m in (prefill, decode):
         require(

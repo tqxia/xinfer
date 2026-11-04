@@ -225,15 +225,17 @@ export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
 `weights.pt` archive under
-`artifacts/qwen35/0.8b/text`. Both model families use `schema_version=2`, written
+`artifacts/qwen35/0.8b/text`. Both model families use `schema_version=3`, written
 by `compiler/common/metadata.py` and read by the common Python/C++ metadata
 readers. Common fields include `model_type="qwen35"`, `entry_point`, token ranges,
-Torch version, C++ ABI, GPU architecture, vocabulary, EOS IDs and ordered tensor
-state descriptors. Each state records its layer, kind, shape, dtype and update
+`runtime_abi_version=1`, Torch version, C++ ABI, GPU architecture, vocabulary,
+EOS IDs and ordered tensor state descriptors. Each state records its layer, kind, shape, dtype and update
 policy; readers derive names, contiguous strides, layer types and input/output
-order from the supported model ABI. `checkpoint` contains the model ID, revision and source
-manifest. Attention fields record the Flash operator, shape-only extent input
-and KV-only mutation policy.
+order from the supported model ABI. `checkpoint` contains the model ID, revision
+and source manifest. The [runtime ABI](../../docs/package-metadata.md#runtime-abi-1)
+defines batch-one BF16 execution, the Flash operator, shape-only extent input and
+KV-only mutation policy; the former fixed descriptions are no longer separate
+metadata fields. Readers query the loaded attention library's actual ABI.
 
 `model_specific` contains the DeltaNet backend, short/long operators and
 algorithms, threshold/chunk/tile/precision settings and a minimal packing
@@ -244,10 +246,10 @@ Full resolved Inductor tuning options are logged; metadata retains the
 precision-cast and two weightless-package options. Build diagnostics are not
 required deployment fields.
 
-Runtimes require schema 2. Retained compatible Flash/shared-weight bundles can
-migrate by rewriting their two JSON sidecars while keeping the compiled graphs
-and weight archive unchanged. Schema 1 and unversioned sidecars are not read
-through legacy aliases.
+Runtimes require schema 3 and runtime ABI 1. Retained compatible Flash/shared-weight
+bundles can migrate by rewriting their two JSON sidecars while keeping the compiled graphs
+and weight archive unchanged. Schema 1, schema 2 and unversioned sidecars are
+not read through legacy aliases.
 The archive embeds its mappings in
 `extra/weights.json`; no standalone weight manifest is deployed. Both entry
 metadata files contain the same final archive size and checksum. The exporter

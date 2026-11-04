@@ -44,14 +44,17 @@ using matching LibTorch/CUDA and the toolchain commands in the
 library. Native targets link it directly; `.pt2` does not bundle it.
 Deploy the library alongside the binaries and their matching dependencies.
 
-The runtime validates fixed `attention_backend: flash`, cache/extent settings,
-operator ABI version 1, checkpoint/toolchain/architecture, tensor metadata and
-actual numerical settings before loading packages. These metadata fields remain
-important without a CLI selector. Old efficient packages are incompatible and
-must be re-exported; legacy eager-numerics packages are also rejected. Existing
-ordinary Flash packages retain the same native ABI, but their JSON sidecars
-must use the [schema 2 metadata contract](package-metadata.md). Schema 1 and
-unversioned sidecars can be converted without changing those compiled graphs or weights.
+`runtime_abi_version: 1` defines batch-one BF16 prefix Flash attention,
+full-capacity caller-owned caches and the shape-only CPU extent input. The
+former fixed backend/cache fields are replaced by this versioned contract.
+Python and C++ query the loaded attention library's actual ABI 1 and retain
+state, checkpoint/toolchain/architecture and numerical checks. See the
+[ABI definition](package-metadata.md#runtime-abi-1).
+Old efficient packages and legacy eager-numerics packages require re-export.
+Compatible ordinary Flash packages retain the same compiled ABI, but their JSON
+sidecars must use the [schema 3 metadata contract](package-metadata.md). Verified
+schema 1, schema 2 and unversioned sidecars can be converted without changing
+compatible compiled graphs or weights.
 
 ```bash
 # First select Q3_PY and build with the matching target toolchain.

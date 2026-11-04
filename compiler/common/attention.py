@@ -4,10 +4,10 @@ import os
 from pathlib import Path
 import subprocess
 
-from compiler.common.artifacts import default_build_dir
+from compiler.common.artifacts import default_build_dir, require
 
 
-OPERATOR_CONTRACT = {"name": "xinfer::flash_attention", "abi_version": 1, "read_only": True}
+ATTENTION_OPS_ABI_VERSION = 1
 _loaded = None
 
 
@@ -55,6 +55,14 @@ def load_attention_ops(library=None, *, model=None):
     import torch
 
     torch.ops.load_library(str(library))
+    try:
+        version = torch.ops.xinfer.attention_ops_abi_version()
+    except (AttributeError, RuntimeError) as error:
+        raise ValueError("Native attention ABI query is missing; rebuild the runtime") from error
+    require(
+        type(version) is int and version == ATTENTION_OPS_ABI_VERSION,
+        "Unsupported native attention ABI",
+    )
 
     @torch.library.register_fake("xinfer::flash_attention")
     def fake(q, k, v, kv_extent, scale):

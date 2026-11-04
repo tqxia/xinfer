@@ -180,9 +180,11 @@ size and SHA-256 checksum. Each export writes the archive once, records its
 checksum in both metadata files, and publishes the complete directory after
 both entries succeed. One entry alone is an incomplete bundle. Dependency
 versions, full compiler options and graph/timing diagnostics are written to
-export logs. The deployment sidecars use metadata schema 2 and retain only the
-runtime, integrity, checkpoint and numerical contract. Current Python/native
-runtimes require shared-weight format 2
+export logs. The deployment sidecars use metadata schema 3 with
+`runtime_abi_version: 1` and retain the state, compatibility, integrity, checkpoint
+and numerical contract. The runtime ABI defines the fixed batch/dtype, Flash
+attention, cache/extent representation and model input/output rules. Current
+Python/native runtimes require shared-weight format 2
 and Torch 2.13 or newer; re-export embedded-weight and earlier shared bundles.
 Keep old Torch 2.7 package pairs with their original runtime. Rebuild and
 re-export for Torch 2.13; a version match does not establish compatibility with

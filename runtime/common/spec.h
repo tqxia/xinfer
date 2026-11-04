@@ -17,6 +17,10 @@
 
 namespace xinfer {
 
+// ABI 1: batch-one BF16 prefix Flash attention, CPU shape-only extent,
+// ordered contiguous state, KV-only mutation and model-defined outputs.
+inline constexpr int64_t runtime_abi_version = 1;
+
 enum class ModelType { Qwen3, Qwen35 };
 
 inline const char *model_name(ModelType model) {
@@ -69,24 +73,18 @@ inline bool metadata_digest(const Json &value) {
 
 inline const std::vector<std::string> &metadata_fields() {
   static const std::vector<std::string> fields{"schema_version",
+                                               "runtime_abi_version",
                                                "model_type",
                                                "entry_point",
                                                "token_range",
                                                "torch_version",
                                                "cxx11_abi",
                                                "cuda_compute_capability",
-                                               "batch_size",
-                                               "dtype",
                                                "cache_length",
                                                "vocab_size",
                                                "eos_token_ids",
                                                "checkpoint",
                                                "state",
-                                               "input_mutation",
-                                               "attention_backend",
-                                               "custom_attention",
-                                               "cache_input",
-                                               "kv_extent",
                                                "export_options",
                                                "tf32",
                                                "triton_enable_fp_fusion",
@@ -101,9 +99,16 @@ inline const std::vector<std::string> &metadata_fields() {
 inline void check_metadata_schema(const Json &metadata) {
   require(metadata.is_object() && metadata.contains("schema_version") &&
               metadata_integer(metadata.at("schema_version"), 1) &&
-              metadata.at("schema_version") == 2,
+              metadata.at("schema_version") == 3,
           "Unsupported package metadata schema version; convert retained metadata or re-export "
           "both packages");
+}
+
+inline void check_runtime_abi(const Json &metadata) {
+  require(metadata.contains("runtime_abi_version") &&
+              metadata_integer(metadata.at("runtime_abi_version"), 1) &&
+              metadata.at("runtime_abi_version") == runtime_abi_version,
+          "Unsupported runtime ABI version; convert retained metadata or re-export both packages");
 }
 
 inline bool metadata_keys(const Json &value, const std::unordered_set<std::string> &keys) {
@@ -117,6 +122,7 @@ inline bool metadata_keys(const Json &value, const std::unordered_set<std::strin
 
 inline void validate_metadata(const Json &metadata, const std::string &entry) {
   check_metadata_schema(metadata);
+  check_runtime_abi(metadata);
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
               (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
           "Unsupported model type");
@@ -127,8 +133,6 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
     metadata_check(std::find(fields.begin(), fields.end(), field) != fields.end(), field);
   const auto &m = metadata;
   metadata_check(m.at("entry_point") == entry, "entry_point");
-  metadata_check(metadata_integer(m.at("batch_size"), 1) && m.at("batch_size") == 1, "batch_size");
-  metadata_check(m.at("dtype") == "bfloat16", "dtype");
   metadata_check(metadata_integer(m.at("cache_length"), 1) && m.at("cache_length") == 1024,
                  "cache_length");
   metadata_check(metadata_integer(m.at("vocab_size"), 1), "vocab_size");
@@ -158,15 +162,6 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                        !checkpoint.at(field).get<std::string>().empty(),
                    "checkpoint");
   metadata_check(checkpoint.at("manifest").is_object(), "checkpoint");
-  metadata_check(m.at("attention_backend") == "flash", "attention_backend");
-  const Json attention = {
-      {"name", "xinfer::flash_attention"}, {"abi_version", 1}, {"read_only", true}};
-  const Json extent = {
-      {"device", "cpu"}, {"dtype", "uint8"}, {"shape", "[valid_length + 1]"}, {"data_read", false}};
-  metadata_check(metadata_equal(m.at("custom_attention"), attention), "custom_attention");
-  metadata_check(m.at("cache_input") == "full_capacity_with_extent", "cache_input");
-  metadata_check(m.at("input_mutation") == "kv_only", "input_mutation");
-  metadata_check(metadata_equal(m.at("kv_extent"), extent), "kv_extent");
   metadata_check(metadata_equal(m.at("export_options"), Json({{"backed_size_oblivious", false}})),
                  "export_options");
   metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
@@ -216,6 +211,8 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
 inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
   check_metadata_schema(prefill);
   check_metadata_schema(decode);
+  check_runtime_abi(prefill);
+  check_runtime_abi(decode);
   require(prefill.value("model_type", Json()) == decode.value("model_type", Json()),
           "Package model types differ");
   for (const auto *m : {&prefill, &decode})

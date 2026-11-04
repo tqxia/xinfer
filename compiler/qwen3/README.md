@@ -131,16 +131,18 @@ new pair rather than assuming cross-build bitwise reproducibility.
 The directory contains weightless `prefill.pt2` and `decode.pt2`, matching JSON
 metadata, exported graph text and `weights.pt`. The archive embeds its constant
 mappings in `extra/weights.json`; there is no separate `weights.json` file. Both
-entry metadata files use the shared `schema_version=2` format and record the
+entry metadata files use the shared `schema_version=3` format and record the
 package and archive sizes and checksums. Common fields include `entry_point`,
 `token_range`, `torch_version`, `cuda_compute_capability`, `vocab_size`,
 `eos_token_ids` and ordered state descriptors. Each state gives its layer, kind,
 shape, dtype and update policy; readers derive contiguous strides and names.
-The fixed model ABI defines input order, output order and logits shape.
+`runtime_abi_version=1` defines batch-one BF16 execution, input/output order,
+logits shape, valid-prefix Flash attention and the shape-only CPU extent input.
 Qwen3 needs no additional `model_specific` fields because its geometry is
-available in the state descriptors. Metadata retains the fixed Flash backend,
-custom operator ABI, extent/cache contract, checkpoint, Torch version, GPU
-architecture, C++ ABI and numerical settings.
+available in the state descriptors. The runtime ABI replaces the former fixed
+batch/dtype/attention/cache fields. Readers validate the actual attention-library
+ABI, state contract, checkpoint, Torch version, GPU architecture, C++ ABI and
+numerical settings. See the [ABI definition](../../docs/package-metadata.md#runtime-abi-1).
 
 Export logs contain JSON events with dependency versions, Torch's CUDA version,
 export strictness, adapter counts, graph counts and compilation timings. These

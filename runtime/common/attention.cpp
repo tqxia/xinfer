@@ -57,6 +57,8 @@ at::Tensor flash_attention(const at::Tensor &q, const at::Tensor &k, const at::T
 } // namespace xinfer
 
 TORCH_LIBRARY(xinfer, m) {
+  m.def("attention_ops_abi_version() -> int",
+        []() -> int64_t { return xinfer::attention_ops_abi_version(); });
   // Preserve cache views instead of forcing layout copies at each call.
   m.def("flash_attention(Tensor q, Tensor k, Tensor v, Tensor kv_extent, float scale) -> Tensor",
         {at::Tag::flexible_layout});

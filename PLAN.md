@@ -68,7 +68,8 @@ The [Qwen3.5 text-only pipeline](compiler/qwen35/README.md) currently supports
 with packaged Triton DeltaNet kernels and shared native valid-prefix
 FlashAttention. Caller-owned KV buffers update in place; conv/recurrent inputs
 remain unchanged, and returned tensors become the next state. Both entries share
-one weight pool and use metadata schema version 2, the common runner and shared
+one weight pool and use metadata schema version 3 with runtime ABI 1, the common
+runner and shared
 native generation, benchmark and validation executables.
 
 Native/Python AOTI parity is validated for 0.8B; HF numerical acceptance remains

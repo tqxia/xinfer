@@ -40,10 +40,10 @@ git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry
 Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
 targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
 reads the package metadata to select the model-specific contract and state policy. Both entry JSON files require the shared
-[`schema_version: 2` format](package-metadata.md), with an explicit `model_type`
-of `qwen3` or `qwen35`. Schema 1 and unversioned sidecars must be converted or
-re-exported;
-model selection reads the versioned metadata directly.
+[`schema_version: 3` format](package-metadata.md), `runtime_abi_version: 1`, and an
+explicit `model_type` of `qwen3` or `qwen35`. Schema 1, schema 2 and unversioned
+sidecars must be converted or re-exported; model selection reads the versioned
+metadata directly.
 
 The common runner owns package loaders, shared weights, device checks, token
 validation, positions and prefill/decode dispatch. Model policies handle KV

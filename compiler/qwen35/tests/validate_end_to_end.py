@@ -292,7 +292,7 @@ def main():
         greedy=[],
         greedy_failures=[],
         delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
-        attention_backend=metadata["prefill"]["attention_backend"],
+        runtime_abi_version=metadata["prefill"]["runtime_abi_version"],
         linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
         shared_weights=metadata["decode"]["shared_weights"],
         checkpoint=metadata["decode"]["checkpoint"],

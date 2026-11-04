@@ -10,6 +10,8 @@ import unittest
 
 from compiler.common.artifacts import ROOT, sha256
 from compiler.common.metadata import (
+    RUNTIME_ABI_VERSION,
+    SCHEMA_VERSION,
     finalize_metadata,
     make_metadata,
     read_package_metadata,
@@ -83,9 +85,10 @@ class PackageMetadata(unittest.TestCase):
                     )
                 )
                 self.assertEqual(pair["decode"]["eos_token_ids"], [151645])
+                self.assertEqual(pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSION)
 
     def test_schema_versions_are_required_and_do_not_alias_weight_format(self):
-        for version in (None, 0, 1, 3, True, 2.0, "2"):
+        for version in (None, 0, 1, 2, SCHEMA_VERSION + 1, True, 3.0, "3"):
             with self.subTest(version=version):
                 pair = metadata_pair()
                 if version is None:
@@ -96,6 +99,19 @@ class PackageMetadata(unittest.TestCase):
                     ValueError, "Unsupported package metadata schema version"
                 ):
                     validate_metadata_pair(pair["prefill"], pair["decode"])
+
+    def test_runtime_abi_is_required_and_strict_in_both_entries(self):
+        for entries in (("prefill",), ("decode",), ("prefill", "decode")):
+            for version in (None, 0, RUNTIME_ABI_VERSION + 1, -1, True, 1.0, "1", [], {}):
+                with self.subTest(entries=entries, version=version):
+                    pair = metadata_pair()
+                    for kind in entries:
+                        if version is None:
+                            pair[kind].pop("runtime_abi_version")
+                        else:
+                            pair[kind]["runtime_abi_version"] = version
+                    with self.assertRaisesRegex(ValueError, "Unsupported runtime ABI version"):
+                        validate_metadata_pair(pair["prefill"], pair["decode"])
 
     def test_model_identity_and_stable_extras_must_match(self):
         for field, value in (
@@ -133,6 +149,13 @@ class PackageMetadata(unittest.TestCase):
             "provenance",
             "diagnostics",
             "torch_cuda_version",
+            "batch_size",
+            "dtype",
+            "input_mutation",
+            "attention_backend",
+            "custom_attention",
+            "cache_input",
+            "kv_extent",
         ):
             with self.subTest(alias=field):
                 metadata = metadata_pair()["decode"]
@@ -190,18 +213,9 @@ class PackageMetadata(unittest.TestCase):
 
     def test_json_booleans_are_not_accepted_as_numbers(self):
         changes = [
-            ("batch_size", True),
             ("package_bytes", True),
             ("eos_token_ids", [True]),
             ("cuda_compute_capability", [True, 9]),
-            (
-                "custom_attention",
-                dict(name="xinfer::flash_attention", abi_version=True, read_only=True),
-            ),
-            (
-                "kv_extent",
-                dict(device="cpu", dtype="uint8", shape="[valid_length + 1]", data_read=0),
-            ),
         ]
         for field, value in changes:
             with self.subTest(field=field):
