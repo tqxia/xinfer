@@ -1,13 +1,22 @@
 """Fixed-token benchmark measurement, environment capture, orchestration and reports."""
 
 import os
+from pathlib import Path
 import platform
+import shutil
 import statistics
 import subprocess
 import sys
 import time
 
-from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require, sha256, write_json
+from compiler.common.artifacts import (
+    MODEL_MANIFEST_NAME,
+    ROOT,
+    read_json,
+    require,
+    sha256,
+    write_json,
+)
 from compiler.common.metadata import (
     COMPARISON_EXCLUDED_FIELDS,
     FIELDS as METADATA_FIELDS,
@@ -332,13 +341,30 @@ def make_workload(args, prompt, continuation):
     )
 
 
-def summarize(records, workload, reference):
+def summarize(records, workload, reference, native_backends=None):
     """Aggregate one report format for eager/native and arbitrary paired profiles."""
     result = {}
     for label in dict.fromkeys(record["profile"] for record in records):
         runs = [read_json(record["result"]) for record in records if record["profile"] == label]
         require(all(run["cpu_threads"] == 1 for run in runs), "Benchmark requires one CPU thread")
         profile = dict(load_ms=distribution([run["load_ms"] for run in runs]), cases={})
+        if native_backends is not None and label in native_backends:
+            for run in runs:
+                validate_backend_report(run, native_backends[label])
+            configurations = [
+                {
+                    key: value
+                    for key, value in run["backend_info"].items()
+                    if not key.endswith("_pointers")
+                }
+                for run in runs
+            ]
+            require(
+                all(configuration == configurations[0] for configuration in configurations),
+                "Native worker backend configuration differs across rounds",
+            )
+            profile["decode_backend"] = native_backends[label]
+            profile["backend_info"] = [run["backend_info"] for run in runs]
         for case in workload["cases"]:
             rows = []
             for run in runs:
@@ -424,7 +450,56 @@ def worker_environment(gpu, native=False):
     return env
 
 
-def capture_environment(args, out, gpu, model_type, packages, validate_model):
+def snapshot_sources(out, root=ROOT):
+    """Retain readable source and hashes alongside the separate binary checksum."""
+    suffixes = {".py", ".cpp", ".h", ".cu", ".cuh", ".cmake", ".md"}
+    paths = [root / "CMakeLists.txt"]
+    for directory in ("runtime", "tools/benchmark", "compiler/common"):
+        paths.extend(
+            path
+            for path in (root / directory).rglob("*")
+            if path.is_file()
+            and (path.suffix in suffixes or path.name == "CMakeLists.txt")
+            and not path.is_relative_to(out)
+        )
+    files = {}
+    for path in sorted(set(paths)):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        target = out / "sources" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
+        files[str(relative)] = dict(bytes=target.stat().st_size, sha256=sha256(target))
+    git = {}
+    for name, command in (
+        ("commit", ["rev-parse", "HEAD"]),
+        ("status", ["status", "--short"]),
+    ):
+        try:
+            git[name] = subprocess.check_output(
+                ["git", "-C", str(root), *command], text=True, stderr=subprocess.DEVNULL
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            git[name] = None
+    return dict(files=files, file_count=len(files), git=git)
+
+
+def linked_library(linked, name):
+    """Resolve an optional backend from the native binary's captured ldd output."""
+    for line in linked.splitlines():
+        dependency, separator, target = line.strip().partition(" => ")
+        if separator and dependency == name:
+            library = Path(target.rsplit(" (", 1)[0])
+            require(
+                library.is_absolute() and library.is_file(),
+                f"Missing native dependency: {line.strip()}",
+            )
+            return library.resolve()
+    return None
+
+
+def capture_environment(args, out, gpu, model_type, packages, validate_model, native_backends=None):
     from tools.common import native_attention_library
     from compiler.common.weights import validate_shared_weights
 
@@ -458,6 +533,18 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         shared_weights={},
         attention_library=dict(path=str(library), sha256=sha256(library)),
     )
+    megaqwen = linked_library(linked, "libxinfer_megaqwen.so")
+    require(
+        native_backends is None
+        or "megaqwen" not in native_backends.values()
+        or megaqwen is not None,
+        "Native MegaQwen comparison requires libxinfer_megaqwen.so; rebuild with the backend enabled",
+    )
+    if megaqwen is not None:
+        environment["megaqwen_library"] = dict(path=str(megaqwen), sha256=sha256(megaqwen))
+    if native_backends is not None:
+        environment["decode_backends"] = native_backends
+        environment["prefill_backend"] = "aoti"
     environment["gpu"] = subprocess.check_output(
         [
             "nvidia-smi",
@@ -468,7 +555,13 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         ],
         text=True,
     )
+    bundles = {}
     for label, directory in packages.items():
+        if directory in bundles:
+            entries, weights = bundles[directory]
+            environment["packages"][label] = entries
+            environment["shared_weights"][label] = weights
+            continue
         metadata = read_package_metadata(directory, model_type=model_type)
         entries = {}
         for kind, meta in metadata.items():
@@ -487,10 +580,32 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         environment["shared_weights"][label] = validate_shared_weights(
             directory, metadata["prefill"], metadata["decode"]
         )
+        bundles[directory] = entries, environment["shared_weights"][label]
+    environment["source_snapshot"] = snapshot_sources(out)
     return environment
 
 
-def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout):
+def native_worker_command(args, packages, workload, result, decode_backend=None):
+    command = [str(args.native.resolve()), str(packages), str(workload), str(result)]
+    if decode_backend is not None:
+        require(decode_backend in ("aoti", "megaqwen"), "Unsupported native decode backend")
+        command += ["--decode-backend", decode_backend]
+    return command
+
+
+def validate_backend_report(report, expected):
+    require(
+        report.get("decode_backend") == expected,
+        "Native worker decode backend differs from request",
+    )
+    require(isinstance(report.get("backend_info"), dict), "Native worker backend_info is missing")
+    require(
+        report["backend_info"].get("backend") == expected,
+        "Native worker backend_info backend differs from request",
+    )
+
+
+def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout, native_backends=None):
     """eager maps one optional profile label to its Python module and worker subcommand."""
     labels = [*eager, *packages]
     require(
@@ -520,12 +635,13 @@ def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout):
                     str(result),
                 ]
             else:
-                argv = [
-                    str(args.native.resolve()),
-                    str(packages[label]),
-                    str(out / "workload.json"),
-                    str(result),
-                ]
+                argv = native_worker_command(
+                    args,
+                    packages[label],
+                    out / "workload.json",
+                    result,
+                    None if native_backends is None else native_backends[label],
+                )
             print(stem, "starting", flush=True)
             elapsed = run_worker(
                 argv,
@@ -535,6 +651,8 @@ def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout):
                 out / f"{stem}.log",
                 timeout,
             )
+            if native_backends is not None and label in native_backends:
+                validate_backend_report(read_json(result), native_backends[label])
             records.append(
                 dict(
                     round=round_index + 1,
@@ -560,12 +678,20 @@ def run_benchmark(
     prepare_tokens,
     validate_model,
     compare=None,
+    native_backends=None,
     timeout=900,
 ):
     require(
         min(args.warmup, args.repeats, args.rounds, args.decode_steps) >= 1,
         "Counts must be positive",
     )
+    if native_backends is not None:
+        require(
+            set(native_backends) == set(packages)
+            and all(backend in ("aoti", "megaqwen") for backend in native_backends.values()),
+            "Provide one supported decode backend per native profile",
+        )
+        require(model_type == "qwen3", "Native MegaQwen comparison requires Qwen3 packages")
 
     def supported(length):
         prefill, decode = metadata["prefill"], metadata["decode"]
@@ -593,11 +719,13 @@ def run_benchmark(
         workload["cache_length"] = metadata["decode"]["cache_length"]
         write_json(out / "workload.json", workload)
         packages = {label: directory.resolve() for label, directory in packages.items()}
-        environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
+        environment = capture_environment(
+            args, out, gpu, model_type, packages, validate_model, native_backends
+        )
         if compare is not None:
             compare(environment["packages"], environment["shared_weights"])
         write_json(out / "environment.json", environment)
-        run_rounds(args, out, gpu, model_type, packages, eager, records, timeout)
+        run_rounds(args, out, gpu, model_type, packages, eager, records, timeout, native_backends)
         summary = dict(
             schema_version=1,
             model_type=model_type,
@@ -611,8 +739,17 @@ def run_benchmark(
                 native_chunk_tokens=metadata["prefill"]["token_range"][1],
                 hf="whole_prompt" if eager else None,
             ),
-            profiles=summarize(records, workload, reference),
+            profiles=summarize(records, workload, reference, native_backends),
         )
+        if native_backends is not None:
+            summary.update(
+                decode_backends=native_backends,
+                prefill_backend="aoti",
+                prediction_agreement_is_diagnostic=True,
+                performance_comparison=(
+                    "provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked"
+                ),
+            )
         if eager:
             summary["eager_baseline"] = EAGER_BASELINE
         write_json(out / "summary.json", summary)

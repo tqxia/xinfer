@@ -3,6 +3,7 @@
 PyTorch AOTInductor compilation with Python-free C++ inference.
 
 - [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
+- [Optional MegaQwen decode experiment](docs/experiments/qwen3-megaqwen.md): AOTI prefill with shared-weight/cache CUDA decode, validation and backend comparison.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
 - [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).

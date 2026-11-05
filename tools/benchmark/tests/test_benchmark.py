@@ -568,16 +568,23 @@ class ControllerContract(unittest.TestCase):
             baseline_label="baseline",
             candidate_label="candidate",
         )
+        if mode == "compare-backends":
+            args.baseline_backend, args.candidate_backend = "aoti", "megaqwen"
+            (root / "libxinfer_megaqwen.so").write_bytes(b"MegaQwen fixture")
         return args, library
 
-    def run_controller(self, args, library, model_type, fail=False):
+    def run_controller(self, args, library, model_type, fail=False, mutate_report=None):
         gpu = GpuSelection.GPU
         workers, gpu_records = [], []
 
         def query(command, **options):
             if command[0] == "ldd":
                 self.assertEqual(options["env"]["PYTHONHOME"], "/nonexistent-python-home")
-                return "libtorch_cpu.so => /fixture/libtorch_cpu.so\n"
+                linked = "libtorch_cpu.so => /fixture/libtorch_cpu.so\n"
+                if args.command == "compare-backends":
+                    backend = args.native.parent / "libxinfer_megaqwen.so"
+                    linked += f"libxinfer_megaqwen.so => {backend} (0x01)\n"
+                return linked
             self.assertEqual(command[:3], ["nvidia-smi", "-i", gpu])
             gpu_records.append(command)
             return f"name, uuid\nGPU 2, {gpu}\n"
@@ -587,7 +594,23 @@ class ControllerContract(unittest.TestCase):
             if fail and len(workers) == 2:
                 raise RuntimeError("worker failed")
             workload = json.loads((args.output / "workload.json").read_text())
-            write_json(Path(command[-1]), worker_report(workload))
+            report = worker_report(workload)
+            if command[0] == sys.executable:
+                output = Path(command[command.index("--output") + 1])
+            else:
+                output = Path(command[3])
+            if "--decode-backend" in command:
+                backend = command[command.index("--decode-backend") + 1]
+                report.update(
+                    decode_backend=backend, backend_info=dict(backend=backend, numerics="bf16")
+                )
+                if backend == "megaqwen":
+                    for case in report["cases"]:
+                        for entry in [case["first_request"], *case["samples"]]:
+                            entry["prediction_ids"][-1] = 12
+            if mutate_report is not None:
+                mutate_report(report, command)
+            write_json(output, report)
             return 10
 
         weights = dict(identity_sha256="1" * 64, sources={})
@@ -598,9 +621,11 @@ class ControllerContract(unittest.TestCase):
             patch.object(benchmark, "wait_idle", return_value=[]) as idle,
             patch.object(benchmark, "run_worker", side_effect=worker),
             patch.object(benchmark.platform, "platform", return_value="test-platform"),
+            patch.object(benchmark.os, "sched_getaffinity", return_value={0}, create=True),
             patch.object(benchmark.subprocess, "check_output", side_effect=query),
             patch("tools.common.native_attention_library", return_value=library),
             patch("compiler.common.weights.validate_shared_weights", return_value=weights),
+            patch.object(benchmark, "snapshot_sources", return_value=dict(files={}, file_count=0)),
             patch.object(hooks, "prepare_tokens", return_value=([7, 8], [9])) as prepare,
         ):
             if fail:
@@ -853,6 +878,214 @@ class ControllerContract(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "invalid GPU"):
                         benchmark_cli.run(args)
                 self.assertFalse(args.output.parent.exists())
+
+
+class NativeBackendComparison(unittest.TestCase):
+    def test_cli_selects_same_package_comparison_with_existing_measurement_defaults(self):
+        with patch.object(benchmark_cli, "run") as run:
+            benchmark_cli.main(
+                ["compare-backends", "--packages", "packages", "--output", "benchmark"]
+            )
+        args = run.call_args.args[0]
+        self.assertEqual(args.command, "compare-backends")
+        self.assertEqual((args.baseline_backend, args.candidate_backend), ("aoti", "megaqwen"))
+        self.assertEqual(args.packages, Path("packages"))
+        self.assertEqual(args.lengths, [25, 128, 512])
+        self.assertEqual((args.decode_steps, args.warmup, args.repeats, args.rounds), (64, 2, 5, 4))
+        self.assertFalse(args.allow_busy)
+
+    def test_worker_command_appends_explicit_backend_after_same_positional_contract(self):
+        args = SimpleNamespace(native=Path("xinfer_benchmark"))
+        expected = [str(args.native.resolve()), "packages", "workload.json", "result.json"]
+        self.assertEqual(
+            benchmark.native_worker_command(
+                args, Path("packages"), Path("workload.json"), Path("result.json")
+            ),
+            expected,
+        )
+        for backend in ("aoti", "megaqwen"):
+            with self.subTest(backend=backend):
+                self.assertEqual(
+                    benchmark.native_worker_command(
+                        args, Path("packages"), Path("workload.json"), Path("result.json"), backend
+                    ),
+                    expected + ["--decode-backend", backend],
+                )
+        with self.assertRaisesRegex(ValueError, "Unsupported native decode backend"):
+            benchmark.native_worker_command(args, Path("p"), Path("w"), Path("r"), "unknown")
+
+    def test_same_backend_or_other_model_rejected_before_gpu_or_output(self):
+        helper = ControllerContract()
+        for family, same_backend in (("qwen3", True), ("qwen35", False)):
+            with self.subTest(model=family), tempfile.TemporaryDirectory() as temporary:
+                args, _ = helper.fixtures(Path(temporary), family, "compare-backends")
+                if same_backend:
+                    args.candidate_backend = "aoti"
+                with (
+                    patch.object(benchmark, "resolve_gpu") as gpu,
+                    patch.object(benchmark, "run_worker") as worker,
+                ):
+                    with self.assertRaisesRegex(ValueError, "distinct|requires Qwen3"):
+                        benchmark_cli.run(args)
+                gpu.assert_not_called()
+                worker.assert_not_called()
+                self.assertFalse(args.output.exists())
+
+    def test_rotation_backend_identity_and_diagnostic_predictions_remain_provisional(self):
+        helper = ControllerContract()
+        with tempfile.TemporaryDirectory() as temporary:
+            args, library = helper.fixtures(Path(temporary), "qwen3", "compare-backends")
+            # The controller's file/command/report contract needs no Torch import.
+            with patch.dict(
+                sys.modules,
+                {"compiler.common.weights": SimpleNamespace(validate_shared_weights=Mock())},
+            ):
+                workers, idle = helper.run_controller(args, library, "qwen3")
+            self.assertEqual(len(workers), 4)
+            self.assertEqual(idle.call_count, 8)
+            self.assertEqual(
+                [row["command"][-1] for row in workers], ["aoti", "megaqwen", "megaqwen", "aoti"]
+            )
+            self.assertTrue(
+                all(Path(row["command"][1]) == args.packages.resolve() for row in workers)
+            )
+            self.assertTrue(all(row["command"][0] == str(args.native.resolve()) for row in workers))
+            environment = json.loads((args.output / "environment.json").read_text())
+            self.assertEqual(environment["prefill_backend"], "aoti")
+            self.assertEqual(
+                environment["megaqwen_library"]["sha256"],
+                sha256(args.native.parent / "libxinfer_megaqwen.so"),
+            )
+            self.assertEqual(
+                environment["packages"]["cpp_aoti"], environment["packages"]["cpp_megaqwen"]
+            )
+            summary = json.loads((args.output / "summary.json").read_text())
+            self.assertEqual(summary["status"], "provisional_shared_gpu")
+            self.assertEqual(summary["performance_comparison"], "provisional_shared_gpu")
+            self.assertTrue(summary["prediction_agreement_is_diagnostic"])
+            self.assertTrue(summary["functional_checks_passed"])
+            self.assertNotIn("numerical_acceptance", summary)
+            for backend in ("aoti", "megaqwen"):
+                self.assertEqual(summary["profiles"][f"cpp_{backend}"]["decode_backend"], backend)
+            self.assertEqual(
+                summary["profiles"]["cpp_megaqwen"]["cases"]["length_2"]["prediction_agreement"],
+                {"cpp_aoti": 1},
+            )
+
+    def test_wrong_or_missing_backend_identity_does_not_publish_summary(self):
+        helper = ControllerContract()
+        for mutation in (
+            lambda report, _: report.update(decode_backend="megaqwen"),
+            lambda report, _: report.pop("backend_info"),
+            lambda report, _: report["backend_info"].update(backend="megaqwen"),
+        ):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
+                args, library = helper.fixtures(Path(temporary), "qwen3", "compare-backends")
+                with patch.dict(
+                    sys.modules,
+                    {"compiler.common.weights": SimpleNamespace(validate_shared_weights=Mock())},
+                ):
+                    with self.assertRaisesRegex(ValueError, "decode backend differs|backend_info"):
+                        helper.run_controller(args, library, "qwen3", mutate_report=mutation)
+                self.assertFalse((args.output / "summary.json").exists())
+                self.assertEqual(
+                    json.loads((args.output / "failure.json").read_text())["completed_runs"], 0
+                )
+
+    def test_missing_linked_backend_is_rejected_before_worker(self):
+        helper = ControllerContract()
+        with tempfile.TemporaryDirectory() as temporary:
+            args, library = helper.fixtures(Path(temporary), "qwen3", "compare-backends")
+            (args.native.parent / "libxinfer_megaqwen.so").unlink()
+            with (
+                patch.dict(
+                    sys.modules,
+                    {"compiler.common.weights": SimpleNamespace(validate_shared_weights=Mock())},
+                ),
+                patch.object(benchmark, "run_worker") as worker,
+            ):
+                with self.assertRaisesRegex(ValueError, "Missing native dependency"):
+                    helper.run_controller(args, library, "qwen3")
+            worker.assert_not_called()
+            self.assertFalse((args.output / "summary.json").exists())
+
+    def test_summary_rechecks_backend_identity_in_each_round(self):
+        workload = dict(
+            warmup=1, repeats=1, cases=[dict(name="case", prompt=[1], decode_tokens=[2])]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            records = []
+            for index, backend in enumerate(("megaqwen", "aoti")):
+                path = Path(temporary) / f"{index}.json"
+                write_json(
+                    path,
+                    worker_report(workload)
+                    | dict(decode_backend=backend, backend_info=dict(backend=backend)),
+                )
+                records.append(dict(profile="cpp_megaqwen", result=str(path)))
+            with self.assertRaisesRegex(ValueError, "decode backend differs"):
+                benchmark.summarize(records, workload, "cpp_megaqwen", {"cpp_megaqwen": "megaqwen"})
+
+    def test_fresh_process_addresses_can_change_but_launch_configuration_cannot(self):
+        workload = dict(
+            warmup=1, repeats=1, cases=[dict(name="case", prompt=[1], decode_tokens=[2])]
+        )
+        for grid in (92, 184):
+            with self.subTest(candidate_grid=grid), tempfile.TemporaryDirectory() as temporary:
+                records = []
+                for index, blocks in enumerate((92, grid)):
+                    path = Path(temporary) / f"{index}.json"
+                    info = dict(
+                        backend="megaqwen",
+                        grid_blocks=blocks,
+                        cache_pointers=[100 + index],
+                        borrowed_weight_pointers=[200 + index],
+                    )
+                    write_json(
+                        path,
+                        worker_report(workload)
+                        | dict(
+                            decode_backend="megaqwen",
+                            backend_info=info,
+                        ),
+                    )
+                    records.append(dict(profile="cpp_megaqwen", result=str(path)))
+                if grid == 92:
+                    result = benchmark.summarize(
+                        records, workload, "cpp_megaqwen", {"cpp_megaqwen": "megaqwen"}
+                    )
+                    self.assertEqual(len(result["cpp_megaqwen"]["backend_info"]), 2)
+                else:
+                    with self.assertRaisesRegex(ValueError, "configuration differs across rounds"):
+                        benchmark.summarize(
+                            records, workload, "cpp_megaqwen", {"cpp_megaqwen": "megaqwen"}
+                        )
+
+    def test_snapshot_retains_cuda_build_and_python_sources_with_hashes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = (
+                "CMakeLists.txt",
+                "runtime/CMakeLists.txt",
+                "runtime/qwen3/megaqwen/kernels.cu",
+                "runtime/qwen3/megaqwen/config.cuh",
+                "runtime/qwen3/megaqwen/backend.cpp",
+                "runtime/qwen3/megaqwen/PROVENANCE.md",
+                "runtime/common/decode.h",
+                "tools/benchmark/common.py",
+                "compiler/common/weights.py",
+            )
+            for name in paths:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(name + "\n")
+            snapshot = benchmark.snapshot_sources(root / "output", root=root)
+            self.assertEqual(snapshot["file_count"], len(paths))
+            self.assertEqual(set(snapshot["files"]), set(paths))
+            for name in paths:
+                retained = root / "output/sources" / name
+                self.assertEqual(retained.read_bytes(), (root / name).read_bytes())
+                self.assertEqual(snapshot["files"][name]["sha256"], sha256(retained))
 
 
 class WorkloadLimits(unittest.TestCase):

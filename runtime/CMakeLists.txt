@@ -34,7 +34,39 @@ FetchContent_MakeAvailable(nlohmann_json)
 
 option(XINFER_BUILD_VALIDATION "Build native validation drivers" OFF)
 option(XINFER_BUILD_BENCHMARK "Build fixed-token native benchmarks" OFF)
+option(XINFER_ENABLE_MEGAQWEN "Enable optional cooperative Qwen3-0.6B decode" OFF)
 separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
+if(XINFER_ENABLE_MEGAQWEN)
+  enable_language(CUDA)
+  find_package(CUDAToolkit REQUIRED)
+  set(XINFER_MEGAQWEN_CUDA_ARCHITECTURES "89" CACHE STRING
+      "CUDA architectures for MegaQwen (SM89 is the validated target)")
+  add_library(xinfer_decode_backend SHARED qwen3/megaqwen/backend.cpp qwen3/megaqwen/kernels.cu)
+  set_target_properties(xinfer_decode_backend PROPERTIES
+    OUTPUT_NAME xinfer_megaqwen
+    CUDA_ARCHITECTURES "${XINFER_MEGAQWEN_CUDA_ARCHITECTURES}"
+    CUDA_STANDARD ${XINFER_CXX_STANDARD}
+    CUDA_STANDARD_REQUIRED ON
+    CUDA_RUNTIME_LIBRARY None
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+    BUILD_RPATH_USE_ORIGIN TRUE
+    INSTALL_RPATH "$ORIGIN;${XINFER_INSTALL_RUNTIME_DIRS}"
+    INSTALL_RPATH_USE_LINK_PATH TRUE)
+  target_include_directories(xinfer_decode_backend PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+  target_compile_options(xinfer_decode_backend PRIVATE ${TORCH_FLAGS}
+    "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>"
+    "$<$<COMPILE_LANGUAGE:CUDA>:-O3;--fmad=false>")
+  if(CUDA_cudart_LIBRARY)
+    target_link_libraries(xinfer_decode_backend PRIVATE "${CUDA_cudart_LIBRARY}")
+  else()
+    target_link_libraries(xinfer_decode_backend PRIVATE CUDA::cudart)
+  endif()
+else()
+  add_library(xinfer_decode_backend STATIC qwen3/megaqwen/stub.cpp)
+  target_compile_options(xinfer_decode_backend PRIVATE ${TORCH_FLAGS} -Wall -Wextra)
+endif()
+target_compile_features(xinfer_decode_backend PRIVATE cxx_std_${XINFER_CXX_STANDARD})
+target_link_libraries(xinfer_decode_backend PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json)
 add_library(xinfer_attention_ops SHARED common/attention.cpp)
 set_target_properties(xinfer_attention_ops PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
@@ -59,12 +91,17 @@ if(XINFER_BUILD_VALIDATION)
   add_executable(xinfer_generation_contract common/tests/generation.cpp)
   list(APPEND XINFER_TARGETS xinfer_validate qwen_runtime_contract xinfer_state_contract xinfer_generation_contract)
   list(APPEND XINFER_INSTALL_TARGETS xinfer_validate)
+  if(XINFER_ENABLE_MEGAQWEN)
+    add_executable(qwen_hybrid_contract qwen3/tests/hybrid.cpp)
+    list(APPEND XINFER_TARGETS qwen_hybrid_contract)
+  endif()
 endif()
 foreach(target IN LISTS XINFER_TARGETS)
   target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(${target} PRIVATE cxx_std_${XINFER_CXX_STANDARD})
   target_compile_options(${target} PRIVATE ${TORCH_FLAGS} -Wall -Wextra)
-  target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json xinfer_attention_ops)
+  target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json
+    xinfer_attention_ops xinfer_decode_backend)
   set_target_properties(${target} PROPERTIES BUILD_RPATH_USE_ORIGIN TRUE)
 endforeach()
 
@@ -76,3 +113,7 @@ endforeach()
 install(TARGETS ${XINFER_INSTALL_TARGETS} xinfer_attention_ops
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT Runtime)
+if(XINFER_ENABLE_MEGAQWEN)
+  install(TARGETS xinfer_decode_backend
+    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT Runtime)
+endif()

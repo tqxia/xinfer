@@ -28,14 +28,14 @@ repository root to format tracked source files:
 
 ```bash
 git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format
-git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format -i
+git ls-files -z '*.cpp' '*.h' '*.cu' '*.cuh' | xargs -0 work/format-venv/bin/clang-format -i
 ```
 
 Check formatting without changing files:
 
 ```bash
 git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
-git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
+git ls-files -z '*.cpp' '*.h' '*.cu' '*.cuh' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
 ```
 
 ## CPU unit tests

@@ -186,6 +186,19 @@ public:
     return bundle_.directory_ / (kind + ".pt2");
   }
 
+  // Resolve semantic model names through the verified archive instead of
+  // depending on generated AOTInductor constant names or copying weight data.
+  const at::Tensor &source_tensor(const std::string &name) const {
+    const auto &manifest = bundle_.manifest_;
+    require(manifest.contains("sources") && manifest.at("sources").is_object() &&
+                manifest.at("sources").contains(name) &&
+                manifest.at("sources").at(name).is_string(),
+            "Shared weights source is missing: " + name);
+    const auto view = manifest.at("sources").at(name).get<std::string>();
+    require(tensors_.contains(view), "Shared weights source view is missing: " + name);
+    return tensors_.at(view);
+  }
+
   void load(torch::inductor::AOTIModelPackageLoader &loader, const std::string &kind) {
     const auto &mapping = bundle_.manifest_.at("entries").at(kind).at("constants");
     const auto names = loader.get_constant_fqns();

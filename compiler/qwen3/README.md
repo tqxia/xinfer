@@ -282,6 +282,12 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 
 ## Generate in C++
 
+The default decode backend is AOTI. The optional
+[MegaQwen experiment](../../docs/experiments/qwen3-megaqwen.md) adds
+`--decode-backend megaqwen` in builds with `XINFER_ENABLE_MEGAQWEN=ON`, sharing
+the existing weights and KV storage. Its numerical acceptance remains open;
+see the experiment's validation results and separate backend-comparison command.
+
 ```bash
 "$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
   --max-output-tokens 64 --trace work/native-logits.f32
