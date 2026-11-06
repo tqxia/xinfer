@@ -40,7 +40,7 @@ Run Python tools from the repository root as modules, for example:
 
 ```bash
 Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your target
-"$Q3_PY" -m compiler.qwen3.prepare --help
+"$Q3_PY" -m tools.prepare --help
 "$Q3_PY" -m compiler.qwen3.export --help
 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp --help
 ```
@@ -80,3 +80,6 @@ are checked as well as measured repeats. Benchmark reports include package,
 binary and workload checksums. Qwen3 keeps HF eager/FP32 references for
 validation, with bounded HF logit error and separate cache/token drift
 diagnostics. CUDA Graph integration is deferred.
+
+Checkpoint download, verification and offline tokenization share `tools/prepare/`;
+see the model guides for the pinned checkpoint and `model_manifest.json` contract.

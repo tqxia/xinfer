@@ -57,7 +57,8 @@ No timing result is claimed on the busy development GPU.
   branch operators and shape-based `torch.cond` dispatch.
 - `kernels/chunked.py`: C64 FP32 chunking with B3's 32-column U/W transform.
 - `export.py`: strict export and AOTInductor packaging.
-- `prepare.py`: offline token IDs; `reference.py`: HF/Python AOTI validation runners.
+- `tools/prepare/`: checkpoint download/verification and offline token IDs;
+  `reference.py`: HF/Python AOTI validation runners.
 - `tests/`: fused-operator, model, C++ and end-to-end checks; `tests/block.py`
   owns shared layer-0 checkpoint fixtures and their preparation command.
 - `diagnostics/`: the retained Q35-NUM-001 rounding reproducer.
@@ -249,33 +250,34 @@ The [installation guide](../../environments/README.md#install-and-relocate-the-r
 covers the installed native runtime, prefix relocation and selecting its
 attention library for Python export or validation.
 
+Use the shared preparation tool before enabling offline mode. It downloads the
+pinned checkpoint and extracts only text weights, without CUDA or inference:
+
 ```bash
-export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-QWEN_PY="$Q35_PY"
-# Keep large compilation scratch files off a small system /tmp filesystem.
-mkdir -p work/qwen35/tmp work/qwen35/inductor-cache
-export TMPDIR="$PWD/work/qwen35/tmp"
-export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
-# Prepare once, or copy the prepared text directory including its manifest.
-"$QWEN_PY" -m compiler.qwen35.model
+"$QWEN_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B \
+  --output work/qwen35/0.8b/text
 "$QWEN_PY" -m compiler.qwen35.export
 ```
 
-For 4B, select its pinned checkpoint and keep its prepared weights and compiled
+For the complete 4B checkpoint, keep its prepared text directory and package
 bundle separate from the 0.8B defaults:
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.model \
-  --model Qwen/Qwen3.5-4B --output work/qwen35/4b/text
+"$QWEN_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B \
+  --output work/qwen35/4b/text
 "$QWEN_PY" -m compiler.qwen35.export \
   --model-dir work/qwen35/4b/text --output artifacts/qwen35/4b/text
 ```
 
-Preparation refuses an existing output directory; reuse the complete verified
-directory on later runs. Its manifest records the selected model ID and pinned
-revision, checksums of source shards and all prepared files. Loading rejects an
-unsupported model/revision or incomplete file manifest before allocating model
-weights. Both supported checkpoints require tied embeddings and default RoPE.
+Preparation refuses an existing output path and publishes the directory only
+after all required files are ready. `--cache-dir` selects a Hub cache. The
+`model_manifest.json` records the selected checkpoint, pinned revision, source
+shard checksums and prepared file checksums. Download verifies these files;
+`tools.prepare verify --model-dir <directory>` explicitly rechecks a copied or
+retained checkpoint. Model loading and export do not repeat the checkpoint
+verification. Both supported checkpoints require tied embeddings and default
+RoPE. For retained full-text checkpoints, rename `manifest.json` to
+`model_manifest.json`; its contents and compiled packages stay unchanged.
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
@@ -357,11 +359,11 @@ change floating-point results.
 ## Generate and validate
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.prepare encode \
+"$QWEN_PY" -m tools.prepare encode --model-dir work/qwen35/0.8b/text \
   --prompt "What is 17 + 25?" --output work/prompt.ids
 "$BUILD/xinfer_aoti" artifacts/qwen35/0.8b/text \
   work/prompt.ids work/generated.ids
-"$QWEN_PY" -m compiler.qwen35.prepare decode --input work/generated.ids
+"$QWEN_PY" -m tools.prepare decode --model-dir work/qwen35/0.8b/text --input work/generated.ids
 
 "$QWEN_PY" -m compiler.qwen35.tests.validate_fused \
   --output artifacts/qwen35/0.8b/fused-validation-new
@@ -383,11 +385,11 @@ a nonzero exit as an expected numerical gate.
 Use matching model, package and tokenization paths for the complete 4B model:
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.prepare --model-dir work/qwen35/4b/text encode \
+"$QWEN_PY" -m tools.prepare encode --model-dir work/qwen35/4b/text \
   --prompt "What is 17 + 25?" --output work/qwen35/4b/prompt.ids
 "$BUILD/xinfer_aoti" artifacts/qwen35/4b/text \
   work/qwen35/4b/prompt.ids work/qwen35/4b/generated.ids
-"$QWEN_PY" -m compiler.qwen35.prepare --model-dir work/qwen35/4b/text decode \
+"$QWEN_PY" -m tools.prepare decode --model-dir work/qwen35/4b/text \
   --input work/qwen35/4b/generated.ids
 "$QWEN_PY" -m compiler.qwen35.tests.validate_model \
   --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \

@@ -44,34 +44,47 @@ Q3_PY="$PWD/work/l20/qwen3-torch213-venv/bin/python"
 BUILD="$PWD/build/qwen3"
 ```
 
-## Prepare offline inputs
+## Prepare checkpoint and offline inputs
 
-Run commands from the repository root. Qwen3 tools default to
-`work/models/qwen3-0.6b`. Place the complete verified checkpoint there, including
-`model_manifest.json`, or symlink an existing local checkpoint:
+Run commands from the repository root with the matching model environment.
+The shared preparation tool downloads the pinned Qwen3 checkpoint and writes
+`model_manifest.json` with file sizes and SHA-256 checksums:
 
 ```bash
-mkdir -p work/models
-ln -s /path/to/qwen3-0.6b work/models/qwen3-0.6b
+Q3_MODEL="$PWD/work/models/qwen3-0.6b"
+"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B --output "$Q3_MODEL"
 ```
 
+The output defaults to `work/models/qwen3-0.6b`; `--output` selects another path.
 The checkpoint revision is `c1899de289a04d12100db370d81485cdf75e47ca`.
-Helpers verify and read these files; they do not modify the checkpoint or
-download another copy. Export, benchmark and model validation commands accept
-`--model-dir` to select another directory. For preparation, put it before the
-subcommand, for example:
+Download needs no CUDA or model inference. It refuses an existing output path
+and publishes the prepared directory only after every required file is ready.
+`--cache-dir` selects a Hub cache; otherwise the Hub's configured cache is used.
+Run download before enabling offline mode.
 
-```bash
-"$Q3_PY" -m compiler.qwen3.prepare --model-dir /path/to/qwen3-0.6b verify
-```
+A complete verified checkpoint can instead be copied or symlinked into the
+default directory. Existing checkpoints and manifests remain usable without
+rewriting or recompiling packages. Export, benchmark and validation commands
+accept `--model-dir` to select another local directory.
+
+Download performs checkpoint integrity checks. `tools.prepare verify` provides
+an explicit check for copied or retained directories. Model loading and export do not repeat checkpoint file verification. Verification and
+tokenization infer the model family from the prepared manifest and use only local
+files. Token output must be a new file.
 
 ```bash
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
-"$Q3_PY" -m compiler.qwen3.prepare verify
-"$Q3_PY" -m compiler.qwen3.prepare encode \
+# Optional explicit check for copied or retained checkpoints.
+"$Q3_PY" -m tools.prepare verify --model-dir "$Q3_MODEL"
+"$Q3_PY" -m tools.prepare encode --model-dir "$Q3_MODEL" \
   --prompt 'What is the capital of France? Answer in one short sentence.' \
   --output work/prompt.ids
-# Run once in an absent output directory to generate independent HF fixtures.
+```
+
+Run the existing reference generator in an absent output directory before the
+AOTI/C++ comparisons:
+
+```bash
 "$Q3_PY" -m compiler.qwen3.tests.validate --output artifacts/reference
 ```
 
@@ -232,7 +245,7 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 ```bash
 "$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
   --max-new-tokens 64 --trace work/native-logits.f32
-"$Q3_PY" -m compiler.qwen3.prepare decode --input work/generated.ids
+"$Q3_PY" -m tools.prepare decode --model-dir "$Q3_MODEL" --input work/generated.ids
 ```
 
 The native executable runs without an activated venv or interpreter. It resets

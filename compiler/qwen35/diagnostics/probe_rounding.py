@@ -77,7 +77,7 @@ def main():
         cuda=torch.version.cuda,
         hf_source_sha256=sha256(inspect.getfile(modeling_qwen3_5)),
         source_sha256=sha256(__file__),
-        checkpoint=json.loads((args.model_dir / "manifest.json").read_text()),
+        checkpoint=json.loads((args.model_dir / "model_manifest.json").read_text()),
         package_sha256=sha256(package),
         before_node=nodes[before].name,
         after_node=nodes[after].name,

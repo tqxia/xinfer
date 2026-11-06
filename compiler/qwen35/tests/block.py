@@ -11,7 +11,7 @@ from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5TextConfig
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5GatedDeltaNet
 
 from compiler.common.artifacts import sha256
-from compiler.qwen35.config import MODEL_ID, REVISIONS
+from tools.prepare.qwen35 import MODEL_ID, REVISIONS
 
 
 MODEL_DIR = Path("work/qwen35/0.8b/block")
@@ -54,7 +54,7 @@ def prepare(directory, model=MODEL_ID):
         source_shards=shards,
         files={n: sha256(directory / n) for n in ("config.json", "block.safetensors")},
     )
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    (directory / "model_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(json.dumps(manifest, indent=2))
 
 
@@ -96,7 +96,7 @@ class BlockStep(torch.nn.Module):
 
 
 def load_block(directory=MODEL_DIR, dtype=torch.bfloat16):
-    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest = json.loads((directory / "model_manifest.json").read_text())
     for name, expected in manifest["files"].items():
         if sha256(directory / name) != expected:
             raise ValueError(f"Checksum mismatch: {name}")

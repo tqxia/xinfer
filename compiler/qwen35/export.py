@@ -8,6 +8,8 @@ from pathlib import Path
 
 import torch
 
+from compiler.common.artifacts import MODEL_MANIFEST_NAME
+
 from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.weights import compile_shared
@@ -100,7 +102,7 @@ def main():
     model = load_model(args.model_dir)
     install_delta(model)
     config = model.config
-    checkpoint = json.loads((args.model_dir / "manifest.json").read_text())
+    checkpoint = json.loads((args.model_dir / MODEL_MANIFEST_NAME).read_text())
     options = {"emulate_precision_casts": True}
     if args.enable_inductor_optimization:
         options.update(combo_kernels=True, benchmark_combo_kernel=True)

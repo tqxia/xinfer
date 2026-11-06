@@ -159,7 +159,7 @@ def main():
         assert meta["torch_version"] == torch.__version__ and meta["cache_length"] == CACHE_LENGTH
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"]["manifest"] == json.loads(
-            (args.model_dir / "manifest.json").read_text()
+            (args.model_dir / "model_manifest.json").read_text()
         )
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"

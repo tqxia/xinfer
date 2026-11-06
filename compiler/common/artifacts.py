@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+MODEL_MANIFEST_NAME = "model_manifest.json"
 
 
 def default_build_dir(model):

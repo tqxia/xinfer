@@ -99,7 +99,7 @@ the current 0.8B full-model profile:
   partition checks, and packaged Python/native checks apply to both.
 
 The full-model 4B milestone selects its pinned checkpoint with
-`compiler.qwen35.model --model Qwen/Qwen3.5-4B`; its default preparation directory
+`python -m tools.prepare download --model Qwen/Qwen3.5-4B`; its default preparation directory
 is `work/qwen35/4b/text`. Export and validation use that explicit `--model-dir`
 and a separate `artifacts/qwen35/4b/text` package directory. The 0.8B defaults
 remain unchanged. Both sizes require a verified prepared manifest, tied

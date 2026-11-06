@@ -31,7 +31,7 @@ def worker(args):
 def benchmark(args):
     def tokens():
         from transformers import AutoTokenizer
-        from compiler.qwen35.prepare import encode_prompt
+        from tools.prepare.common import encode_prompt
 
         tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
         return (
@@ -71,7 +71,7 @@ def benchmark(args):
         eager={"hf": ("compiler.qwen35.benchmark", "worker")},
         reference="hf",
         prepare_tokens=tokens,
-        manifest_name="manifest.json",
+        manifest_name="model_manifest.json",
         validate_model=validate_model_metadata,
         correctness=correctness,
         timeout=3600,

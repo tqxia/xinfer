@@ -484,9 +484,7 @@ class ControllerContract(unittest.TestCase):
         model = root / "model"
         model.mkdir()
         manifest = dict(revision="fixture-revision")
-        write_json(
-            model / ("manifest.json" if model_type == "qwen35" else "model_manifest.json"), manifest
-        )
+        write_json(model / "model_manifest.json", manifest)
         native = root / "xinfer_benchmark"
         native.write_bytes(b"native benchmark fixture")
         library = root / "libxinfer_attention_ops.so"
@@ -562,7 +560,7 @@ class ControllerContract(unittest.TestCase):
             patch("compiler.common.attention.native_attention_library", return_value=library),
             patch("compiler.common.weights.validate_shared_weights", return_value=weights),
             patch("transformers.AutoTokenizer.from_pretrained") as tokenizer,
-            patch("compiler.qwen35.prepare.encode_prompt", return_value=[7, 8]),
+            patch("tools.prepare.common.encode_prompt", return_value=[7, 8]),
         ):
             tokenizer.return_value.encode.return_value = [9]
             invoke = qwen35_benchmark.benchmark if model_type == "qwen35" else qwen3_benchmark.run
@@ -697,7 +695,7 @@ class ControllerContract(unittest.TestCase):
                     },
                 ),
                 patch("transformers.AutoTokenizer.from_pretrained") as tokenizer,
-                patch("compiler.qwen35.prepare.encode_prompt", return_value=[7, 8]),
+                patch("tools.prepare.common.encode_prompt", return_value=[7, 8]),
                 patch.object(benchmark, "run_worker") as worker,
             ):
                 tokenizer.return_value.encode.return_value = [9]

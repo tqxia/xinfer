@@ -16,7 +16,7 @@ from compiler.common.artifacts import default_build_dir, run, sha256
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
-from compiler.qwen35.prepare import encode_prompt
+from tools.prepare.common import encode_prompt
 from compiler.qwen35.reference import HFRuntime
 from compiler.qwen35.model import configure_text, load_model
 from compiler.common.tests.validation import bits_equal
@@ -142,7 +142,7 @@ def main():
             args.packages / f"{kind}.pt2"
         )
         assert meta["checkpoint"]["manifest"] == json.loads(
-            (args.model_dir / "manifest.json").read_text()
+            (args.model_dir / "model_manifest.json").read_text()
         )
     specs = metadata["decode"]["state"]
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"

@@ -139,12 +139,18 @@ CUDA runtime selection; the extra argument array is empty there.
 
 ## Prepare inputs and export
 
-Set explicit checkpoint paths on each host. The Qwen3 directory must include its
-verified `model_manifest.json`. Qwen3.5 uses the prepared text directory with its
-`manifest.json`; copying that complete verified directory between targets is
-supported. If preparing it from the pinned Hub source, run
-`"$Q35_PY" -m compiler.qwen35.model --output "$Q35_MODEL"` before enabling offline
-mode. See each model's guide for preparation details.
+Set explicit checkpoint paths on each host. Both model families use
+`model_manifest.json`, defined once by `MODEL_MANIFEST_NAME` in
+`compiler/common/artifacts.py`. Copying a complete verified checkpoint directory
+between targets is supported. The shared `tools.prepare` command downloads the
+pinned checkpoint and creates this manifest. Qwen3 keeps the original HF files;
+Qwen3.5 extracts text weights from its multimodal source. Preparation uses CPU
+and the matching model environment, with no CUDA or inference required.
+
+For retained Qwen3.5 text checkpoints, rename `manifest.json` to
+`model_manifest.json`. The JSON contents stay unchanged. Full-model package
+metadata embeds the text checkpoint's manifest contents, so this filename
+migration requires no metadata conversion or recompilation of existing packages.
 
 Qwen3 tools default to `work/models/qwen3-0.6b` when run from the repository
 root. Place the complete verified directory there or symlink an existing
@@ -157,12 +163,30 @@ Q3_ROOT="$PWD/artifacts/$TARGET/qwen3/$RUN"
 Q35_ROOT="$PWD/artifacts/$TARGET/qwen35/$RUN"
 Q3_PACKAGES="$Q3_ROOT/packages"
 Q35_PACKAGES="$Q35_ROOT/packages"
+```
 
+For first setup, download before enabling offline mode. Skip these commands when
+reusing complete verified directories copied from another target. Download
+refuses an existing output path and publishes the directory only after success.
+`--cache-dir` selects a Hub cache; otherwise the Hub's configured cache is used.
+
+```bash
+"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B --output "$Q3_MODEL"
+"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B --output "$Q35_MODEL"
+```
+
+For copied or retained directories, request an explicit integrity check as
+needed. Successful download already verifies the checkpoint; model loading and
+export do not repeat checkpoint manifest or checksum verification:
+
+```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 export TORCHINDUCTOR_COMPILE_THREADS=2
 export AOTI_RUNTIME_CHECK_INPUTS=1
-"$Q3_PY" -m compiler.qwen3.prepare --model-dir "$Q3_MODEL" verify
+# Optional explicit verification for copied or retained checkpoints.
+"$Q3_PY" -m tools.prepare verify --model-dir "$Q3_MODEL"
+"$Q35_PY" -m tools.prepare verify --model-dir "$Q35_MODEL"
 
 export TORCHINDUCTOR_CACHE_DIR="$PWD/work/$TARGET/cache/$RUN/qwen3"
 "$Q3_PY" -m compiler.qwen3.export --model-dir "$Q3_MODEL" --output "$Q3_PACKAGES"
@@ -218,7 +242,7 @@ INSTALL_LIBDIR=$(sed -n 's/^CMAKE_INSTALL_LIBDIR:[^=]*=//p' "$BUILD/CMakeCache.t
 mv "$PREFIX" "$MOVED_PREFIX"
 "$MOVED_PREFIX/bin/xinfer_aoti" --help
 
-"$Q3_PY" -m compiler.qwen3.prepare --model-dir "$Q3_MODEL" encode \
+"$Q3_PY" -m tools.prepare encode --model-dir "$Q3_MODEL" \
   --prompt "What is the capital of France?" --output "$Q3_ROOT/install-prompt.ids"
 "$MOVED_PREFIX/bin/xinfer_aoti" "$Q3_PACKAGES" \
   "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-new-tokens 8

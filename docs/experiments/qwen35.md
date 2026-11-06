@@ -1,3 +1,6 @@
+Historical commands below retain earlier module names. Current preparation uses
+`python -m tools.prepare`; see the model guide for its interface.
+
 # Qwen3.5 experiment record
 
 The current full-model path uses dynamic prefill, packaged Triton GDN and native

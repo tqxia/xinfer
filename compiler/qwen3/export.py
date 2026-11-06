@@ -8,12 +8,13 @@ from pathlib import Path
 
 import torch
 
+from compiler.common.artifacts import MODEL_MANIFEST_NAME
 from compiler.common.attention import cache_extent
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
 from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model
-from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.qwen3.config import DEFAULT_MODEL
 
 
 def main():
@@ -33,7 +34,7 @@ def main():
         raise ValueError("Flash must export with backed_size_oblivious disabled")
     model = load_model(args.model_dir)
     step = FlashStep(model)
-    manifest = json.loads((args.model_dir / "model_manifest.json").read_text())
+    manifest = json.loads((args.model_dir / MODEL_MANIFEST_NAME).read_text())
     revision = manifest["revision"]
     checkpoint = dict(model_id=manifest["repo_id"], revision=revision, manifest=manifest)
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.

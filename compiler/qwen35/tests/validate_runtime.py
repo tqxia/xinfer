@@ -16,7 +16,7 @@ from compiler.common.artifacts import default_build_dir, run, sha256
 from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops, native_attention_library
-from compiler.qwen35.prepare import encode_prompt
+from tools.prepare.common import encode_prompt
 from compiler.qwen35.model import configure_text
 from compiler.qwen35.tests.common import fixtures
 from compiler.qwen35.reference import PythonRuntime
@@ -359,7 +359,7 @@ def main():
     for kind, meta in metadata.items():
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"]["manifest"] == json.loads(
-            (args.model_dir / "manifest.json").read_text()
+            (args.model_dir / "model_manifest.json").read_text()
         )
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"

@@ -16,7 +16,7 @@ from compiler.common.artifacts import default_build_dir
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import CACHE_LENGTH, allocate_cache, load_model
-from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.qwen3.config import DEFAULT_MODEL
 from compiler.common.tests.validation import record_failure, token_differences
 from compiler.qwen3.tests.numerics import (
     MAX_RELATIVE_ERROR,

@@ -12,13 +12,9 @@ from transformers import AutoModelForCausalLM, GenerationConfig
 
 from compiler.common.artifacts import write_json as save_json
 
-from compiler.qwen3.prepare import (
-    DEFAULT_MODEL,
-    encode_prompt,
-    load_tokenizer,
-    verify_model,
-    write_ids,
-)
+from compiler.qwen3.config import DEFAULT_MODEL
+from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
+from tools.prepare.qwen3 import verify_model
 
 
 def write_json(path, data):

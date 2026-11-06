@@ -1,12 +1,10 @@
 """HF text model with caller-owned KV buffers and functional DeltaNet state."""
 
-import argparse
 import json
 from pathlib import Path
 
 import torch
-from safetensors import safe_open
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 from transformers import Qwen3_5ForCausalLM
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextConfig,
@@ -15,17 +13,11 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from compiler.qwen35.config import (
     CACHE_LENGTH,
-    MODEL_ID,
-    REVISIONS,
     TEXT_DIR,
     configure,
     deltanet_state_shapes,
 )
-from compiler.common.artifacts import sha256
 from compiler.common.metadata import state_spec
-
-
-MODEL_FILES = ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
 
 
 def _text_config(path):
@@ -36,73 +28,8 @@ def _text_config(path):
     return config
 
 
-def prepare(directory, model=MODEL_ID):
-    """Extract text weights from either supported, pinned multimodal checkpoint."""
-    if not isinstance(model, str) or model not in REVISIONS:
-        raise ValueError(f"Unsupported checkpoint: {model}")
-    from huggingface_hub import HfApi, hf_hub_download
-
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=False)
-    revision = REVISIONS[model]
-
-    def download(name):
-        return Path(hf_hub_download(model, name, revision=revision, cache_dir="work/qwen35/hub"))
-
-    config_path = download("config.json")
-    _text_config(config_path)
-    info = HfApi().model_info(model, revision=revision, files_metadata=True)
-    expected = {s.rfilename: s.lfs.sha256 for s in info.siblings if s.lfs}
-    index = json.loads(download("model.safetensors.index.json").read_text())["weight_map"]
-    prefix = "model.language_model."
-    names = {name: shard for name, shard in index.items() if name.startswith(prefix)}
-    weights, shards = {}, {}
-    for shard in sorted(set(names.values())):
-        path = download(shard)
-        shards[shard] = sha256(path)
-        if shards[shard] != expected[shard]:
-            raise ValueError(f"Hub checksum mismatch: {shard}")
-        with safe_open(path, framework="pt", device="cpu") as reader:
-            for name, filename in names.items():
-                if filename == shard:
-                    weights["model." + name.removeprefix(prefix)] = reader.get_tensor(name)
-    if not weights:
-        raise ValueError("No text weights found")
-    save_file(weights, directory / "text.safetensors")
-    for name in MODEL_FILES:
-        path = config_path if name == "config.json" else download(name)
-        (directory / name).write_bytes(path.read_bytes())
-    manifest = dict(
-        model=model,
-        revision=revision,
-        text_parameters=len(weights),
-        source_shards=shards,
-        files={name: sha256(directory / name) for name in (*MODEL_FILES, "text.safetensors")},
-    )
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print(json.dumps(manifest, indent=2), flush=True)
-
-
 def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     directory = Path(directory)
-    manifest = json.loads((directory / "manifest.json").read_text())
-    if not isinstance(manifest, dict):
-        raise ValueError("Prepared checkpoint manifest must be an object")
-    model_id = manifest.get("model")
-    if (
-        not isinstance(model_id, str)
-        or model_id not in REVISIONS
-        or manifest.get("revision") != REVISIONS[model_id]
-    ):
-        raise ValueError("Prepared checkpoint must match a supported pinned revision")
-    if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != {
-        *MODEL_FILES,
-        "text.safetensors",
-    }:
-        raise ValueError("Prepared checkpoint file manifest is incomplete or unsupported")
-    for name, expected in manifest["files"].items():
-        if sha256(directory / name) != expected:
-            raise ValueError(f"Checksum mismatch: {name}")
     config = _text_config(directory / "config.json")
     with torch.device("meta"):
         model = Qwen3_5ForCausalLM(config)
@@ -231,18 +158,3 @@ def configure_text():
     torch.backends.cuda.enable_mem_efficient_sdp(True)
     torch.backends.cuda.enable_math_sdp(False)
     torch.backends.cuda.enable_cudnn_sdp(False)
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=REVISIONS, default=MODEL_ID)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args(argv)
-    directory = (
-        args.output or TEXT_DIR.parent.parent / args.model.rsplit("-", 1)[1].lower() / "text"
-    )
-    prepare(directory, args.model)
-
-
-if __name__ == "__main__":
-    main()

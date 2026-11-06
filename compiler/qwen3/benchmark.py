@@ -11,7 +11,7 @@ from compiler.common.benchmark import (
 )
 from compiler.common.artifacts import default_build_dir, require
 from compiler.qwen3.packages import validate_model_metadata
-from compiler.qwen3.prepare import DEFAULT_MODEL
+from compiler.qwen3.config import DEFAULT_MODEL
 
 
 def eager_loader():

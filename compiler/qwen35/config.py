@@ -1,15 +1,10 @@
-"""Pinned Qwen3.5 checkpoints, execution settings and DeltaNet state shapes."""
+"""Qwen3.5 execution settings and DeltaNet state shapes."""
 
 import importlib.metadata
 import importlib.util
 from pathlib import Path
 
 
-MODEL_ID = "Qwen/Qwen3.5-0.8B"
-REVISIONS = {
-    MODEL_ID: "2fc06364715b967f1860aea9cf38778875588b17",
-    "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-}
 TEXT_DIR = Path("work/qwen35/0.8b/text")
 ARTIFACT_DIR = Path("artifacts/qwen35/0.8b")
 CACHE_LENGTH = 1024

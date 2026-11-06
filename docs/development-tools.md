@@ -35,6 +35,16 @@ git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
 git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
 ```
 
+## Checkpoint preparation
+
+Use `python -m tools.prepare` for pinned checkpoint download, explicit offline
+verification and token encoding/decoding for either model family. Preparation
+publishes a new directory only after its files have been verified. Both use
+`model_manifest.json`; retained Qwen3.5 text checkpoints can rename their former
+`manifest.json` without changing its contents or recompiling packages.
+Preparation tests live in `tools/prepare/tests`; checkpoint loading tests remain
+with their compiler model. See the model guides for complete commands.
+
 ## Shared native executables
 
 Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
