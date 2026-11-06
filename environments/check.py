@@ -14,16 +14,30 @@ from pathlib import Path
 from environments import ROOT
 
 
-def model_requirements(model):
-    """Model requirements contain exact HF pins; native pins live in profiles."""
+def read_requirements(path):
+    """Read exact package pins, leaving pip index options to the installer."""
     result = {}
-    for line in (ROOT / "compiler" / model / "requirements.txt").read_text().splitlines():
+    for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
-        if "==" in line:
-            name, version = line.split("==", 1)
-            if name not in ("torch", "triton"):
-                result[name] = version
+        if not line or line.startswith("-"):
+            continue
+        name, separator, version = line.partition("==")
+        if not separator or not name.strip() or not version.strip():
+            raise ValueError(f"Expected an exact package pin in {path}: {line}")
+        result[name.strip()] = version.strip()
     return result
+
+
+def model_requirements(target, model):
+    return read_requirements(ROOT / "environments" / target / f"{model}_requirements.txt")
+
+
+def torch_cuda_version(version):
+    """The native Torch pin owns the expected CUDA build, e.g. +cu126."""
+    suffix = version.rpartition("+cu")[2]
+    if len(suffix) < 2 or not suffix.isdecimal():
+        raise ValueError(f"Native Torch pin requires a CUDA build suffix: {version}")
+    return f"{int(suffix[:-1])}.{int(suffix[-1])}"
 
 
 def package_version(name):
@@ -70,14 +84,11 @@ def configured_build(directory):
     return result
 
 
-def collect(model=None, build=None):
+def collect(model, requirements, build=None):
     actual = dict(
         python=dict(version=platform.python_version(), executable=sys.executable),
         platform=dict(system=platform.system(), machine=platform.machine()),
-        packages={name: package_version(name) for name in model_requirements(model)}
-        if model
-        else {},
-        triton=package_version("triton"),
+        packages={name: package_version(name) for name in requirements},
         native_tools={name: native_tool(name) for name in ("c++", "nvcc")},
     )
     if model == "qwen35":
@@ -129,10 +140,9 @@ def validate(actual, profile, requirements):
     expect(
         "CPU architecture", normalized_machine(actual["platform"]["machine"]), profile["machine"]
     )
-    expect("Python", ".".join(actual["python"]["version"].split(".")[:2]), profile["python"])
-    expect("Triton", actual["triton"], profile["triton"])
     for name, version in requirements.items():
-        expect(name, actual["packages"].get(name), version)
+        if name != "torch":
+            expect(name, actual["packages"].get(name), version)
     for name, available in actual.get("optional_backends", {}).items():
         if available:
             issues.append(f"Qwen3.5 requires an environment without {name}")
@@ -140,8 +150,8 @@ def validate(actual, profile, requirements):
     if "error" in torch:
         issues.append("Torch cannot be imported: " + torch["error"])
     else:
-        expect("Torch runtime", torch["runtime_version"], profile["torch_runtime"])
-        expect("Torch CUDA build", torch["cuda"], profile["cuda"])
+        expect("Torch runtime", torch["runtime_version"], requirements["torch"])
+        expect("Torch CUDA build", torch["cuda"], torch_cuda_version(requirements["torch"]))
         if "error" in actual["gpu"]:
             issues.append(actual["gpu"]["error"])
         else:
@@ -175,14 +185,14 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     profile = json.loads((ROOT / "environments" / args.target / "profile.json").read_text())
-    requirements = model_requirements(args.model)
-    actual = collect(args.model, args.build)
+    requirements = model_requirements(args.target, args.model)
+    actual = collect(args.model, requirements, args.build)
     issues = validate(actual, profile, requirements)
     report = dict(
         target=args.target,
         model=args.model,
         expected=profile,
-        model_requirements=requirements,
+        requirements=requirements,
         actual=actual,
         issues=issues,
         passed=not issues,

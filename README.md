@@ -16,8 +16,10 @@ and model hooks live in `tools/benchmark/`. Checkpoint download, verification an
 offline tokenization use the shared `tools/prepare/` command.
 `tools/common.py` supplies logged subprocess execution and native-library
 discovery; focused numerical diagnostics live under `tools/diagnostics/`.
-`environments/` owns project setup, native-stack checks and target profiles;
-its Bash entry points are `setup.sh` and `check.sh`.
+`environments/` owns project setup, self-contained requirements files for each
+model/device, native-stack checks and hardware profiles. Its Bash entry points
+are `environments/l20/setup.sh`,
+`environments/gb10/setup.sh` and `environments/check.sh`.
 `runtime/common/` owns the runner, state storage, device and package preflight,
 positions, prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
 One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
@@ -54,8 +56,8 @@ Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your
 "$Q3_PY" -m tools.benchmark --help
 ```
 
-Use a target's native stack and each model's isolated HF environment, following the
-[environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
+Create each model's independent environment with its target setup script, following
+the [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
 compilation profile and always links its native attention library. Existing efficient Qwen3 packages must be re-exported;
 see its guide for the fixed package contract. Build from the repository root
 with CMake. Each model retains its own compiler environment and numerical policy.

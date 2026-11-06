@@ -24,7 +24,7 @@ class EnvironmentEntrypoints(unittest.TestCase):
         self.root = self.base / "project with spaces"
         self.scripts = self.root / "environments"
         self.scripts.mkdir(parents=True)
-        for name in ("setup.sh", "check.sh"):
+        for name in ("check.sh",):
             shutil.copy2(SCRIPTS / name, self.scripts / name)
         self.outside = self.base / "caller"
         self.outside.mkdir()
@@ -57,22 +57,6 @@ class EnvironmentEntrypoints(unittest.TestCase):
 
     def invocation(self):
         return self.record.read_bytes().decode().split("\0")[:-1]
-
-    def test_setup_bootstraps_from_any_directory_and_preserves_argument_boundaries(self):
-        args = [
-            "--target",
-            "gb10",
-            "--model",
-            "qwen35",
-            "--native-python",
-            "native stack/bin/python",
-            "--output",
-            "work/env with spaces",
-        ]
-        result = self.call("setup.sh", *args)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, '{"stub":true}')
-        self.assertEqual(self.invocation(), [str(self.root), "-m", "environments.setup", *args])
 
     def test_check_uses_selected_interpreter_and_repository_relative_paths(self):
         args = [
@@ -114,14 +98,9 @@ class EnvironmentEntrypoints(unittest.TestCase):
                 self.assertFalse(self.record.exists())
 
     def test_exit_status_and_json_stdout_are_preserved(self):
-        for script, args in (
-            ("setup.sh", ["--help"]),
-            ("check.sh", ["--python", str(self.model_python)]),
-        ):
-            with self.subTest(script=script):
-                result = self.call(script, *args, status=23)
-                self.assertEqual(result.returncode, 23)
-                self.assertEqual(result.stdout, '{"stub":true}')
+        result = self.call("check.sh", "--python", str(self.model_python), status=23)
+        self.assertEqual(result.returncode, 23)
+        self.assertEqual(result.stdout, '{"stub":true}')
 
 
 if __name__ == "__main__":

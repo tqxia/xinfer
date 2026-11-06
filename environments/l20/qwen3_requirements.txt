@@ -1,0 +1,10 @@
+# Complete qwen3 environment for L20.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.13.0+cu126
+triton==3.7.1
+cmake==4.3.4
+ninja==1.13.2
+transformers==4.51.3
+tokenizers==0.21.4
+safetensors==0.5.3
+huggingface-hub==0.30.2

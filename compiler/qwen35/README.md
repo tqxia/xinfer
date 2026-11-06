@@ -227,10 +227,15 @@ references; the runtime continues to load packaged Triton without Python.
 L20 and GB10 use the same model adapter, GDN kernels and C++ runtime. Follow
 [the target environment guide](../../environments/README.md) for the native
 Torch/Triton/CUDA stack, isolated model environments, the `build/qwen35/`
-native directory and target-specific packages. `requirements.txt` contains this
-model's HF pins, including Transformers 5.20.2; native stack pins live in the
-target profiles.
-Use `environments/setup.sh` and `environments/check.sh` through that guide;
+native directory and target-specific packages. This model's self-contained
+requirements files are [`environments/l20/qwen35_requirements.txt`](../../environments/l20/qwen35_requirements.txt)
+and [`environments/gb10/qwen35_requirements.txt`](../../environments/gb10/qwen35_requirements.txt).
+Each specifies the PyTorch index and all Torch, Triton, build-tool and HF pins,
+including Transformers 5.20.2. Setup and checking read the same selected file;
+its Torch version can be changed independently of Qwen3.
+Target profiles contain hardware checks.
+Use `environments/<target>/setup.sh` to install a fresh model venv, followed by
+`environments/check.sh`, through that guide. Setup is implemented in Bash;
 environment tooling and its tests live under `environments/`.
 For full-model 4B work, use the
 [offline L20 Docker testing environment](../../environments/l20/docker/README.md).
@@ -239,7 +244,7 @@ Export-time Torch and native LibTorch must come from the same installation.
 Optional `fla` and `causal_conv1d` must be absent so the surrounding HF operations
 use the validated tensor implementation.
 
-Use the Torch 2.13 target profiles for the current shared-weight format. Keep
+Use the Torch 2.13 target requirements for the current shared-weight format. Keep
 older Torch 2.7 bundles with their matching runtime for historical comparisons.
 Rebuild and re-export on the target GPU and toolchain; compiled SM89 packages
 remain specific to their deployment stack. The shared target guide sets

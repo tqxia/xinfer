@@ -1,78 +1,54 @@
-# L20 native stack
+# L20 environment
 
 For the offline Docker testing environment, use the
-[Docker build and launch guide](docker/README.md).
-
-The profile selects the Torch 2.13 CUDA 12.6 stack on the Linux x86-64 host
-`kikoxia-any4.devcloud.woa.com`, SSH port `36000`:
-
-| Component | Recorded value |
-|---|---|
-| Python | 3.12 |
-| Torch runtime | 2.13.0+cu126 |
-| Triton | 3.7.1 |
-| CUDA used by Torch | 12.6 |
-| Local nvcc | 12.2.140 |
-| NVIDIA driver | 535.161.07 |
-| GPU compute capability | 8.9 |
-
-The selected native Python is
-`/data/workspace/develop/qwen3-aoti-poc/work/l20/native-torch213/bin/python`.
-Use it as `NATIVE_PY` in the [shared workflow](../README.md). The model venvs use
-explicit versioned paths; native builds use each model's default directory:
+[Docker build and launch guide](docker/README.md). For a non-Docker Linux x86-64
+host, use this device's Bash setup script:
 
 ```bash
-NATIVE_PY="$PWD/work/l20/native-torch213/bin/python"
+bash environments/l20/setup.sh --model qwen3
+bash environments/l20/setup.sh --model qwen35
+
 Q3_PY="$PWD/work/l20/qwen3-torch213-venv/bin/python"
 Q35_PY="$PWD/work/l20/qwen35-torch213-venv/bin/python"
 Q3_BUILD="$PWD/build/qwen3"
 Q35_BUILD="$PWD/build/qwen35"
-CMAKE=/data/workspace/abo/.venv/bin/cmake
 ```
 
-The host has no `cmake` command on its default `PATH`; the shared workflow
-selects the existing CMake executable above. Ninja is `/usr/local/bin/ninja`.
-Using these tools does not change the preserved ABO Python environment.
+The host needs Python 3.12, glibc 2.28 or newer, a C++ compiler, CUDA toolkit and
+NVIDIA driver. Each invocation creates a fresh independent venv and installs
+Torch `2.13.0+cu126` from the [official CUDA 12.6 index](https://download.pytorch.org/whl/cu126/torch/),
+Triton `3.7.1`, the model's pinned dependencies, CMake `4.3.4` and Ninja `1.13.2`.
+Setup and checking use [`qwen3_requirements.txt`](qwen3_requirements.txt) or
+[`qwen35_requirements.txt`](qwen35_requirements.txt). Each file contains the full
+PyTorch index, Torch, Triton, CMake, Ninja and HF requirements for that model.
+The model files can select different Torch versions.
+The checker derives the required CUDA runtime `12.6` from the Torch pin.
+`profile.json` checks Linux, x86-64 and GPU capability `8.9`.
 
-The setup helper reads selected native packages and does not modify the source
-environment. Use `setup.sh --output PATH` for these fresh model venvs, followed
-by `check.sh --python PATH`. The default setup paths `work/l20/qwen3-venv` and
-`work/l20/qwen35-venv`, the old `work/l20/build`, and
-`/data/workspace/abo/.venv` retain Torch 2.7 for rollback. They are not selected
-by the current profile; do not overwrite or rename them.
-The earlier Torch 2.13 build at `work/l20/build-torch213` is also retained;
-new builds use `build/qwen3/` and `build/qwen35/`.
+Use `--python /path/to/python3.12` to select the bootstrap interpreter and
+`--venv PATH` for a different fresh venv directory. `--torch-wheel PATH` selects
+a local Torch wheel. Existing destinations are refused. The setup script does
+not reuse system packages or an existing native environment. The older
+`work/l20/qwen3-venv`, `work/l20/qwen35-venv` and other retained installations
+remain available for historical comparisons.
 
-The separate native installation was provisioned with the following command
-from the repository root. Run it only when the destination does not exist;
-`venv` does not protect an existing environment from modification.
+Setup does not need a GPU. Follow the [shared workflow](../README.md) to run
+`check.sh --python PATH`, build with the model environment's CMake and LibTorch,
+and validate Triton/AOTI execution before using new packages. Native builds use
+`build/qwen3/` and `build/qwen35/`.
 
-```bash
-/data/workspace/abo/.venv/bin/python -m venv work/l20/native-torch213
-mkdir -p work/l20/tmp-torch213
-env TMPDIR="$PWD/work/l20/tmp-torch213" PIP_NO_CACHE_DIR=1 \
-  work/l20/native-torch213/bin/python -m pip install \
-  --disable-pip-version-check --progress-bar off \
-  torch==2.13.0+cu126 --index-url https://download.pytorch.org/whl/cu126
-```
+The checker compares `torch.version.cuda` to the CUDA build selected by the
+Torch requirement and records the local CUDA compiler separately; its minor
+version can differ. The earlier
+native host used nvcc `12.2.140` and driver `535.161.07`. The shared build command
+sets both `CUDA_cudart_LIBRARY` and `CUDA_CUDART_LIBRARY` to the model venv's
+`nvidia/cuda_runtime/lib/libcudart.so.12`, linking the runtime required by
+LibTorch rather than an older host runtime.
 
-Keep the native installation's package freeze and environment reports with its
-build. The CUDA driver and local compiler remain host components; validate
-actual Triton and AOTI GPU execution after an installation change.
+All L20 package requirements live in this directory; the Bash scripts contain
+no package pins.
 
-The profile's CUDA version is `torch.version.cuda`. The environment report
-records the local CUDA compiler separately; its minor version can differ, as
-in this existing stack. Retain the compiler and CMake build reports with each
-deployment. For Torch 2.13, the shared build command sets both
-`CUDA_cudart_LIBRARY` and `CUDA_CUDART_LIBRARY` to the wheel installation's
-`nvidia/cuda_runtime/lib/libcudart.so.12`. This keeps host nvcc 12.2 while linking
-the CUDA 12.6 runtime required by LibTorch; the host's older runtime produces
-undefined references when linking the new build.
-
-[`qwen3.lock`](qwen3.lock) preserves the complete original L20 Qwen3 freeze for
-provenance. It includes model and native dependencies and is not a cross-target
-installer. New model environments use the selected native stack plus their
-model's `compiler/<model>/requirements.txt`.
+## Validation history
 
 The original full-model validation remains recorded under
 [`docs/experiments/`](../../docs/experiments/). Re-run the shared validation matrix

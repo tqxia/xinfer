@@ -23,17 +23,20 @@ L20 and GB10 use the same compiler, attention adapter and C++ runtime. Start wit
 Torch/Triton/CUDA stack, create the isolated model environment, and build/export
 with the `build/qwen3/` native directory and target-specific packages.
 Export-time Torch and native LibTorch must come from the same selected installation.
-The guide uses `environments/setup.sh` and `environments/check.sh` for setup and
-checking; the Python implementations and tests also live under `environments/`.
+The guide uses `environments/<target>/setup.sh` to install a fresh model venv
+and `environments/check.sh` to check it. Setup is implemented in Bash; the
+checker and environment tests also live under `environments/`.
 
-`requirements.txt` pins this model's HF dependencies, including Transformers
-4.51.3. The Flash adapter enforces this version before importing HF private
-implementation code or modifying the model. Torch and Triton versions belong
-to the target profile. The existing [`environments/l20/qwen3.lock`](../../environments/l20/qwen3.lock) records the
-original L20 environment, including its CUDA packages. It is a historical full
-snapshot, not the GB10 installation recipe.
+This model's self-contained requirements files are
+[`environments/l20/qwen3_requirements.txt`](../../environments/l20/qwen3_requirements.txt)
+and [`environments/gb10/qwen3_requirements.txt`](../../environments/gb10/qwen3_requirements.txt).
+Each specifies the PyTorch index and all Torch, Triton, build-tool and HF pins,
+including Transformers 4.51.3. Setup and checking read the same selected file;
+its Torch version can be changed independently of Qwen3.5.
+The Flash adapter enforces the Transformers version before importing HF private
+implementation code or modifying the model. Target profiles contain hardware checks.
 
-Use the tested Torch 2.13 target profiles for new shared-weight exports. Torch
+Use the tested Torch 2.13 target requirements for new shared-weight exports. Torch
 2.7 and packages with embedded constants are unsupported by the current runtime;
 keep historical packages with their original binaries for rollback. Examples
 below use the L20 paths; select the corresponding paths from the target guide

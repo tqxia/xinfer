@@ -1,25 +1,36 @@
 # L20 and GB10 environments
 
 Both targets use the same compiler, adapters, kernels and C++ runtime on `main`.
-Each target has its own native stack, build, compilation cache and deployment
-packages. Compile on the target host with its selected Torch installation.
+Each model has an independent Python environment, native build, compilation
+cache and deployment packages. Compile on the target host with the Python
+installation selected for that model.
 
-This directory owns project setup and toolchain checks for both Python and C++.
-Use `setup.sh` and `check.sh` as the entry points. Their Python implementations
-inspect installed packages and Torch; they have no dependency on compiler helpers.
-The scripts locate the repository root, so they can be called from any working
-directory. All relative option paths are resolved from the repository root.
+This directory owns device-specific Bash setup scripts and shared environment
+checks. Use `l20/setup.sh` or `gb10/setup.sh` for a non-Docker environment, then
+`check.sh` before build or export. The scripts locate the repository root, so
+they can be called from any working directory. Relative option paths are
+resolved from the repository root. The [L20 Docker guide](l20/docker/README.md)
+provides a separate offline image workflow. Its complete `native.lock`,
+`qwen3.lock` and `qwen35.lock` files are resolved snapshots for the offline
+image, including image-specific tools. Refresh those snapshots and the wheel
+payload from the device/model requirement inputs when changing their pins;
+setup does not regenerate the Docker locks.
 
 | Target | Python | Torch runtime | Triton | Torch CUDA | GPU capability |
 |---|---|---|---|---|---|
 | [l20](l20/README.md) | 3.12 | 2.13.0+cu126 | 3.7.1 | 12.6 | 8.9 |
 | [gb10](gb10/README.md) | 3.12 | 2.13.0+cu130 | 3.7.1 | 13.0 | 12.1 |
 
-The JSON profiles define the checked native versions. They describe tested
-stacks, not downloadable wheel bundles. Keep the exact wheel/container identity
-with deployment records. Qwen3 and Qwen3.5 have isolated HF environments because
-they require Transformers 4.51.3 and 5.20.2 respectively. Their requirements files
-contain model dependencies; the selected native stack supplies Torch/Triton/CUDA.
+Both setup and environment checking read the selected model/device file:
+`environments/<target>/<model>_requirements.txt`. Each file is self-contained:
+it specifies the official PyTorch package index and all Torch, Triton,
+CMake, Ninja and HF pins. The Torch version can vary independently for each
+model/device. All package requirements live under `environments/`.
+Qwen3 and Qwen3.5 use separate venvs because they require Transformers 4.51.3 and
+5.20.2 respectively. The JSON profiles contain only operating system, CPU
+architecture and GPU capability. Python 3.12 is the setup prerequisite and
+default interpreter. Keep the actual environment
+report with deployment records.
 The Qwen3 Flash adapter rejects Transformers versions other than 4.51.3 before
 loading its private HF implementation or modifying model modules. Both
 benchmark eager baselines use ordinary HF dynamic-cache forwards; their reports
@@ -27,90 +38,89 @@ record `eager_baseline: hf_dynamic_cache`.
 
 ## Create model environments
 
-Run the following workflow from the repository root. First provision the native
-stack described by the chosen target, then set `NATIVE_PY` to its Python executable. The profile-specific
-README gives the recorded installation on each existing host.
+The host needs Python 3.12, Linux with glibc 2.28 or newer, a C++ compiler, a
+compatible CUDA toolkit and NVIDIA driver. Setup installs Torch, Triton, model
+dependencies, CMake 4.3.4 and Ninja 1.13.2 into a fresh venv. It does not require
+a visible GPU. GPU and build compatibility are checked separately.
 
 ```bash
 TARGET=l20                         # or gb10
-NATIVE_PY=/absolute/path/to/native-stack/bin/python
-CMAKE=cmake
-# L20 uses versioned Python paths so the Torch 2.7 environments remain available.
 ENV_SUFFIX=-venv
 if [ "$TARGET" = l20 ]; then
-  NATIVE_PY="$PWD/work/l20/native-torch213/bin/python"
-  CMAKE=/data/workspace/abo/.venv/bin/cmake
   ENV_SUFFIX=-torch213-venv
 fi
 RUN=baseline-001                    # choose a fresh name for each export/test run
-export PATH="$(dirname "$NATIVE_PY"):$PATH"  # host tools, including Ninja if installed there
 
 for MODEL in qwen3 qwen35; do
   MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
-  bash environments/setup.sh \
-    --target "$TARGET" --model "$MODEL" --native-python "$NATIVE_PY" \
-    --output "$MODEL_ENV"
-  "$MODEL_ENV/bin/python" -m pip install \
-    -c "$MODEL_ENV/native-constraints.txt" \
-    -r "compiler/$MODEL/requirements.txt"
-  "$MODEL_ENV/bin/python" -m pip check
+  bash "environments/$TARGET/setup.sh" --model "$MODEL" --venv "$MODEL_ENV"
   bash environments/check.sh --python "$MODEL_ENV/bin/python" \
     --target "$TARGET" --model "$MODEL" \
     --output "artifacts/$TARGET/$MODEL/$RUN/environment.json"
 done
 ```
 
-`setup.sh` uses host `python3` to bootstrap the setup helper; `--native-python`
-selects the installation used to probe the native stack and create each venv.
+Both setup scripts accept `--model qwen3|qwen35`, `--python PATH` to select a
+Python 3.12 executable, `--venv PATH`, and `--torch-wheel PATH` to install a
+local Torch wheel instead of downloading the pinned wheel from the official
+PyTorch index. A local wheel replaces only the Torch requirement; the remaining
+requirements in the selected file still apply. The default Python executable is
+`python3.12`. Default venvs are
+`work/l20/<model>-torch213-venv` and `work/gb10/<model>-venv`.
+
+Setup requires a new venv directory and refuses to overwrite an existing
+venv. Each new environment gets its own installed Torch and dependencies;
+packages from an existing Python installation are not linked or inherited.
+The script installs the selected requirements file in one pip invocation,
+followed by `pip check`.
+Qwen3.5 also requires `fla` and `causal_conv1d` to be absent, as checked by the
+environment command.
+
 For `check.sh`, put `--python PATH` first to select the model environment to
-inspect. Remaining options are forwarded to the checker unchanged.
-
-The setup helper creates absent venv directories, links only the native packages
-and their selected dependency closure, and records source provenance. It does
-not expose the source environment's unrelated packages. Linked native packages
-are read-only dependencies by convention; do not upgrade or uninstall them
-through either model venv. The generated constraints keep pip from silently
-replacing their recorded versions. Qwen3.5 also requires `fla` and
-`causal_conv1d` to be absent, as checked by the environment command.
-
-Environment checks collect the actual Python/platform, Torch runtime and
-distribution/Git versions, Triton, CUDA, C++ ABI, GPU and LibTorch location.
-Failures exit nonzero and are still written to the requested JSON report. A
-profile match establishes the declared environment contract; keep the recorded
-build provenance as well.
+inspect. Remaining options are forwarded to the checker unchanged. Checks
+collect the actual Python/platform, Torch runtime and distribution/Git versions,
+Triton, CUDA, C++ ABI, GPU and LibTorch location. They validate the installed
+native packages, including CMake and Ninja, and the HF packages against the
+same requirements file used by setup. Required Torch runtime and CUDA build
+versions come from that file's Torch pin. Reports include the `requirements`
+map separately from the hardware profile. Failures exit nonzero and are still
+written to the requested JSON report. Keep the recorded build provenance as well.
 
 ## Build native runtimes for each model
 
-Both model venvs use the same selected LibTorch. Each model has its own native
-build directory, `build/qwen3/` or `build/qwen35/`. CMake derives the C++ standard
-from that Torch build. Use a fresh build directory when changing native stacks.
-The host also needs CMake 3.24 or newer, Ninja, a C++ compiler and a compatible
-CUDA toolkit. The setup helper does not install these executables.
+Each model's native build uses LibTorch from that model's Python environment.
+Build directories are `build/qwen3/` and `build/qwen35/`. CMake derives the C++
+standard from the selected Torch build. Use a fresh build directory when
+changing Torch installations. CMake and Ninja are installed in each model
+venv's `bin/`; the C++ compiler and CUDA toolkit remain host prerequisites.
 
 ```bash
 Q3_PY="$PWD/work/$TARGET/qwen3$ENV_SUFFIX/bin/python"
 Q35_PY="$PWD/work/$TARGET/qwen35$ENV_SUFFIX/bin/python"
 Q3_BUILD="$PWD/build/qwen3"
 Q35_BUILD="$PWD/build/qwen35"
-TORCH_PREFIX=$("$Q3_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
-CUDA_ARCH=$("$Q3_PY" -c 'import torch; print("%d.%d" % torch.cuda.get_device_capability())')
 NVCC=/usr/local/cuda/bin/nvcc         # compatible toolkit used for this build
-CUDA_RUNTIME_FLAGS=()
-if [ "$TARGET" = l20 ]; then
-  CUDA_RUNTIME=$("$Q3_PY" -c 'from pathlib import Path; import torch; p = Path(torch.__file__).resolve().parent.parent / "nvidia/cuda_runtime/lib/libcudart.so.12"; assert p.is_file(), p; print(p)')
-  CUDA_RUNTIME_FLAGS=("-DCUDA_cudart_LIBRARY=$CUDA_RUNTIME" "-DCUDA_CUDART_LIBRARY=$CUDA_RUNTIME")
-fi
 
 for MODEL in qwen3 qwen35; do
+  MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
+  MODEL_PY="$MODEL_ENV/bin/python"
+  CMAKE="$MODEL_ENV/bin/cmake"
   BUILD="$PWD/build/$MODEL"
-  "$CMAKE" -S . -B "$BUILD" -G Ninja \
+  TORCH_PREFIX=$("$MODEL_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
+  CUDA_ARCH=$("$MODEL_PY" -c 'import torch; print("%d.%d" % torch.cuda.get_device_capability())')
+  CUDA_RUNTIME_FLAGS=()
+  if [ "$TARGET" = l20 ]; then
+    CUDA_RUNTIME=$("$MODEL_PY" -c 'from pathlib import Path; import torch; p = Path(torch.__file__).resolve().parent.parent / "nvidia/cuda_runtime/lib/libcudart.so.12"; assert p.is_file(), p; print(p)')
+    CUDA_RUNTIME_FLAGS=("-DCUDA_cudart_LIBRARY=$CUDA_RUNTIME" "-DCUDA_CUDART_LIBRARY=$CUDA_RUNTIME")
+  fi
+  PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" -S . -B "$BUILD" -G Ninja \
     -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
     "${CUDA_RUNTIME_FLAGS[@]}" \
     -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
     -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
-  "$CMAKE" --build "$BUILD" --target \
+  PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" --build "$BUILD" --target \
     xinfer_aoti xinfer_validate xinfer_benchmark qwen_runtime_contract -j2
-  bash environments/check.sh --python "$PWD/work/$TARGET/$MODEL$ENV_SUFFIX/bin/python" \
+  bash environments/check.sh --python "$MODEL_PY" \
     --target "$TARGET" --model "$MODEL" --build "$BUILD" \
     --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
 done
@@ -124,17 +134,17 @@ Each model's Python tools default to executables and the attention library in
 its `build/<model>/` directory. Existing native-path options and
 `XINFER_ATTENTION_OPS_LIBRARY` optionally select another build or installed runtime.
 
-`--build` verifies that CMake selected the active environment's LibTorch, resolving
-symlinks to the shared native installation. Build before either full-model
-export so Python can register the shared native FlashAttention operator. Deploy
-`libxinfer_attention_ops.so` with the shared full-model executables.
-Qwen3.5 packages its GDN kernels and needs no separate GDN custom-op library.
+`--build` verifies that CMake selected the active environment's LibTorch. Build
+before either full-model export so Python can register the shared native
+FlashAttention operator. Deploy `libxinfer_attention_ops.so` with the shared
+full-model executables. Qwen3.5 packages its GDN kernels and needs no separate
+GDN custom-op library.
 
-L20 keeps its host CUDA 12.2 compiler and explicitly links the CUDA 12.6 runtime
-from the selected wheel installation. The two CMake variables select that
-runtime for the Torch and CUDA discovery paths. Linking Torch 2.13 against the host's
-older `libcudart` leaves unresolved runtime symbols. GB10 uses its existing
-CUDA runtime selection; the extra argument array is empty there.
+For L20, the two CMake runtime variables select CUDA 12.6 from the model
+installation for both Torch and CUDA discovery. This also supports a host
+compiler with an older compatible CUDA minor version; linking Torch 2.13 to an
+older host `libcudart` can leave unresolved runtime symbols. GB10 uses its CUDA
+13.0 runtime selection; the extra argument array is empty there.
 
 ## Prepare inputs and export
 
@@ -342,8 +352,8 @@ acceptance remains open; passing kernel/AOTI tests and runtime
 `native_runtime_passed` do not replace the full numerical report. The matrix
 does not require cross-target bitwise equality or waive existing thresholds.
 
-The target guides record the model validation runs. The Bash entry-point
-refactor was also checked on both L20 and GB10: 21 tooling tests, fresh setup
+The target guides record the model validation runs. The earlier shared Bash
+setup/check entry points were checked on both L20 and GB10: 21 tooling tests, fresh setup
 for both model environments, dependency checks, LibTorch build matching and
 failure-status checks passed from outside the repository. These reports are in
 `artifacts/<target>/environment-refactor-20261101/` in each validation checkout;
