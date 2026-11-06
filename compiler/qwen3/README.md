@@ -282,11 +282,8 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 
 ## Generate in C++
 
-The default decode backend is AOTI. The optional
-[MegaQwen experiment](../../docs/experiments/qwen3-megaqwen.md) adds
-`--decode-backend megaqwen` in builds with `XINFER_ENABLE_MEGAQWEN=ON`, sharing
-the existing weights and KV storage. Its numerical acceptance remains open;
-see the experiment's validation results and separate backend-comparison command.
+The default decode backend is AOTI. The [optional MegaQwen backend](#optional-megaqwen-decode)
+uses the same package, weights and KV storage in an enabled build.
 
 ```bash
 "$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
@@ -302,6 +299,89 @@ must fit the package context capacity (40,960 by default), even if EOS
 might arrive earlier. `--max-output-tokens` defaults to 64. The requested output
 budget determines the remaining prompt allowance; there is no separate prompt cap.
 Select the visible GPU with `CUDA_VISIBLE_DEVICES`.
+
+## Optional MegaQwen decode
+
+`XINFER_ENABLE_MEGAQWEN=ON` adds `libxinfer_megaqwen.so` and enables
+`--decode-backend megaqwen` for the pinned Qwen3-0.6B checkpoint. AOTI remains
+the default and handles the first call after reset, including a one-token prompt,
+and every multi-token call. MegaQwen handles later single-token calls against
+the same canonical weights and caller-owned KV buffers. AOTI can resume on
+history written by MegaQwen; the native backend has no separate cache or position.
+
+The backend supports schema 5 packages with selected capacity in 512–40,960,
+batch one, 28 layers, 16 query heads, eight KV heads, head dimension 128 and
+vocabulary 151,936. Cache strides and RoPE tables use that selected capacity.
+It does not enlarge a package's compiled cache. Convert retained compatible
+sidecars into a separate schema 5 bundle while preserving their original
+capacity, token ranges, shapes and hashes; larger capacities require re-export.
+Follow the [retained-package conversion contract](../../docs/package-metadata.md).
+
+Complete prompts may exceed 512 tokens when the prompt plus output budget fits
+the package's capacity. The shared runner validates the complete request before
+execution and splits prefill into calls of at most 512 tokens. A final one-token
+remainder uses the selected decode backend after the earlier chunks. For example,
+a 513-token prompt uses AOTI for its first 512 tokens and MegaQwen for its last
+token. A 1,024-token prompt uses two AOTI prefill calls before generated-token
+decode. Use `--max-output-tokens` for the generation budget.
+
+Configure the matching native toolchain first using the
+[environment guide](../../environments/README.md#build-native-runtimes-for-each-model).
+The following reconfigures that Qwen3 build for the L20 SM89 target and adds
+correctness drivers. Other GPU targets need separate validation.
+
+```bash
+"$CMAKE" -S . -B "$BUILD" \
+  -DXINFER_ENABLE_MEGAQWEN=ON -DXINFER_MEGAQWEN_CUDA_ARCHITECTURES=89 \
+  -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=OFF
+"$CMAKE" --build "$BUILD" --target \
+  xinfer_aoti xinfer_validate qwen_attention_contract qwen_hybrid_contract -j2
+
+"$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated-megaqwen.ids \
+  --max-output-tokens 64 --decode-backend megaqwen
+```
+
+Deploy `libxinfer_megaqwen.so` with the enabled executable, the native attention
+library and matching LibTorch/CUDA libraries. Backend selection is native-only;
+exported packages and the Python AOTI control remain unchanged.
+
+Attention uses streaming online softmax with one, two or four KV partitions per
+query head. The untuned policy selects one partition through 128 valid KV tokens,
+two through 256, and four beyond, reduced when the resident cooperative grid
+cannot fit the additional attention blocks. Partial softmax statistics and
+unnormalized values use 33,280 bytes of FP32 scratch shared across layers and
+ordered calls. One partition preserves the original short-context arithmetic;
+split reductions can change floating-point accumulation order. Runtime backend
+information reports the policy, workspace, launch resources and capacity range.
+These properties do not establish numerical acceptance or a speedup.
+
+Use fresh output paths for correctness checks:
+
+```bash
+mkdir -p artifacts/qwen3-megaqwen-checks
+"$BUILD/qwen_attention_contract" artifacts/qwen3-megaqwen-checks/attention.json
+"$Q3_PY" -m tools.validation.hybrid \
+  --packages artifacts/qwen3-flash --model-dir "$Q3_MODEL" \
+  --native "$BUILD/xinfer_validate" \
+  --contract-native "$BUILD/qwen_hybrid_contract" \
+  --output artifacts/qwen3-megaqwen-validation
+```
+
+The standalone attention check uses an independent CPU dense-softmax reference.
+The hybrid command uses the shared HF → eager → Python AOTI → C++ AOTI
+validation chain, with an additional native MegaQwen stage on matched inputs.
+It generates unchanged BF16 HF references during the run; there is no
+`--reference` argument or separate FP32 HF control model. It also runs the native
+hybrid state, ownership, handoff and stream contracts. Native/Python AOTI equality
+and structural checks remain strict; required HF logit limits remain 5%.
+Passing runtime checks does not resolve HF numerical failures. Exit status 0
+means all required checks passed, 1 means completed checks failed and 2 means
+validation was incomplete. These synchronized correctness runs are not benchmarks.
+
+The [pre-schema-5 experiment record](../../docs/experiments/qwen3-megaqwen.md)
+preserves earlier fixed-capacity results and commands. Evaluate each current
+build and package separately; those recorded outcomes do not qualify expanded
+capacities or a rebased implementation.
 
 ## Benchmark and profile
 

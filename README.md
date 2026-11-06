@@ -3,7 +3,7 @@
 PyTorch AOTInductor compilation with Python-free C++ inference.
 
 - [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
-- [Optional MegaQwen decode experiment](docs/experiments/qwen3-megaqwen.md): AOTI prefill with shared-weight/cache CUDA decode, validation and backend comparison.
+- [Optional MegaQwen decode](compiler/qwen3/README.md#optional-megaqwen-decode): AOTI prefill with shared-weight/cache CUDA decode and independent HF validation.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
 - [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
@@ -66,6 +66,14 @@ for Qwen3-0.6B and Qwen3.5-0.8B, with native/Python AOTI bitwise parity.
 Their focused HF numerical comparisons retain failures; see the
 [default-capacity validation record](docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07).
 These expanded profiles have not been validated on GB10.
+
+The optional MegaQwen backend shares Qwen3's schema 5 package, weights and KV
+storage with AOTI. It accepts the package's selected capacity in 512–40,960;
+complete prompts use the same prefill chunking and context budget. AOTI remains
+the default. MegaQwen numerical acceptance is evaluated separately; historical
+results do not qualify a rebuilt backend or a larger-capacity package. See the
+[current MegaQwen usage](compiler/qwen3/README.md#optional-megaqwen-decode) and
+[historical experiment record](docs/experiments/qwen3-megaqwen.md).
 
 Run Python tools from the repository root as modules, for example:
 

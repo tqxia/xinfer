@@ -2,6 +2,7 @@
 
 from contextlib import closing
 from dataclasses import replace
+from pathlib import Path
 
 import torch
 
@@ -51,7 +52,9 @@ def _contract_probes(runtime, specs, seed, lengths):
     return dict(lengths=list(lengths), poisoned_future_ignored=True, write_regions_preserved=True)
 
 
-def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
+def _greedy_anchors(
+    suite, report, hf, compiled, specs, policy, chats, *, actual_name="python_aoti"
+):
     """HF logits must see the same continuation as the compiled greedy run."""
     mismatches = [
         case
@@ -79,7 +82,7 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
         right = Trace(logits={(name, step): value for step, value in enumerate(expected)})
         compare_traces(
             report,
-            "python_aoti",
+            actual_name,
             "hf_greedy_teacher",
             left,
             right,
@@ -91,7 +94,12 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
 
 
 @torch.inference_mode()
-def validate_chain(suite, packages, native, output, metadata, report):
+def validate_chain(suite, packages, native, output, metadata, report, *, native_backends=()):
+    require(
+        len(set(native_backends)) == len(native_backends)
+        and all(backend == "megaqwen" for backend in native_backends),
+        "Unknown or repeated additional native backend",
+    )
     specs = suite.specs
     policy = Policy(
         state_required=suite.state_required,
@@ -239,4 +247,72 @@ def validate_chain(suite, packages, native, output, metadata, report):
     print("Control: HF logits on compiled greedy trajectories", flush=True)
     _greedy_anchors(suite, report, hf, compiled, specs, policy, chats)
     report["controls"] = dict(matched_greedy_logits=True)
+    for backend in native_backends:
+        name = f"cpp_{backend}"
+        print(f"Stage: {name}", flush=True)
+        destination = Path(output) / backend
+        destination.mkdir()
+        candidate, execution = run_native(
+            native,
+            packages,
+            destination,
+            cases,
+            chats,
+            metadata,
+            state_keys=suite.native_state_keys(cases),
+            decode_backend=backend,
+        )
+        require(
+            set(candidate.states) == suite.native_state_keys(cases),
+            "Native candidate state coverage differs",
+        )
+        compare_traces(
+            report,
+            name,
+            "hf",
+            candidate,
+            hf,
+            specs,
+            numerical_policy,
+            state_keys=set(candidate.states),
+        )
+        compare_traces(
+            report,
+            name,
+            "python_aoti",
+            candidate,
+            compiled,
+            specs,
+            policy,
+            required=False,
+            state_keys=set(candidate.states),
+        )
+        # The first graph call after reset remains AOTI, even for P=1. Later
+        # calls deliberately use different arithmetic and have no bitwise gate.
+        compare_traces(
+            report,
+            f"{name}_first_call",
+            "python_aoti_first_call",
+            candidate,
+            compiled,
+            specs,
+            policy,
+            exact=True,
+            logit_keys={(case["name"], 0) for case in cases},
+            state_keys={key for key in candidate.states if key[1] == 0},
+            greedy_names=set(),
+        )
+        print(f"Control: HF logits on {name} greedy trajectories", flush=True)
+        _greedy_anchors(suite, report, hf, candidate, specs, policy, chats, actual_name=name)
+        report.setdefault("native_candidates", {})[backend] = execution
+        report["stages"].append(_stage_summary(name, candidate))
+        report["controls"].setdefault("matched_greedy_backends", []).append(backend)
+        del candidate
+    if native_backends:
+        report["native_bitwise_scope"] = "C++ AOTI versus Python AOTI"
+        report["numerical_policy"].update(
+            native_candidate_logits="same HF limits as AOTI",
+            native_candidate_first_call="bitwise Python AOTI",
+            native_candidate_vs_aoti="diagnostic after the initial handoff",
+        )
     report["passed"] = not report["failures"] and report["native_bitwise"]

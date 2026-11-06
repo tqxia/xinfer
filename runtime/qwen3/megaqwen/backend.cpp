@@ -22,6 +22,10 @@ constexpr const char *kUpstreamCommit = "0bc1fdedb82744481373000c5c7d3c58795c7a3
 constexpr const char *kArithmeticMode = "eager_bf16_boundaries_fp32_accumulation";
 constexpr const char *kRepairedSourceSha256 =
     "21d42a0423538b591dfe206c33127b1b3502214196dd6683714190206bb786f9";
+// Package capacity starts at 512; the pinned checkpoint's unscaled RoPE ceiling
+// is 40,960. KV strides and RoPE tables use the package's selected capacity.
+constexpr int64_t kMinCapacity = 512;
+constexpr int64_t kMaxCapacity = 40960;
 
 uint64_t address(const at::Tensor &tensor) {
   return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(tensor.const_data_ptr()));
@@ -32,8 +36,9 @@ public:
   MegaQwenDecode(const SharedWeights &weights, const std::vector<at::Tensor> &state,
                  int64_t capacity, int64_t vocab)
       : state_(state), capacity_(capacity), vocab_(vocab) {
-    require(capacity_ == 1024 && vocab_ == 151936,
-            "MegaQwen requires Qwen3-0.6B capacity 1024 and vocabulary 151936");
+    require(capacity_ >= kMinCapacity && capacity_ <= kMaxCapacity,
+            "MegaQwen requires Qwen3-0.6B context capacity in 512..40960");
+    require(vocab_ == 151936, "MegaQwen requires Qwen3-0.6B vocabulary 151936");
     require(state_.size() == 56 && state_[0].defined() && state_[0].is_cuda(),
             "MegaQwen requires 56 CUDA KV state tensors");
     device_ = state_[0].device();
@@ -95,6 +100,11 @@ public:
     attention_ = at::empty({2048}, fp32);
     mlp_ = at::empty({3072}, fp32);
     normalized_ = at::empty({1024}, fp32);
+    // Reuse FP32 partial softmax statistics and unnormalized values across all
+    // layers and decode calls. No model weights or KV storage are duplicated.
+    attention_partial_max_ = at::empty({16, megaqwen::kMaxAttentionPartitions}, fp32);
+    attention_partial_sum_ = at::empty({16, megaqwen::kMaxAttentionPartitions}, fp32);
+    attention_partial_values_ = at::empty({16, megaqwen::kMaxAttentionPartitions, 128}, fp32);
     workspace_ = {hidden_.data_ptr(),
                   activations_.data_ptr<float>(),
                   residual_.data_ptr<float>(),
@@ -104,10 +114,14 @@ public:
                   attention_.data_ptr<float>(),
                   mlp_.data_ptr<float>(),
                   normalized_.data_ptr<float>(),
-                  nullptr};
+                  nullptr,
+                  {attention_partial_max_.data_ptr<float>(),
+                   attention_partial_sum_.data_ptr<float>(),
+                   attention_partial_values_.data_ptr<float>()}};
     workspace_bytes_ = 0;
     for (const auto &tensor : {pointer_table_, cos_, sin_, hidden_, activations_, residual_, q_,
-                               key_, value_, attention_, mlp_, normalized_})
+                               key_, value_, attention_, mlp_, normalized_, attention_partial_max_,
+                               attention_partial_sum_, attention_partial_values_})
       workspace_bytes_ += tensor.nbytes();
     // The copies above are pointer/metadata tables and scratch only. Every
     // retained model/cache tensor is a shallow alias of the existing pool.
@@ -150,6 +164,15 @@ public:
                 {"source_version", kUpstreamCommit},
                 {"repaired_source_sha256", kRepairedSourceSha256},
                 {"arithmetic_mode", kArithmeticMode},
+                {"attention_algorithm", "streaming_online_softmax_split_kv"},
+                {"attention_partition_target_tokens", megaqwen::kAttentionPartitionTokens},
+                {"attention_max_partitions", megaqwen::kMaxAttentionPartitions},
+                {"attention_partitions_at_capacity",
+                 megaqwen::attention_partition_count(int(capacity_), launch_.grid_blocks)},
+                {"attention_policy_tuned", false},
+                {"attention_partial_bytes", attention_partial_max_.nbytes() +
+                                                attention_partial_sum_.nbytes() +
+                                                attention_partial_values_.nbytes()},
                 {"grid_blocks", launch_.grid_blocks},
                 {"sm_count", launch_.sm_count},
                 {"threads_per_block", launch_.threads_per_block},
@@ -167,6 +190,7 @@ public:
                 {"validation_scope", "shape_dtype_stride_alignment_device_and_alias_contract"},
                 {"numerical_parity_validated", false},
                 {"capacity", capacity_},
+                {"supported_capacity_range", Json::array({kMinCapacity, kMaxCapacity})},
                 {"vocab_size", vocab_},
                 {"rope_theta", 1000000.0},
                 {"layers", 28},
@@ -197,7 +221,8 @@ private:
     for (const auto &tensor : state_)
       record(tensor);
     for (const auto &tensor : {pointer_table_, cos_, sin_, hidden_, activations_, residual_, q_,
-                               key_, value_, attention_, mlp_, normalized_})
+                               key_, value_, attention_, mlp_, normalized_, attention_partial_max_,
+                               attention_partial_sum_, attention_partial_values_})
       record(tensor);
     // Mark complete only after all storage registrations succeeded.
     recorded_streams_.insert(stream.id());
@@ -232,6 +257,7 @@ private:
   size_t workspace_bytes_ = 0;
   at::Tensor embedding_, final_norm_, head_, pointer_table_, cos_, sin_;
   at::Tensor hidden_, activations_, residual_, q_, key_, value_, attention_, mlp_, normalized_;
+  at::Tensor attention_partial_max_, attention_partial_sum_, attention_partial_values_;
 };
 
 } // namespace

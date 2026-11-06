@@ -36,7 +36,11 @@ checking, and explicit L2 prefetching. This native adaptation additionally:
   first use of each stream, deduplicating storage bases to protect asynchronous
   allocation lifetime without blocking or changing caller-owned stream ordering;
 - constructs BF16 RoPE tables with the Qwen3-0.6B contract `theta=1000000`, fixed
-  capacity 1024, 28 layers, 16 query heads, 8 KV heads and head dimension 128.
+  capacity 1024, 28 layers, 16 query heads, 8 KV heads and head dimension 128;
+- extends attention with up to four contiguous KV partitions per query head,
+  FP32 partial softmax statistics/values, and a max-rescaled cross-block merge,
+  retaining the single-partition path for short contexts. The initial partition
+  policy is untuned; this adaptation does not assert a performance improvement.
 
 The native interface does not assert bitwise or numerical parity with AOTI or
 Hugging Face. `info().validated` covers tensor/alias/launch contracts; the full

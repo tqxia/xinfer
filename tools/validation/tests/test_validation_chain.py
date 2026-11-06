@@ -1,6 +1,8 @@
 """CPU checks for validation-stage coverage, policies and request orchestration."""
 
 from contextlib import nullcontext
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import unittest
@@ -248,6 +250,86 @@ class RequestRuntime:
 
 
 class ValidationPipeline(unittest.TestCase):
+    def test_additional_backend_reuses_hf_chain_and_keeps_both_numerical_and_handoff_gates(self):
+        from tools.validation.common import pipeline
+
+        cases = [dict(name="teacher", steps=[[1, 2], [1]])]
+        chats = [dict(name="chat", prompt=[1, 2], limit=2)]
+        specs = [KEY, CONV]
+        capture = lambda case, step: True
+
+        class BF16Runtime(CPURuntime):
+            def step(self, tokens):
+                return super().step(tokens).to(torch.bfloat16)
+
+            def close(self):
+                pass
+
+        def stages():
+            for name in ("hf", "hf_dynamic", "eager"):
+                yield Stage(name, BF16Runtime())
+
+        for step, factor, failure_label in (
+            (1, 1.06, "cpp_megaqwen_vs_hf"),
+            (0, 1.01, "cpp_megaqwen_first_call_vs_python_aoti_first_call"),
+        ):
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as temporary:
+                suite = SimpleNamespace(
+                    model_type="qwen3",
+                    specs=specs,
+                    capacity=8,
+                    state_required=False,
+                    tokens_required=False,
+                    eos=[2],
+                    stages=stages,
+                    fixtures=lambda hf: (cases, chats),
+                    stage_cases=lambda name, cases: cases,
+                    capture_states=capture,
+                    native_state_keys=lambda cases: {("teacher", 0), ("teacher", 1)},
+                    reference=Mock(side_effect=AssertionError("Unexpected HF reload")),
+                )
+                baseline = run_stage(BF16Runtime(), cases, chats, specs, capture, suite.eos)
+                candidate = Trace(
+                    logits={key: value.clone() for key, value in baseline.logits.items()},
+                    states=baseline.states,
+                    positions=baseline.positions,
+                    greedy=baseline.greedy,
+                )
+                candidate.logits["teacher", step].mul_(factor)
+                report = new_report("qwen3")
+                with (
+                    patch.object(pipeline, "sha256", return_value="native-digest"),
+                    patch.object(pipeline, "load_aoti_runtime", return_value=BF16Runtime()),
+                    patch.object(pipeline, "_contract_probes", return_value={}),
+                    patch.object(
+                        pipeline, "run_native", side_effect=[(baseline, {}), (candidate, {})]
+                    ) as run_native,
+                    patch.object(pipeline.torch.cuda, "empty_cache"),
+                ):
+                    validate_chain(
+                        suite,
+                        "packages",
+                        "native",
+                        Path(temporary),
+                        {},
+                        report,
+                        native_backends=("megaqwen",),
+                    )
+                self.assertFalse(report["passed"])
+                self.assertTrue(report["native_bitwise"])
+                self.assertTrue(
+                    any(row["comparison"] == failure_label for row in report["failures"])
+                )
+                self.assertEqual(run_native.call_count, 2)
+                self.assertEqual(run_native.call_args.kwargs["decode_backend"], "megaqwen")
+                self.assertEqual(report["stages"][-1]["name"], "cpp_megaqwen")
+                self.assertEqual(report["controls"]["matched_greedy_backends"], ["megaqwen"])
+                self.assertIn("megaqwen", report["native_candidates"])
+                self.assertFalse(
+                    any("hf_fp32" in row["comparison"] for row in report["comparisons"])
+                )
+                suite.reference.assert_not_called()
+
     def test_chain_completes_without_fp32_hooks_or_report_fields(self):
         from tools.validation.common import pipeline
 

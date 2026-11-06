@@ -9,12 +9,14 @@
 #include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -80,7 +82,7 @@ std::vector<int64_t> tokens(int64_t count, int64_t offset = 0) {
   return result;
 }
 
-void reject_unchanged(qwen::Runtime &runtime, const std::vector<int64_t> &input) {
+void reject_operation_unchanged(qwen::Runtime &runtime, const std::function<void()> &operation) {
   const auto before = snapshot(runtime);
   const auto storage = pointers(runtime);
   const auto position = runtime.position();
@@ -88,7 +90,7 @@ void reject_unchanged(qwen::Runtime &runtime, const std::vector<int64_t> &input)
   const auto mega = runtime.megaqwen_calls();
   bool rejected = false;
   try {
-    runtime.step(input);
+    operation();
   } catch (const std::exception &) {
     rejected = true;
   }
@@ -97,7 +99,11 @@ void reject_unchanged(qwen::Runtime &runtime, const std::vector<int64_t> &input)
               decode == runtime.decode_calls() && mega == runtime.megaqwen_calls(),
           "Rejected input advanced hybrid state/counters");
   require(storage == pointers(runtime), "Rejected input changed state addresses");
-  equal_state(snapshot(runtime), before, "Rejected input mutated KV");
+  equal_state(runtime.state(), before, "Rejected input mutated KV");
+}
+
+void reject_unchanged(qwen::Runtime &runtime, const std::vector<int64_t> &input) {
+  reject_operation_unchanged(runtime, [&] { runtime.step(input); });
 }
 
 Json partitions(qwen::Runtime &hybrid, qwen::Runtime &aoti, const qwen::Spec &spec,
@@ -162,6 +168,237 @@ void native_libraries(Json &report) {
   report["megaqwen_library"] = mega;
 }
 
+std::vector<int64_t> chunk_lengths(int64_t length, int64_t maximum) {
+  std::vector<int64_t> result;
+  while (length > 0) {
+    const auto count = std::min(length, maximum);
+    result.push_back(count);
+    length -= count;
+  }
+  return result;
+}
+
+void check_prefill_dispatch(const qwen::Runtime &runtime, int64_t prompt, int64_t maximum) {
+  const auto lengths = chunk_lengths(prompt, maximum);
+  const auto decode = int64_t(std::count(lengths.begin(), lengths.end(), 1));
+  const auto prefill = int64_t(lengths.size()) - decode;
+  const auto mega = decode - int64_t(prompt == 1);
+  require(runtime.position() == prompt && runtime.prefill_calls() == prefill &&
+              runtime.decode_calls() == decode && runtime.megaqwen_calls() == mega,
+          "Complete-prompt prefill used incorrect chunk positions or singleton dispatch");
+}
+
+void check_future(const qwen::Runtime &runtime, double fill) {
+  for (const auto &tensor : runtime.state()) {
+    require(at::isfinite(tensor).all().item<bool>(), "Nonfinite long-context KV");
+    require(tensor.slice(2, runtime.position()).eq(fill).all().item<bool>(),
+            "Long-context execution overwrote future KV");
+  }
+}
+
+// Long requests exercise many prefill chunks. Retain small past windows around
+// the start, the former 1K boundary and the current append position, rather than
+// cloning the complete multi-GiB cache after every chunk. The final two capacity
+// steps below still check the entire past and future against full checkpoints.
+struct PastWindow {
+  int64_t start, end;
+  Tensors values;
+};
+
+std::vector<PastWindow> past_windows(const qwen::Runtime &runtime) {
+  const auto position = runtime.position();
+  std::vector<PastWindow> result;
+  for (const auto &[start, end] : std::vector<std::pair<int64_t, int64_t>>{
+           {0, std::min<int64_t>(2, position)},
+           {std::min<int64_t>(1023, position), std::min<int64_t>(1025, position)},
+           {std::max<int64_t>(0, position - 2), position}}) {
+    PastWindow window{start, end, {}};
+    for (const auto &tensor : runtime.state())
+      window.values.push_back(tensor.slice(2, start, end).clone());
+    result.push_back(std::move(window));
+  }
+  return result;
+}
+
+void check_past_windows(const qwen::Runtime &runtime, const std::vector<PastWindow> &before) {
+  for (const auto &window : before)
+    for (size_t i = 0; i < window.values.size(); ++i)
+      require(bits_equal(window.values[i], runtime.state()[i].slice(2, window.start, window.end)),
+              "Long-context append overwrote a past KV checkpoint");
+}
+
+Tensors prefix_trace(qwen::Runtime &runtime, const qwen::Spec &spec, int64_t prompt, double fill) {
+  runtime.reset(fill);
+  const auto first = runtime.prefill(tokens(prompt));
+  check_output(first, spec);
+  check_prefill_dispatch(runtime, prompt, spec.max_prefill);
+  const auto next = runtime.step({13});
+  check_output(next, spec);
+  check_future(runtime, fill);
+  Tensors result{first.cpu().clone(), next.cpu().clone()};
+  for (const auto &tensor : runtime.state())
+    result.push_back(tensor.slice(2, 0, runtime.position()).cpu().clone());
+  return result;
+}
+
+void check_async_lifetime(const xinfer::fs::path &packages, const qwen::Spec &spec, int64_t prompt,
+                          const Tensors &expected, Json &report) {
+  // Raw CUDA work must retain borrowed weights, KV and partial-result scratch
+  // when the runtime is destroyed before its nondefault stream completes.
+  const auto default_stream = c10::cuda::getDefaultCUDAStream(0);
+  const auto decode_stream = c10::cuda::getStreamFromPool(false, 0);
+  at::Tensor retained_logits;
+  Tensors churn;
+  size_t churn_bytes = 0;
+  {
+    c10::cuda::CUDAStreamGuard creation_guard(default_stream);
+    {
+      auto temporary =
+          std::make_unique<qwen::Runtime>(packages, spec, xinfer::DecodeBackendKind::MegaQwen);
+      const auto prefill = temporary->prefill(tokens(prompt)).cpu();
+      require(bits_equal(prefill, expected[0]), "Temporary lifetime probe prefill differs");
+      {
+        c10::cuda::CUDAStreamGuard decode_guard(decode_stream);
+        retained_logits = temporary->step({13});
+      }
+      temporary.reset();
+    }
+    const auto bf16 = at::TensorOptions().device(at::kCUDA, 0).dtype(at::kBFloat16);
+    auto fill = [&](const std::vector<int64_t> &shape, at::ScalarType dtype) {
+      auto tensor = at::empty(shape, bf16.dtype(dtype));
+      tensor.fill_(7);
+      churn_bytes += tensor.nbytes();
+      churn.push_back(std::move(tensor));
+    };
+    // Retain each allocation to churn all workspace/partial-result and dense
+    // weight bins instead of repeatedly reusing a single allocation.
+    for (int repeat = 0; repeat < 10; ++repeat) {
+      fill({1024}, at::kBFloat16);
+      fill({1024}, at::kFloat);
+      fill({2048}, at::kFloat);
+      fill({3072}, at::kFloat);
+      fill({16, 4}, at::kFloat);
+      fill({16, 4}, at::kFloat);
+      fill({16, 4, 128}, at::kFloat);
+      fill({28 * 11 * int64_t(sizeof(void *))}, at::kByte);
+      fill({1024, 1024}, at::kBFloat16);
+      fill({2048, 1024}, at::kBFloat16);
+      fill({3072, 1024}, at::kBFloat16);
+    }
+    // Match capacity-dependent KV and RoPE bins once, keeping the long-context
+    // probe bounded instead of retaining another complete model cache.
+    fill({1, 8, spec.capacity, 128}, at::kBFloat16);
+    fill({spec.capacity, 128}, at::kBFloat16);
+    fill({spec.capacity, 128}, at::kBFloat16);
+    fill({8 * 1024 * 1024}, at::kByte);
+    C10_CUDA_CHECK(cudaStreamSynchronize(decode_stream.stream()));
+    require(bits_equal(retained_logits.cpu(), expected[1]),
+            "Async runtime destruction or allocator reuse changed retained decode logits");
+    C10_CUDA_CHECK(cudaStreamSynchronize(default_stream.stream()));
+  }
+  report["async_destruction_lifetime"] = true;
+  report["async_destruction_prompt_tokens"] = prompt;
+  report["async_destruction_churn_bytes"] = churn_bytes;
+}
+
+void validate_long(const xinfer::fs::path &packages, const qwen::Spec &spec, qwen::Runtime &hybrid,
+                   qwen::Runtime &aoti, Json &report) {
+  const auto storage = pointers(hybrid);
+  report["validation_scope"] = "long_capacity_chunking_handoff_and_full_tail_state";
+  report["past_checkpoints_per_long_request"] = "start,1024_boundary,append_boundary";
+  for (int64_t prompt : {513, 1025, 8191, 8192, 8193}) {
+    if (prompt + 3 > spec.capacity)
+      continue;
+    hybrid.reset(3);
+    aoti.reset(3);
+    const auto input = tokens(prompt);
+    const auto control = aoti.prefill(input);
+    const auto actual = hybrid.prefill(input);
+    check_output(actual, spec);
+    check_prefill_dispatch(hybrid, prompt, spec.max_prefill);
+    const auto prefill_calls = hybrid.prefill_calls(), decode_calls = hybrid.decode_calls();
+    const auto mega_calls = hybrid.megaqwen_calls();
+    if (mega_calls == 0) {
+      require(bits_equal(actual, control), "Chunked AOTI prefill logits differ");
+      equal_state(hybrid.state(), aoti.state(), "Chunked AOTI prefill state");
+    }
+    check_future(hybrid, 3);
+    const auto past = past_windows(hybrid);
+    check_output(hybrid.step({13}), spec);
+    aoti.step({13}); // Advance its position before borrowing the hybrid history.
+    check_past_windows(hybrid, past);
+    check_future(hybrid, 3);
+    for (size_t i = 0; i < hybrid.state().size(); ++i)
+      aoti.state()[i].copy_(hybrid.state()[i]);
+    const auto appended = tokens(2, prompt + 1);
+    const auto returned = hybrid.step(appended);
+    require(bits_equal(returned, aoti.step(appended)),
+            "Long-context MegaQwen to AOTI return logits differ on identical state");
+    equal_state(hybrid.state(), aoti.state(), "Long-context AOTI return state");
+    check_future(hybrid, 3);
+    require(pointers(hybrid) == storage && hybrid.position() == prompt + 3 &&
+                hybrid.prefill_calls() == prefill_calls + 1 &&
+                hybrid.decode_calls() == decode_calls + 1 &&
+                hybrid.megaqwen_calls() == mega_calls + 1,
+            "Long-context handoff changed storage, position or dispatch counts");
+    report["cases"].push_back({{"name", "complete_prompt_" + std::to_string(prompt)},
+                               {"prompt_tokens", prompt},
+                               {"prompt_chunks", chunk_lengths(prompt, spec.max_prefill)},
+                               {"prompt_megaqwen_calls", mega_calls},
+                               {"position", hybrid.position()},
+                               {"passed", true}});
+  }
+
+  // Only these final two steps retain complete cache checkpoints. Their peak
+  // extra allocation is one cache, independent of the number of prefill chunks.
+  hybrid.reset(3);
+  check_output(hybrid.prefill(tokens(spec.capacity - 2)), spec);
+  check_prefill_dispatch(hybrid, spec.capacity - 2, spec.max_prefill);
+  for (int step = 0; step < 2; ++step) {
+    const auto start = hybrid.position();
+    const auto before = snapshot(hybrid);
+    check_output(hybrid.step({13}), spec);
+    check_regions(hybrid, before, start, start + 1, storage);
+  }
+  reject_unchanged(hybrid, {13});
+  report["full_capacity_tail"] = {{"capacity", spec.capacity},
+                                  {"full_state_steps", 2},
+                                  {"overflow_rejected_without_mutation", true}};
+  const auto bounded_prompt = std::min<int64_t>(1025, spec.capacity - 1);
+  const auto clean = prefix_trace(hybrid, spec, bounded_prompt, 0);
+  equal_state(prefix_trace(hybrid, spec, bounded_prompt, 3), clean,
+              "Long-context poisoned future replay");
+  const auto stream = c10::cuda::getStreamFromPool(false, 0);
+  {
+    c10::cuda::CUDAStreamGuard guard(stream);
+    equal_state(prefix_trace(hybrid, spec, bounded_prompt, 0), clean,
+                "Long-context nondefault stream replay");
+    C10_CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
+  }
+  report["poisoned_future"] = report["nondefault_stream"] = true;
+  report["replay_prefix_tokens"] = bounded_prompt + 1;
+  check_async_lifetime(packages, spec, bounded_prompt, clean, report);
+
+  // Request validation must reject before reset or the first compiled chunk.
+  reject_operation_unchanged(hybrid, [&] { hybrid.prefill(tokens(spec.capacity + 1)); });
+  reject_operation_unchanged(hybrid, [&] { hybrid.generate(tokens(spec.capacity), 1); });
+  const int64_t generation_prompt = 513;
+  const auto generated = hybrid.generate(tokens(generation_prompt), 1);
+  require(generated.size() == 1, "Chunked generation did not return its one-token budget");
+  check_prefill_dispatch(hybrid, generation_prompt, spec.max_prefill);
+  require(hybrid.generate(tokens(generation_prompt), 1) == generated,
+          "Long-context generation reset/reuse changed its token");
+  report["generation_chunked_prompt"] = generation_prompt;
+  report["generation_reset_reuse"] = true;
+  hybrid.reset();
+  require(hybrid.position() == 0 && hybrid.prefill_calls() == 0 && hybrid.decode_calls() == 0 &&
+              hybrid.megaqwen_calls() == 0 && pointers(hybrid) == storage,
+          "Long-context reset changed storage or left counters");
+  for (const auto &tensor : hybrid.state())
+    require(tensor.eq(0).all().item<bool>(), "Long-context reset left stale KV");
+  report["reset_reuse"] = true;
+}
+
 void validate(const xinfer::fs::path &packages, Json &report) {
   const qwen::Spec spec(packages);
   qwen::Runtime hybrid(packages, spec, xinfer::DecodeBackendKind::MegaQwen);
@@ -169,7 +406,19 @@ void validate(const xinfer::fs::path &packages, Json &report) {
   const auto info = hybrid.decode_info();
   report["backend_info"] = info;
   report["cache_pointers"] = pointers(hybrid);
+  report["capacity"] = spec.capacity;
+  report["max_prefill"] = spec.max_prefill;
   require(hybrid.state().size() == 56, "Expected 56 shared layer cache views");
+  require(info.at("capacity").get<int64_t>() == spec.capacity,
+          "MegaQwen capacity differs from package metadata");
+  int64_t cache_bytes = 0;
+  for (const auto &tensor : hybrid.state()) {
+    require(tensor.sizes() == at::IntArrayRef({1, 8, spec.capacity, 128}) &&
+                tensor.is_contiguous() && tensor.scalar_type() == at::kBFloat16,
+            "MegaQwen KV allocation differs from the metadata capacity");
+    cache_bytes += tensor.nbytes();
+  }
+  report["cache_bytes"] = cache_bytes;
   // Backend ownership claims are checked against its retained pointer map by
   // the backend constructor. Require the exposed result, not just usable output.
   require(info.at("weights_alias").get<bool>() && info.at("cache_alias").get<bool>(),
@@ -182,11 +431,25 @@ void validate(const xinfer::fs::path &packages, Json &report) {
   for (auto pointer : borrowed)
     require(pointer != 0 && pointer % 16 == 0, "Invalid borrowed weight pointer");
   report["weights_and_cache_alias"] = true;
+  if (spec.capacity > 1024) {
+    validate_long(packages, spec, hybrid, aoti, report);
+    report["backend_info_after"] = hybrid.decode_info();
+    native_libraries(report);
+    return;
+  }
+  report["validation_scope"] = "short_capacity_full_state_contract";
   for (auto length : {1, 2, 25, 128, 512})
-    report["cases"].push_back(
-        partitions(hybrid, aoti, spec, {length, 1, 1}, "prompt_" + std::to_string(length)));
+    if (length + 2 <= spec.capacity)
+      report["cases"].push_back(
+          partitions(hybrid, aoti, spec, {length, 1, 1}, "prompt_" + std::to_string(length)));
+  for (auto boundary : {128, 256})
+    report["cases"].push_back(partitions(hybrid, aoti, spec, {boundary - 1, 1, 1, 2, 1},
+                                         "split_transition_" + std::to_string(boundary)));
   report["cases"].push_back(partitions(hybrid, aoti, spec, {2, 1, 13, 1}, "aoti_after_megaqwen"));
-  report["cases"].push_back(partitions(hybrid, aoti, spec, {512, 510, 1, 1}, "context_1023_1024"));
+  auto capacity_steps = chunk_lengths(spec.capacity - 2, spec.max_prefill);
+  capacity_steps.insert(capacity_steps.end(), {1, 1});
+  report["cases"].push_back(
+      partitions(hybrid, aoti, spec, capacity_steps, "context_capacity_tail"));
   reject_unchanged(hybrid, {42});
   report["overflow_rejected_without_mutation"] = true;
 
@@ -202,10 +465,10 @@ void validate(const xinfer::fs::path &packages, Json &report) {
     reject_unchanged(hybrid, invalid);
   report["invalid_inputs_rejected_without_mutation"] = true;
 
-  auto trace = [&](double fill) {
+  auto trace = [&](double fill, int64_t prompt = 2) {
     hybrid.reset(fill);
     Tensors result;
-    result.push_back(hybrid.step(tokens(2)).cpu().clone());
+    result.push_back(hybrid.step(tokens(prompt)).cpu().clone());
     result.push_back(hybrid.step({13}).cpu().clone());
     const auto state = snapshot(hybrid, true);
     result.insert(result.end(), state.begin(), state.end());
@@ -221,65 +484,41 @@ void validate(const xinfer::fs::path &packages, Json &report) {
     require(poison[i].slice(2, 3).eq(3).all().item<bool>(), "Hybrid overwrote poisoned future");
   }
   report["poisoned_future"] = true;
-  const auto stream = c10::cuda::getStreamFromPool(false, 0);
-  Tensors streamed;
-  {
-    c10::cuda::CUDAStreamGuard guard(stream);
-    streamed = trace(0);
-    C10_CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
+  report["split_poisoned_future"] = Json::array();
+  for (auto prompt : {128, 256, 512}) {
+    if (prompt + 1 > spec.capacity)
+      continue;
+    const auto clean_split = trace(0, prompt);
+    const auto poisoned_split = trace(3, prompt);
+    require(bits_equal(clean_split[0], poisoned_split[0]) &&
+                bits_equal(clean_split[1], poisoned_split[1]),
+            "Future poison affected split attention logits");
+    for (size_t i = 2; i < clean_split.size(); ++i) {
+      require(bits_equal(clean_split[i].slice(2, 0, prompt + 1),
+                         poisoned_split[i].slice(2, 0, prompt + 1)),
+              "Future poison affected valid split attention KV");
+      require(poisoned_split[i].slice(2, prompt + 1).eq(3).all().item<bool>(),
+              "Split attention overwrote poisoned future");
+    }
+    report["split_poisoned_future"].push_back({{"prompt_tokens", prompt}, {"passed", true}});
   }
-  equal_state(streamed, clean, "Nondefault stream replay");
+  const auto stream = c10::cuda::getStreamFromPool(false, 0);
+  report["nondefault_stream_cases"] = Json::array();
+  for (auto prompt : {2, 128, 256}) {
+    const auto expected = trace(0, prompt);
+    Tensors streamed;
+    {
+      c10::cuda::CUDAStreamGuard guard(stream);
+      streamed = trace(0, prompt);
+      C10_CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
+    }
+    equal_state(streamed, expected, "Nondefault stream replay");
+    report["nondefault_stream_cases"].push_back({{"prompt_tokens", prompt}, {"passed", true}});
+  }
   report["nondefault_stream"] = true;
 
-  // A raw CUDA launch must record allocator use of every borrowed/owned buffer.
-  // Keep only its returned Tensor alive while destroying the complete runtime
-  // on the allocation stream, before waiting for the decode stream to finish.
-  const auto default_stream = c10::cuda::getDefaultCUDAStream(0);
-  const auto lifetime_stream = c10::cuda::getStreamFromPool(false, 0);
-  at::Tensor retained_logits;
-  Tensors churn;
-  size_t churn_bytes = 0;
-  {
-    c10::cuda::CUDAStreamGuard creation_guard(default_stream);
-    {
-      auto temporary =
-          std::make_unique<qwen::Runtime>(packages, spec, xinfer::DecodeBackendKind::MegaQwen);
-      const auto prefill = temporary->step(tokens(2)).cpu();
-      require(bits_equal(prefill, clean[0]), "Temporary lifetime probe prefill differs");
-      {
-        c10::cuda::CUDAStreamGuard decode_guard(lifetime_stream);
-        retained_logits = temporary->step({13});
-      }
-      temporary.reset(); // No synchronization before the runtime releases its buffers.
-    }
-    const auto bf16 = at::TensorOptions().device(at::kCUDA, 0).dtype(at::kBFloat16);
-    auto fill = [&](const std::vector<int64_t> &shape, at::ScalarType dtype) {
-      auto tensor = at::empty(shape, bf16.dtype(dtype));
-      tensor.fill_(7);
-      churn_bytes += tensor.nbytes();
-      churn.push_back(std::move(tensor));
-    };
-    // Match small workspace allocations and the 2/4/6 MiB dense-weight buckets.
-    // Retaining every allocation prevents reuse of one churn buffer by another.
-    for (int repeat = 0; repeat < 10; ++repeat) {
-      fill({1024}, at::kBFloat16);
-      fill({1024}, at::kFloat);
-      fill({2048}, at::kFloat);
-      fill({3072}, at::kFloat);
-      fill({28 * 11 * int64_t(sizeof(void *))}, at::kByte);
-      fill({1024, 1024}, at::kBFloat16);
-      fill({2048, 1024}, at::kBFloat16);
-      fill({3072, 1024}, at::kBFloat16);
-    }
-    fill({8 * 1024 * 1024}, at::kByte);
-    C10_CUDA_CHECK(cudaStreamSynchronize(lifetime_stream.stream()));
-    require(bits_equal(retained_logits.cpu(), clean[1]),
-            "Async runtime destruction or allocator reuse changed retained decode logits");
-    // Keep churn storage alive until its own writes have also completed.
-    C10_CUDA_CHECK(cudaStreamSynchronize(default_stream.stream()));
-  }
-  report["async_destruction_lifetime"] = true;
-  report["async_destruction_churn_bytes"] = churn_bytes;
+  const int64_t lifetime_prompt = 256;
+  check_async_lifetime(packages, spec, lifetime_prompt, trace(0, lifetime_prompt), report);
   require(storage == pointers(hybrid), "Hybrid reallocated state during contract probes");
   report["backend_info_after"] = hybrid.decode_info();
   native_libraries(report);

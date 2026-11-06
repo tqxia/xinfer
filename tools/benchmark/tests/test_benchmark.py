@@ -935,6 +935,7 @@ class NativeBackendComparison(unittest.TestCase):
         helper = ControllerContract()
         with tempfile.TemporaryDirectory() as temporary:
             args, library = helper.fixtures(Path(temporary), "qwen3", "compare-backends")
+            args.lengths = [513]  # A 512-token AOTI chunk followed by a decode singleton.
             # The controller's file/command/report contract needs no Torch import.
             with patch.dict(
                 sys.modules,
@@ -951,7 +952,13 @@ class NativeBackendComparison(unittest.TestCase):
             )
             self.assertTrue(all(row["command"][0] == str(args.native.resolve()) for row in workers))
             environment = json.loads((args.output / "environment.json").read_text())
-            self.assertEqual(environment["prefill_backend"], "aoti")
+            prefill_backends = dict(
+                multi_token_backend="aoti",
+                singleton_tail_backend={"cpp_aoti": "aoti", "cpp_megaqwen": "megaqwen"},
+                initial_singleton_backend="aoti",
+            )
+            self.assertEqual(environment["prefill_execution"], prefill_backends)
+            self.assertNotIn("prefill_backend", environment)
             self.assertEqual(
                 environment["megaqwen_library"]["sha256"],
                 sha256(args.native.parent / "libxinfer_megaqwen.so"),
@@ -960,6 +967,19 @@ class NativeBackendComparison(unittest.TestCase):
                 environment["packages"]["cpp_aoti"], environment["packages"]["cpp_megaqwen"]
             )
             summary = json.loads((args.output / "summary.json").read_text())
+            self.assertEqual(
+                summary["prefill_execution"],
+                dict(native_chunk_tokens=512, hf=None, **prefill_backends),
+            )
+            workload = json.loads((args.output / "workload.json").read_text())
+            self.assertEqual(
+                [
+                    len(chunk)
+                    for chunk in benchmark.prompt_chunks(workload["cases"][0]["prompt"], 512)
+                ],
+                [512, 1],
+            )
+            self.assertNotIn("prefill_backend", summary)
             self.assertEqual(summary["status"], "provisional_shared_gpu")
             self.assertEqual(summary["performance_comparison"], "provisional_shared_gpu")
             self.assertTrue(summary["prediction_agreement_is_diagnostic"])
@@ -968,7 +988,7 @@ class NativeBackendComparison(unittest.TestCase):
             for backend in ("aoti", "megaqwen"):
                 self.assertEqual(summary["profiles"][f"cpp_{backend}"]["decode_backend"], backend)
             self.assertEqual(
-                summary["profiles"]["cpp_megaqwen"]["cases"]["length_2"]["prediction_agreement"],
+                summary["profiles"]["cpp_megaqwen"]["cases"]["length_513"]["prediction_agreement"],
                 {"cpp_aoti": 1},
             )
 

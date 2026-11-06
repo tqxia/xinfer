@@ -60,7 +60,8 @@ CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   tools.validation.tests.test_validation_chain \
   tools.validation.tests.test_validation_runtime \
   tools.validation.tests.test_validation_native \
-  tools.validation.tests.test_validation_modes tools.validation.tests.test_context
+  tools.validation.tests.test_validation_modes tools.validation.tests.test_context \
+  tools.validation.tests.test_hybrid
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
   tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
@@ -262,6 +263,16 @@ FP32 checks are unchanged. Native/Python AOTI comparisons remain
 bitwise. Structural cache/write, poisoning, reset/reuse and overflow checks are
 required independently of numerical differences. Historical reports retain
 their original layouts and labels.
+
+Optional MegaQwen correctness checks use `tools.validation.hybrid` with the same
+live BF16 HF chain and numerical limits. Enable `XINFER_ENABLE_MEGAQWEN` and
+`XINFER_BUILD_VALIDATION` in the Qwen3 native build to add
+`qwen_attention_contract` and `qwen_hybrid_contract`. The former checks the actual
+device attention helper against an independent dense reference; the latter
+checks shared weights/KV, AOTI handoffs, positions, reset/reuse and stream
+lifetime. The Python hybrid command runs that native contract helper as well
+as the matched-input numerical chain. Its correctness timings are not benchmark
+results. See [current build and validation commands](../compiler/qwen3/README.md#optional-megaqwen-decode).
 
 Model validation modules require Python assertions. They refuse `-O`, `-OO` and
 `PYTHONOPTIMIZE` before loading models or creating reports, because their graph,

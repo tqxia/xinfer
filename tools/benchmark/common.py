@@ -499,6 +499,15 @@ def linked_library(linked, name):
     return None
 
 
+def native_prefill_execution(native_backends):
+    """Describe dispatch inside prompt chunking, including a singleton tail."""
+    return dict(
+        multi_token_backend="aoti",
+        singleton_tail_backend=dict(native_backends),
+        initial_singleton_backend="aoti",
+    )
+
+
 def capture_environment(args, out, gpu, model_type, packages, validate_model, native_backends=None):
     from tools.common import native_attention_library
     from compiler.common.weights import validate_shared_weights
@@ -544,7 +553,7 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model, na
         environment["megaqwen_library"] = dict(path=str(megaqwen), sha256=sha256(megaqwen))
     if native_backends is not None:
         environment["decode_backends"] = native_backends
-        environment["prefill_backend"] = "aoti"
+        environment["prefill_execution"] = native_prefill_execution(native_backends)
     environment["gpu"] = subprocess.check_output(
         [
             "nvidia-smi",
@@ -742,9 +751,9 @@ def run_benchmark(
             profiles=summarize(records, workload, reference, native_backends),
         )
         if native_backends is not None:
+            summary["prefill_execution"].update(native_prefill_execution(native_backends))
             summary.update(
                 decode_backends=native_backends,
-                prefill_backend="aoti",
                 prediction_agreement_is_diagnostic=True,
                 performance_comparison=(
                     "provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked"

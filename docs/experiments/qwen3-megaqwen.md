@@ -1,4 +1,12 @@
-# Optional MegaQwen decode for Qwen3-0.6B
+# MegaQwen decode for Qwen3-0.6B: historical record
+
+This record predates metadata schema 5 and uses the fixed 1,024-slot package
+profile. Its original commands, paths, source identities and numerical results
+are preserved below, including retired CLI flags and saved-reference validation.
+For current builds, dynamic capacity, complete-prompt chunking and live HF
+validation, follow the [Qwen3 usage guide](../../compiler/qwen3/README.md#optional-megaqwen-decode)
+and [package conversion contract](../package-metadata.md). Recorded outcomes here
+do not qualify a rebuilt backend or an expanded-capacity package.
 
 This experiment adds a native CUDA decode backend to the existing AOTI runtime.
 AOTI handles the first call and every multi-token chunk. MegaQwen handles later
@@ -6,19 +14,20 @@ single-token calls against the same verified weights and KV storage. The default
 backend remains `aoti`; select `megaqwen` explicitly in an enabled build.
 
 The integration is runnable experimental code with **failed numerical acceptance**.
-The final full validation completed with six required HF logit-limit failures;
+The baseline full validation completed with six required HF logit-limit failures;
 state/ownership contracts passed. Successful loading and plausible generation do
 not establish numerical acceptance. The final rebuild retains the original fixed
 BF16 boundaries and `--fmad=false` after rejecting two focused arithmetic probes.
 
-The final report is `work/hybrid-validation-final/summary.json`. It reproduces the
+The baseline report is `work/hybrid-validation-final/summary.json`. It reproduces the
 initial numerical failures with the final source and library. It covers 22
 teacher-forced cases (138 logit rows), seven generation cases, and 63 matched HF
 greedy-history rows per backend. The backend remains explicitly experimental.
 
-The user deferred performance measurements to another environment. No decode
-speedup, latency target, or throughput result is claimed here. Validation on the
-shared development GPU is correctness work; its elapsed time is not a benchmark.
+The split-KV change below is validated for correctness independently of the prior
+implementation's performance measurements. Its partition policy is untuned and
+no speedup is claimed. Correctness validation deliberately synchronizes and copies
+results; its elapsed time is not a decode benchmark.
 
 ## Execution and ownership
 
@@ -84,8 +93,9 @@ path that computes the LM head twice. It retains the existing logits-returning
 runtime contract, trace format, and stopping rules.
 
 The transformer uses row-per-warp GEMV, Q/K head norms and RoPE, direct GQA cache
-access, online softmax, and global scratch between phases. It executes eight grid
-barriers per layer, plus the embedding barrier: 225 per token. Its scalar FP32
+access, online softmax, and global scratch between phases. The one-partition path
+executes eight grid barriers per layer, plus the embedding barrier: 225 per token.
+Split-KV adds one barrier per layer, for 253 per token. Its scalar FP32
 dot-product implementation does not become a tensor-core GEMM merely because its
 weights use BF16. Major intermediate vectors still pass through global scratch.
 Other blocks issue explicit L2 weight-prefetch hints during the attention phase;
@@ -111,7 +121,95 @@ callers must establish dependencies when moving a runner's work between streams.
 A runner's mutable KV/scratch is intended for ordered calls, not concurrent
 requests. The decode implementation adds no CPU synchronization inside `run()`.
 
-## Numerical and state results
+## Split-KV attention
+
+The attention phase can assign multiple resident blocks to one query head. Each
+block handles a contiguous range of valid KV positions with the existing
+eight-warp online-softmax loop. It writes an FP32 running maximum, exponential
+sum and unnormalized weighted-value vector to scratch. After a grid barrier, one
+block per query head merges those partials using max-rescaling and writes the
+same BF16-rounded attention boundary. A second grid barrier completes the merge
+before output projection or scratch reuse by the next layer.
+
+The initial policy is intentionally untuned:
+
+| Valid KV prefix | Partitions per query head | Attention blocks on the L20 |
+|---|---:|---:|
+| 1–128 | 1 | 16 |
+| 129–256 | 2 | 32 |
+| 257–1024 | 4 | 64 |
+
+The partition count is reduced when the existing cooperative grid cannot fit
+32 or 64 attention blocks. This does not increase the grid or assume a specific
+GPU SM count. Blocks left over from attention continue prefetching weights.
+Prefixes of at most 128 tokens retain the original single-block-per-head
+arithmetic without writing or merging partial scratch.
+
+Three constructor-owned tensors provide 33,280 bytes of additional FP32 scratch.
+All active partials, including empty partitions, are overwritten before each
+merge. Coherent loads read results written in the same cooperative invocation.
+Scratch is reused across layers and requests, included in workspace accounting,
+and recorded on every stream that uses the backend. Weights, KV ownership,
+prefill dispatch, returned logits and the two-kernel decode contract are unchanged.
+
+`decode_info()` reports the algorithm, partition target and limit, partition count
+at capacity, scratch size and `attention_policy_tuned=false`. Thresholds count
+the valid KV prefix including the current input token, rather than the initial
+prompt length. Full-model numerical acceptance remains separate from the
+attention and state-contract checks.
+
+Enabled validation builds add a correctness-only attention probe:
+
+```bash
+cmake -S . -B build/megaqwen -DXINFER_ENABLE_MEGAQWEN=ON \
+  -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=OFF
+cmake --build build/megaqwen -j2
+build/megaqwen/qwen_attention_contract work/attention-contract.json
+```
+
+The probe calls the production device attention helper with an independent CPU
+FP64 dense-softmax reference. It covers forced one/two/four partitions, automatic
+selection, small and uneven prefixes, threshold transitions, capacity 1024, GQA,
+uniform and extreme scores, NaN-poisoned future KV, scratch replay, input
+immutability and output guards. The test entry point is compiled only when
+validation is enabled. The hybrid contracts and independent HF fixtures also
+cross both partition thresholds and return from split decode through AOTI.
+
+Correctness validation on 103's L20 completed with the same destination-built
+packages as the preserved `8e216cd` baseline:
+
+- All 180 attention reference cases and five smaller-grid cases passed. Worst
+  attention relative L2 error was 0.0165%, within the probe's 0.5% limit and
+  per-element one-BF16-ULP allowance plus a small absolute margin near zero.
+- Compute Sanitizer memcheck reported zero errors for both the attention probe
+  and the complete hybrid contract suite, including split scratch stream lifetime.
+- The expanded full-model suite covered 26 teacher-forced cases, 158 logit rows
+  and seven generation cases. Both baseline and candidate reproduced exactly the
+  same six required HF failures, with identical failure metrics and no new
+  required failures. The existing 5% HF limits were not relaxed.
+- All 26 initial AOTI rows, 108 short-context logit rows and three complete
+  short-context KV dumps matched the preserved implementation bitwise. Native
+  AOTI/Python AOTI parity and the expanded structural contracts passed.
+- Split reductions change accumulation order: long-context trajectories are not
+  bitwise identical to the baseline. Their largest diagnostic logit relative L2
+  difference from that baseline was 3.17%; the independent HF checks remain the
+  numerical acceptance criterion.
+- All 55 CPU harness tests and pinned formatter checks passed. Validation-enabled
+  and validation-disabled CUDA libraries built successfully; test launch helpers
+  were absent from the validation-disabled library.
+
+The candidate reports 611,680 workspace bytes, 152 registers per thread and a
+legal residency limit of one block per SM. Its launched grid remains 92 blocks;
+these resource counts alone do not establish a performance change. No benchmark
+or profiler was run for this change. Full-model numerical acceptance remains
+failed because of the six baseline HF failures.
+
+The correctness reports are under `/reports/megaqwen-split-kv-20261106` in the
+`xinfer-l20` container. `qualification.json` summarizes primitive, state and
+numerical checks; `original/summary.json` and `candidate/summary.json` retain
+the complete matched-fixture comparisons.
+
+## Baseline numerical and state results
 
 The final full BF16-boundary run failed six required HF logit checks. Each row
 below occurred once in the clean case and once in its poisoned-future repeat;
