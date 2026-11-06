@@ -9,13 +9,12 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextConfig,
 )
 
-from compiler.common.tests.validation import bits_equal, row_errors
+from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.delta import DeltaCore, DeltaNet, install_delta
 from compiler.qwen35.config import configure
 from compiler.qwen35.kernels.recurrent import fused
 from compiler.qwen35.model import TextCache
-from compiler.qwen35.tests.block import BlockStep
-from compiler.qwen35.tests.validate_fused import reference
+from compiler.qwen35.tests.delta import BlockStep, reference
 
 
 def make_block(value_heads, device="meta"):

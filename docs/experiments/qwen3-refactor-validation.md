@@ -1,5 +1,13 @@
 # Qwen3 single-profile refactor validation — 2026-10-30
 
+Current numerical validation uses `python -m tools.validation.validate` and
+generates HF references during the run, including Qwen3's HF `generate()`
+cross-check. The separate reference-preparation command and saved-reference
+prerequisite have been removed. CLI-contract tools remain under
+`tools/validation/qwen3/`. The recorded commands below retain this experiment's
+source module paths; see the [current model guide](../../compiler/qwen3/README.md)
+for a new run.
+
 The Qwen3 cleanup was implemented against source revision
 `799647189a6466aba938c5bf4575e0a9e4c04ae5` on the L20 development host, using
 PyTorch `2.7.0+cu126`, CUDA build 12.6, Transformers 4.51.3 and the matching

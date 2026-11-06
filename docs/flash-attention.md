@@ -59,15 +59,21 @@ compatible compiled graphs or weights.
 ```bash
 # First select Q3_PY and build with the matching target toolchain.
 BUILD="$PWD/build/qwen3"
-"$Q3_PY" -m compiler.qwen3.tests.custom_attention \
-  --output artifacts/attention-check-new
-"$Q3_PY" -m compiler.qwen3.tests.attention_adapter \
-  --output artifacts/adapter-check-new
+"$Q3_PY" -m unittest \
+  compiler.common.tests.test_attention compiler.qwen3.tests.test_attention
 "$Q3_PY" -m compiler.qwen3.export --output artifacts/qwen3-flash
-AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
+AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
   --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
   --output artifacts/flash-validation-new
 ```
+
+The focused unit tests cover the shared operator and Qwen3 adapter, using an HF
+attention module with random weights. They require the built attention library
+but no checkpoint download or AOTI compilation. The separate attention validation
+CLIs have been removed. `tools.validation.validate` runs the shared HF → eager
+→ Python AOTI → C++ AOTI chain. Eager includes the Flash adapter; the chain covers
+real-model cache and numerical checks. `validate_runtime` separately checks the
+shipping CLI and deployment contract.
 
 ## Numerical policy and evidence
 

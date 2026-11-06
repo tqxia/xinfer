@@ -1,4 +1,4 @@
-"""Model validation requires assertions for graph, state and runtime checks."""
+"""Model/operator tests require assertions for graph and state checks."""
 
 from compiler.common.tests import require_assertions
 

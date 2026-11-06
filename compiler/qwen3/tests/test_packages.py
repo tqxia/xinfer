@@ -1,11 +1,9 @@
-"""Reject incompatible Qwen3 tensor ABIs before native-library or CUDA work."""
+"""Reject incompatible Qwen3 tensor ABIs without native-library or CUDA work."""
 
-from pathlib import Path
 import unittest
-from unittest.mock import patch
 
-from compiler.common.metadata import make_metadata, state_spec
-from compiler.qwen3.packages import load_package_attention_ops
+from compiler.common.metadata import make_metadata, state_spec, validate_metadata
+from compiler.qwen3.packages import validate_model_metadata
 
 
 def metadata():
@@ -42,28 +40,11 @@ def metadata():
 
 class Qwen3PackageContract(unittest.TestCase):
     def reject(self, value, message):
-        with (
-            patch("compiler.qwen3.packages.load_attention_ops") as load,
-            patch("compiler.qwen3.packages.native_attention_library") as resolve,
-        ):
-            with self.assertRaisesRegex(ValueError, "^" + message):
-                load_package_attention_ops(value, native=Path("xinfer_aoti"))
-            resolve.assert_not_called()
-            load.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "^" + message):
+            validate_metadata(value, model_type="qwen3")
+            validate_model_metadata(value)
 
-    def test_valid_tensor_abi_loads_the_native_dependency(self):
-        native, library = Path("xinfer_aoti"), Path("libxinfer_attention_ops.so")
-        with (
-            patch("compiler.qwen3.packages.load_attention_ops") as load,
-            patch(
-                "compiler.qwen3.packages.native_attention_library", return_value=library
-            ) as resolve,
-        ):
-            load_package_attention_ops(metadata(), native=native)
-            resolve.assert_called_once_with(native)
-            load.assert_called_once_with(library, model="qwen3")
-
-    def test_geometry_validation_precedes_loading(self):
+    def test_invalid_geometry_is_rejected(self):
         for shape in ([1, 4, 1024, 128], [1, 8, 1024, 64]):
             with self.subTest(shape=shape):
                 item = metadata()

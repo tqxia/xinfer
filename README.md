@@ -9,11 +9,13 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns model-specific package ABI checks. Shared file
-helpers live in `compiler/common/`; numerical validation support lives in
-`compiler/common/tests/validation.py`. Benchmark orchestration, measurement and
-model hooks live in `tools/benchmark/`; tooling native-library discovery lives
-in `tools/common.py`.
+`runtime/<model>/` owns model-specific package ABI checks. Shared compiler
+artifact, metadata and weight helpers live in `compiler/common/`. Numerical validation
+and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
+and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
+offline tokenization use the shared `tools/prepare/` command.
+`tools/common.py` supplies logged subprocess execution and native-library
+discovery; focused numerical diagnostics live under `tools/diagnostics/`.
 `environments/` owns project setup, native-stack checks and target profiles;
 its Bash entry points are `setup.sh` and `check.sh`.
 `runtime/common/` owns the runner, state storage, device and package preflight,
@@ -24,9 +26,11 @@ KV buffers and replaces functional conv/recurrent state using metadata update
 rules and the runtime ABI's output order. Generation stops at EOS or the token
 budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
-Preparation and benchmark unit tests live beside their tools under
-`tools/<area>/tests/`; compiler/model tests and focused diagnostics remain beside
-their model. Detailed results live
+Unit tests follow code ownership: tooling tests live under `tools/<area>/tests/`,
+while compiler/model/operator tests remain beside their code.
+See the [CPU unit-test commands](docs/development-tools.md#cpu-unit-tests).
+The common numerical CLI is `tools.validation.validate`; model-specific
+CLI/deployment contract tools remain under `tools/validation/{qwen3,qwen35}/`. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 generated native builds belong in `build/<model>/`; venvs and scratch scripts
 belong in `work/`. These directories are ignored.
@@ -46,7 +50,7 @@ Run Python tools from the repository root as modules, for example:
 Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your target
 "$Q3_PY" -m tools.prepare --help
 "$Q3_PY" -m compiler.qwen3.export --help
-"$Q3_PY" -m compiler.qwen3.tests.validate_cpp --help
+"$Q3_PY" -m tools.validation.validate --help
 "$Q3_PY" -m tools.benchmark --help
 ```
 
@@ -62,6 +66,15 @@ repository's `build/qwen3/` or `build/qwen35/` directory for their model.
 Existing executable-path options and
 `XINFER_ATTENTION_OPS_LIBRARY` remain optional overrides for another build or an
 installed runtime.
+
+Numerical validation follows HF → eager → Python AOTI → C++ AOTI. The eager
+stage includes adapters and any linear packing selected by package metadata.
+Package metadata selects the model hooks. The shared runner uses identical
+teacher-forced inputs, checks adjacent stages and retains a direct
+Python-AOTI/HF comparison. Both models generate HF references during validation;
+Qwen3 also cross-checks manual HF greedy decoding against HF `generate()`. No
+saved-reference preparation is required. CLI/deployment contract checks remain
+separate. See the model guides for numerical policies and commands.
 
 CPU portability remains a known limitation: AOTI package wrappers inherit the build
 host's instruction set (including AVX-512 on L20), and the project does not enforce
@@ -89,6 +102,3 @@ binary and workload checksums. Benchmark reports contain performance and harness
 results; numerical accuracy reports remain in the validation tooling. Qwen3 keeps HF eager/FP32 references for
 validation, with bounded HF logit error and separate cache/token drift
 diagnostics. CUDA Graph integration is deferred.
-
-Checkpoint download, verification and offline tokenization share `tools/prepare/`;
-see the model guides for the pinned checkpoint and `model_manifest.json` contract.

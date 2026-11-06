@@ -30,6 +30,17 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
 
 ## Validation and acceptance
 
+Run `python -m tools.validation.validate --packages DIR --output DIR` with the
+matching model environment. Package metadata selects the family hooks. The shared
+chain compares HF, eager, Python AOTI and C++ AOTI on matched inputs, checking
+adjacent stages and a direct compiled/HF anchor. Both models generate HF
+references during validation; Qwen3 also checks manual HF greedy decoding against
+HF `generate()`. Saved reference files and a separate preparation command are not
+required. Eager includes all adapters and linear packing selected by the packages.
+CLI and deployment contracts remain
+separate tools. Tooling unit tests live under `tools/<area>/tests/`;
+compiler/model/operator and kernel-AOTI checks remain under `compiler/*/tests/`.
+
 Use independent eager inputs and teacher-forced identical tokens to compare
 logits. Hard requirements are finite outputs, bitwise Python AOTI/native logits
 and caches, correct write regions/masking, stable storage, reset/reuse, boundary
@@ -99,9 +110,10 @@ the current 0.8B full-model profile:
   four KV heads and dimension 256, alongside the existing models.
 - Batch one, width-four SiLU convolution, T=1..512, 1,024-token capacity, C64
   chunking and the provisional 97-token dispatch threshold remain unchanged.
-  The focused fused validator selects either geometry with `--value-heads 16`
-  or `--value-heads 32`; its HF recurrent/chunked and FP32 controls, state and
-  partition checks, and packaged Python/native checks apply to both.
+  Kernel unit tests cover both geometries with HF recurrent/chunked and FP32
+  controls, state and partition checks. `compiler.qwen35.tests.test_kernels_aoti`
+  covers both geometries with BF16/FP32 export, decomposition, exact Python AOTI
+  parity and nondefault-stream checks. Full-model validation retains C++ coverage.
 
 The full-model 4B milestone selects its pinned checkpoint with
 `python -m tools.prepare download --model Qwen/Qwen3.5-4B`; its default preparation directory
@@ -116,7 +128,7 @@ packed-reference peaks as well as inference memory. Use the
 [L20 Docker testing environment](environments/l20/docker/README.md) for
 the real 4B checkpoint. Export uses ordinary strict tracing and linear packing;
 the standard validators run HF BF16 and full-model FP32 controls alongside the
-adapter, packed graphs and AOTI packages. Preserve all existing numerical,
+adapted and packed eager stage and AOTI packages. Preserve all existing numerical,
 state, native/Python bitwise and generation gates, including the 5% HF limits.
 Retain complete reports before accepting the full-model milestone.
 

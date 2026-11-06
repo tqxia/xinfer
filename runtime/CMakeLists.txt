@@ -75,7 +75,3 @@ endforeach()
 install(TARGETS ${XINFER_INSTALL_TARGETS} xinfer_attention_ops
   RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime
   LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT Runtime)
-
-if(XINFER_BUILD_VALIDATION)
-  add_subdirectory(qwen35)
-endif()

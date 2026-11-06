@@ -68,7 +68,8 @@ rewriting or recompiling packages. Export, benchmark and validation commands
 accept `--model-dir` to select another local directory.
 
 Download performs checkpoint integrity checks. `tools.prepare verify` provides
-an explicit check for copied or retained directories. Model loading and export do not repeat checkpoint file verification. Verification and
+an explicit check for copied or retained directories. Model loading, export and
+validation do not repeat checkpoint file verification. Verification and
 tokenization infer the model family from the prepared manifest and use only local
 files. Token output must be a new file.
 
@@ -81,19 +82,12 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONDONTWRITEBYTECODE=1
   --output work/prompt.ids
 ```
 
-Run the existing reference generator in an absent output directory before the
-AOTI/C++ comparisons:
-
-```bash
-"$Q3_PY" -m compiler.qwen3.tests.validate --output artifacts/reference
-```
-
-Reference generation checks manual HF DynamicCache decoding against HF
-`generate()` and a fresh-cache repetition. It writes prompt/generated IDs,
-little-endian float32 logits, text, metadata and a summary for factual,
-arithmetic and Chinese fixtures. Thinking is disabled and greedy decoding is a
-repeatable diagnostic. Both checkpoint EOS IDs are honored. Existing reference
-fixtures remain usable; do not overwrite them during a compiler comparison.
+Validation generates HF references during the run from the factual, arithmetic
+and Chinese prompts in `tools/validation/common/prompts.py`. It needs no separate
+reference-preparation command or saved reference directory. Thinking is disabled,
+generation is greedy and both checkpoint EOS IDs are honored. The HF stage also
+checks its manual greedy decoding against HF `generate()` before the Flash
+adapter is installed.
 
 ## Build before export
 
@@ -208,21 +202,44 @@ masks, training and attention-weight requests are unsupported.
 
 ## Validate
 
+The shared `tools.validation.validate` command reads the model type from package
+metadata. Qwen3 hooks live in `tools/validation/qwen3/model.py`; the shipping-CLI
+contract tool remains in that directory. The HF stage generates reference tokens
+and logits during validation, before adapters or compilation are applied.
+Model loading and tensor cache support remain in `compiler/qwen3/model.py`.
+The runtime validator checks package metadata, resolves the attention library
+linked by the selected native executable, and calls the shared `load_attention_ops`
+loader directly. `compiler/qwen3/packages.py` retains the package ABI checks.
+Preparation and shared validation/benchmark tooling tests live under
+`tools/<area>/tests/`; see the shared
+[CPU unit-test commands](../../docs/development-tools.md#cpu-unit-tests).
+Shared operator tests and Qwen3 adapter tests live in
+`compiler/common/tests/test_attention.py` and `compiler/qwen3/tests/test_attention.py`.
+The focused tests construct an HF attention module with random weights; they do
+not download a checkpoint or compile AOTI packages. They cover attention and
+cache behavior, adapter rejection/reuse and exported graph contracts.
+Run these commands from the repository root with the selected model environment.
+
 ```bash
-"$Q3_PY" -m compiler.qwen3.tests.custom_attention \
-  --output artifacts/qwen3-attention-check
-"$Q3_PY" -m compiler.qwen3.tests.attention_adapter \
-  --output artifacts/qwen3-adapter-check
-"$Q3_PY" -m compiler.qwen3.tests.validate_aoti --packages artifacts/qwen3-flash
-AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
+"$Q3_PY" -m unittest \
+  compiler.common.tests.test_attention compiler.qwen3.tests.test_attention
+AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
   --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
   --output artifacts/qwen3-validation
-"$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
-  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_aoti" \
-  --output artifacts/qwen3-native-smoke
+"$Q3_PY" -m tools.validation.qwen3.validate_runtime \
+  --model-dir "$Q3_MODEL" --packages artifacts/qwen3-flash \
+  --native "$BUILD/xinfer_aoti" --output artifacts/qwen3-native-smoke
 ```
 
-Use fresh output directories. Validation separates two conclusions:
+Use a fresh output directory for validation. The chain runs HF → eager →
+Python AOTI → C++ AOTI on matched inputs. Eager applies the Flash adapter before
+execution. The HF stage generates greedy continuations in memory, checks them
+against HF `generate()`, and fixes the teacher-forced inputs used by later stages.
+The chain compares adjacent stages and Python AOTI directly with HF, retaining
+independent FP32 controls. Cache boundaries, future-slot poisoning, write regions,
+storage reuse and overflow remain strict. The optional `--model-dir` selects a
+prepared checkpoint; no saved-reference input is required. Validation separates
+two conclusions:
 
 - Runtime correctness requires finite results, bitwise native/Python AOTI
   agreement, correct cache writes/masking, stable storage, reset/reuse, legal

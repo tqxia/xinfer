@@ -2,7 +2,6 @@
 
 import os
 from pathlib import Path
-import subprocess
 
 from compiler.common.artifacts import default_build_dir, require
 
@@ -16,24 +15,6 @@ def cache_extent(valid_length):
     import torch
 
     return torch.empty(valid_length + 1, dtype=torch.uint8)
-
-
-def native_attention_library(native):
-    """Resolve the library used by a native worker under its sanitized environment."""
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
-    }
-    linked = subprocess.check_output(["ldd", str(Path(native).resolve())], env=env, text=True)
-    for line in linked.splitlines():
-        name, separator, target = line.strip().partition(" => ")
-        if separator and name == "libxinfer_attention_ops.so":
-            library = Path(target.rsplit(" (", 1)[0])
-            if not library.is_file():
-                raise FileNotFoundError(f"Native attention dependency is missing: {line.strip()}")
-            return library.resolve()
-    return None
 
 
 def load_attention_ops(library=None, *, model=None):

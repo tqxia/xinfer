@@ -1,12 +1,15 @@
 # Development tools
 
 Run these commands from the repository root with the matching Python/LibTorch
-environment and previously exported packages. Use fresh output directories.
+environment. Full-model validation and benchmarks require exported packages;
+use fresh output directories.
 Select `Q3_PY`, `Q35_PY` and `CMAKE` with the
 [target environment guide](../environments/README.md), and set
 `BUILD="$PWD/build/qwen3"` for the Qwen3 commands below. Each model's Python
 tools default to executables and the attention library in `build/<model>/`;
 existing path options and `XINFER_ATTENTION_OPS_LIBRARY` override those defaults.
+Shared logged subprocess execution and native-library discovery live in
+`tools/common.py`.
 
 ## Formatting
 
@@ -35,27 +38,79 @@ git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
 git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
 ```
 
-## CPU benchmark tests
+## CPU unit tests
 
-Benchmark unit tests live with the tooling and use temporary fixtures and mocks,
-without checkpoint downloads, compiled packages, native binaries or a GPU:
+Tests follow the code they cover. Preparation, benchmark and validation tooling
+tests live under `tools/<area>/tests/`. Compiler metadata/export, model loading,
+adapters and kernel tests remain under `compiler/*/tests/`; environment tests
+remain under `environments/tests/`.
+
+These tooling checks use temporary fixtures and mocks, without checkpoint
+downloads, compiled packages, native binaries or a GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest tools.benchmark.tests.test_benchmark
+CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
+  tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \
+  tools.benchmark.tests.test_benchmark \
+  tools.validation.tests.test_common tools.validation.tests.test_qwen3_runtime \
+  tools.validation.tests.test_qwen3 tools.validation.tests.test_validation \
+  tools.validation.tests.test_validation_chain \
+  tools.validation.tests.test_validation_runtime \
+  tools.validation.tests.test_validation_native \
+  tools.validation.tests.test_validation_modes
+CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
+  tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
+  tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model
 ```
 
-Use the matching model environments for preparation and model tests. Numerical
-validation remains in the model-specific compiler test modules below.
+Use each model's environment for its tests: Qwen3.5 model hooks require its
+Transformers version. The commands deliberately separate them rather than
+discovering all tooling tests in the Qwen3 environment. GPU operator and
+kernel-AOTI tests are listed in the model guides; full-model accuracy checks
+remain separate commands below.
 
-## Checkpoint preparation
+## Checkpoint preparation and tokenization
 
-Use `python -m tools.prepare` for pinned checkpoint download, explicit offline
-verification and token encoding/decoding for either model family. Preparation
-publishes a new directory only after its files have been verified. Both use
-`model_manifest.json`; retained Qwen3.5 text checkpoints can rename their former
-`manifest.json` without changing its contents or recompiling packages.
-Preparation tests live in `tools/prepare/tests`; checkpoint loading tests remain
-with their compiler model. See the model guides for complete commands.
+`python -m tools.prepare` owns checkpoint download, manifest generation,
+verification and offline tokenization for both model families. Its family modules
+own pinned revisions and required download files; compiler configuration retains
+model paths and execution settings. Run download with
+the selected model's Python environment before enabling `HF_HUB_OFFLINE` or
+`TRANSFORMERS_OFFLINE`:
+
+```bash
+"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
+"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
+"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
+```
+
+These use fixed revisions and default to `work/models/qwen3-0.6b`,
+`work/qwen35/0.8b/text` and `work/qwen35/4b/text`. `--output` selects another
+prepared directory; `--cache-dir` selects a Hub cache. Qwen3 downloads the
+required HF files and writes their manifest. Qwen3.5 additionally extracts and
+renames language-model tensors into `text.safetensors`. Preparation runs on CPU
+without CUDA or model inference. An existing output path is refused, and the
+prepared directory is published only after successful completion.
+
+Both formats use `model_manifest.json`. Existing prepared directories can be
+copied or reused, and their manifest contents and compiled packages remain
+unchanged. Checkpoint integrity verification happens during download/preparation
+or through explicit `tools.prepare verify`; model loading, export and reference
+generation do not repeat it. Verification and token commands infer the model
+family from that manifest and use only local files:
+
+```bash
+"$Q3_PY" -m tools.prepare verify --model-dir work/models/qwen3-0.6b
+"$Q3_PY" -m tools.prepare encode --model-dir work/models/qwen3-0.6b \
+  --prompt "What is the capital of France?" --output work/prompt.ids
+"$Q3_PY" -m tools.prepare decode --model-dir work/models/qwen3-0.6b \
+  --input work/generated.ids
+```
+
+Use the same commands with the matching Qwen3.5 environment and prepared text
+directory. Tokenization keeps the official non-thinking chat template; encoding
+refuses an existing output file. Model modules retain checkpoint loading and
+execution; the full-model acquisition and token CLIs live in `tools/prepare/`.
 
 ## Shared native executables
 
@@ -103,19 +158,86 @@ runner refactor, its former model-specific state policies and validation evidenc
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
 for the CMake `Runtime` component, installed layout and prefix relocation.
 
-## Python validation support
+## Python validation tools
 
-Numerical helpers live in `compiler/common/tests/validation.py`, alongside their
-tests. Shared metric names are `max_abs`, `relative_l2` and `peak_relative`.
-Full-model reports use `numerical_policy.limits` and a `failures` array for required
-bounded-error comparisons. These replace the older Qwen3 `max_relative_l2`,
-`max_peak_relative` and `numerical_failures` names and Qwen3.5's standalone `limit`.
-Model validators retain tensor grouping and acceptance rules: Qwen3 bounds HF
-logit errors and reports HF cache/token differences separately, while Qwen3.5's
-end-to-end gate also bounds state errors and requires HF top-1 and greedy-token
-agreement. The shared full-model
-relative-error limit is 5%; focused kernel validators retain their own limits.
-Native/Python AOTI comparisons continue to require bitwise equality.
+One metadata-selected command runs numerical validation for either model:
+
+```bash
+"$Q35_PY" -m tools.validation.validate \
+  --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation
+```
+
+`--packages` and a fresh `--output` are required. The model directory and native
+`xinfer_validate` path default from package identity; existing `--model-dir` and
+`--native` overrides select another checkpoint/build. Run from the repository
+root with the matching model environment. Both models generate their HF references
+during validation; neither needs a separate preparation command or saved-reference
+input.
+
+The shared chain is HF → eager → Python AOTI → C++ AOTI. The eager stage
+applies adapters and explicit graph passes such as Qwen3.5 linear packing,
+following the package metadata. Teacher forcing uses identical tokens and
+partitions at every stage. Adjacent numerical comparisons distinguish the
+combined eager transformations from compilation; a direct Python-AOTI/HF
+comparison retains the end-result bound. Native/Python AOTI comparison is
+bitwise. Inductor code-generation options apply in the compiled stage.
+
+`tools/validation/common/` owns shared execution, comparisons and native trace
+handling. Each model's `model.py` supplies loading, the eager transformations,
+fixtures and independent HF reference controls. Shared prompt definitions in
+`tools/validation/common/prompts.py` retain each model's texts and case names;
+Qwen3.5 numerical and runtime-contract checks also reuse its long-prompt text.
+Each HF stage generates its chat continuations and logits during the run, then
+fixes identical teacher-forced inputs for later stages. Qwen3 also cross-checks
+its manual HF greedy decoding against HF `generate()` before installing adapters.
+The chain and runtime validator share the Python AOTI loader and explicit-state
+runtime, including package preflight and ownership of shared weights.
+`qwen3/validate_runtime.py` and `qwen35/validate_runtime.py` retain separate
+CLI/deployment contract checks and tokenize their prompts from the local
+checkpoint. These replace the former separate Python-AOTI,
+model and end-to-end numerical entry points. Validation uses the shared
+`compiler.common.attention.load_attention_ops` loader after checking package
+metadata and resolving the attention library linked by the selected native
+executable. A missing linked library is rejected before operator loading.
+Validation tooling tests live in
+`tools/validation/tests/`; compiler/model/operator tests remain under
+`compiler/*/tests/`. DeltaNet numerical and behavior checks live in
+`compiler/qwen35/tests/test_kernels.py`, with reusable fixtures and references
+beside the tests. `compiler/qwen35/tests/test_kernels_aoti.py`
+checks export, decomposition and exact direct-kernel/Python AOTI output/state
+parity for both geometries and BF16/FP32. It compiles packages in temporary
+directories, reuses them across test methods and skips when CUDA is unavailable.
+There is no standalone kernel-validation CLI or kernel C++ runner; full-model
+validation retains native coverage. Production compiler and runtime code stays
+in its existing directories.
+
+The retained Qwen3.5 rounding diagnostic runs with
+`python -m tools.diagnostics.qwen35.probe_rounding` in the Qwen3.5 environment.
+It uses the prepared text checkpoint to reproduce Q35-NUM-001; exit zero means
+the issue was reproduced.
+
+Shared attention operator checks and Qwen3 adapter checks run as unit tests in
+`compiler/common/tests/test_attention.py` and `compiler/qwen3/tests/test_attention.py`.
+The adapter tests construct an HF attention module with random weights and
+require no checkpoint download. The model validation tools check exported
+attention packages through Python AOTI and C++; there are no separate Qwen3
+operator or adapter validation CLIs.
+
+Shared tensor measurements live in `compiler/common/tests/tensors.py` and are
+reused by `tools/validation/common/validation.py`; report and native-file helpers
+remain in the validation tooling. Shared metric names are `max_abs`,
+`relative_l2` and `peak_relative`.
+Unified reports record canonical stage names, per-stage comparisons,
+`numerical_policy`, required `failures` and separate `diagnostics`. The shared
+full-model relative-L2 and peak-normalized limits remain 5%; focused kernel
+unit tests retain their own limits. Qwen3 requires bounded logits and reports
+HF cache/token/greedy drift. Qwen3.5 also requires state bounds; its original
+end-to-end fixtures retain required Python-AOTI/HF top-token and greedy-token
+agreement, while model-only token comparisons remain diagnostic. Independent
+FP32 HF controls remain diagnostic. Native/Python AOTI comparisons remain
+bitwise. Structural cache/write, poisoning, reset/reuse and overflow checks are
+required independently of numerical differences. Historical reports retain
+their original layouts and labels.
 
 Model validation modules require Python assertions. They refuse `-O`, `-OO` and
 `PYTHONOPTIMIZE` before loading models or creating reports, because their graph,
@@ -239,7 +361,7 @@ accuracy is checked separately with the validation tooling.
 ## Validate runtime correctness and report HF differences
 
 ```bash
-"$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
+"$Q3_PY" -m tools.validation.validate \
   --packages artifacts/aoti-candidate \
   --output artifacts/validation-candidate-new
 ```

@@ -48,7 +48,7 @@ No timing result is claimed on the busy development GPU.
 
 ## Source layout
 
-- `model.py`: prepared text checkpoint, `TextStep` and explicit state ABI.
+- `model.py`: prepared checkpoint loading, `TextStep` and explicit state ABI.
 - `adapters/attention.py`: reuse HF attention weights and gating around the
   shared native prefix-FlashAttention operator.
 - `adapters/delta.py`: reuse HF weights, projections and gated norm; call unified
@@ -57,16 +57,24 @@ No timing result is claimed on the busy development GPU.
   branch operators and shape-based `torch.cond` dispatch.
 - `kernels/chunked.py`: C64 FP32 chunking with B3's 32-column U/W transform.
 - `export.py`: strict export and AOTInductor packaging.
-- `tools/prepare/`: checkpoint download/verification and offline token IDs;
-  `reference.py`: HF/Python AOTI validation runners.
-- `tests/`: fused-operator, model, C++ and end-to-end checks; `tests/block.py`
-  owns shared layer-0 checkpoint fixtures and their preparation command.
-- `diagnostics/`: the retained Q35-NUM-001 rounding reproducer.
+- `../../tools/prepare/`: shared checkpoint download/verification and offline token IDs.
+- `tests/`: model/compiler, GPU operator and AOTI tests; `delta.py` contains
+  synthetic DeltaNet fixtures and explicit-state HF wrappers.
+- `../../tools/validation/validate.py`: the common numerical chain;
+  `../../tools/validation/qwen35/` supplies HF/eager model hooks and runtime-contract
+  checks; the common validation runner loads Python AOTI packages.
+- `../../tools/diagnostics/qwen35/probe_rounding.py`: the retained Q35-NUM-001
+  rounding reproducer.
+
+Preparation, benchmark and validation tooling unit tests live under their
+respective `tools/<area>/tests/` directories. Checkpoint loading/configuration
+tests remain in `tests/test_model.py`. See the shared
+[CPU unit-test commands](../../docs/development-tools.md#cpu-unit-tests).
 
 `runtime/qwen35/runtime.h` owns the model-specific metadata checks. The runner,
 state policy and shared preflight live in `runtime/common/`; the native
 entry points are `runtime/main.cpp`, `runtime/benchmark.cpp` and
-`runtime/validate.cpp`. Standalone GDN probes remain in `runtime/qwen35/`.
+`runtime/validate.cpp`.
 
 ## Prefix attention and caller-owned KV
 
@@ -102,9 +110,9 @@ Rebuild the runtime and re-export packages made with the earlier functional KV a
 loading the packages. A backend change can alter floating-point results;
 the existing numerical validators and limits still apply.
 
-## Conditional GDN validation
+## DeltaNet tests
 
-The standalone test exercises the production kernels directly. T<=97 uses the
+The unit tests exercise the production kernels directly. T<=97 uses the
 existing fused recurrence; longer inputs use C64 chunking with the measured B3
 32-column U/W transform. Threshold 97 comes from an isolated-kernel crossover
 and still needs full-model performance evaluation on an idle target.
@@ -114,33 +122,41 @@ tensors, and only the long branch allocates chunk workspaces. Strict export
 retains one dynamic prefill range, T=2..512. AOTI packages both branches and
 generates a native shape comparison; T=1 uses a separate decode package.
 
-The fused and conditional validators share the block helpers in `tests/block.py`.
 Select `Q35_PY` using the [target environment guide](../../environments/README.md)
 and set `BUILD="$PWD/build/qwen35"`.
-To prepare a missing layer-0 checkpoint fixture, run this once; reuse an existing
-fixture on subsequent runs:
+Run the numerical and behavior tests without downloading a checkpoint or
+compiling AOTI packages:
 
 ```bash
 QWEN_PY="$Q35_PY"
-"$QWEN_PY" -m compiler.qwen35.tests.block
+"$QWEN_PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_kernels
 ```
 
-Run the conditional validator with the native fused runner:
+These GPU tests cover both model geometries, BF16 and FP32, zero and nonzero
+state, gate extremes, convolution cancellation, partitioning, repeated requests,
+dispatch boundaries, state carried across short/long calls, streams and layouts.
+Kernel numerical limits remain 1% for BF16 and 0.01% for FP32, with the existing
+1e-7 FP32 absolute-roundoff allowance. HF recurrent/chunked and independent FP32
+controls remain part of the tests; a passing compiled check does not establish
+numerical accuracy. The existing BF16-to-FP32 limit violations in both the
+production and HF paths remain ordinary test failures.
+
+Run the export and AOTI tests separately when changing kernels or the compiler:
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.tests.validate_cond \
-  --binary "$BUILD/qwen35_fused" \
-  --output artifacts/qwen35/0.8b/cond-validation-new
+"$QWEN_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
 ```
 
-The output must be fresh. The validator retains exported/decomposed graphs,
-packaged C++ wrappers/cubin hashes, raw state fixtures and numerical reports.
-It reuses the existing Python-free C++ runner. `dispatch_passed` reports the
-dispatch/backend regression gate separately from the existing HF/FP32 numerical
-acceptance; inspect both. Noncontiguous inputs are checked through the Python
-dispatcher; exported package inputs retain the contiguous-layout ABI.
-The suite enables AOTI input guards and packs fixtures with canonical strides,
-including singleton dimensions, to match the native runner's tensor layout.
+These GPU tests cover both geometries and compile four packages per geometry:
+BF16/FP32 prefill and decode. They check symbolic dispatch before and after
+lowering, dynamic lengths, carried/reset state and nondefault CUDA streams.
+Direct kernel execution and Python AOTI must agree bitwise on core output,
+convolution history and recurrent state. AOTI input guards exercise canonical
+strides, including singleton dimensions. Packages use temporary directories
+that are cleaned up automatically; there is no kernel-validation CLI, output
+report directory or dedicated kernel C++ runner. Normal test discovery includes
+these tests, and they skip when CUDA is unavailable. Full-model validation
+retains C++ coverage.
 
 ## Dynamic full-model prefill and Triton GDN
 
@@ -245,39 +261,46 @@ export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 The override is optional; the default is `build/qwen35/libxinfer_attention_ops.so`.
 Native full-model targets link the library directly. Deploy it with the native
 executable and matching LibTorch/CUDA; it is not embedded in the `.pt2` files.
-The standalone GDN validation targets do not depend on the attention library.
 The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)
 covers the installed native runtime, prefix relocation and selecting its
 attention library for Python export or validation.
 
-Use the shared preparation tool before enabling offline mode. It downloads the
-pinned checkpoint and extracts only text weights, without CUDA or inference:
-
 ```bash
-"$QWEN_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B \
-  --output work/qwen35/0.8b/text
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+QWEN_PY="$Q35_PY"
+# Keep large compilation scratch files off a small system /tmp filesystem.
+mkdir -p work/qwen35/tmp work/qwen35/inductor-cache
+export TMPDIR="$PWD/work/qwen35/tmp"
+export TORCHINDUCTOR_CACHE_DIR="$PWD/work/qwen35/inductor-cache"
+# Prepare once before enabling offline mode, or copy a verified text directory.
+"$QWEN_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
 "$QWEN_PY" -m compiler.qwen35.export
 ```
 
-For the complete 4B checkpoint, keep its prepared text directory and package
+For 4B, select its pinned checkpoint and keep its prepared weights and compiled
 bundle separate from the 0.8B defaults:
 
 ```bash
-"$QWEN_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B \
-  --output work/qwen35/4b/text
+"$QWEN_PY" -m tools.prepare download \
+  --model Qwen/Qwen3.5-4B --output work/qwen35/4b/text
 "$QWEN_PY" -m compiler.qwen35.export \
   --model-dir work/qwen35/4b/text --output artifacts/qwen35/4b/text
 ```
 
-Preparation refuses an existing output path and publishes the directory only
-after all required files are ready. `--cache-dir` selects a Hub cache. The
-`model_manifest.json` records the selected checkpoint, pinned revision, source
-shard checksums and prepared file checksums. Download verifies these files;
-`tools.prepare verify --model-dir <directory>` explicitly rechecks a copied or
-retained checkpoint. Model loading and export do not repeat the checkpoint
-verification. Both supported checkpoints require tied embeddings and default
-RoPE. For retained full-text checkpoints, rename `manifest.json` to
-`model_manifest.json`; its contents and compiled packages stay unchanged.
+The shared preparation tool downloads pinned source shards, verifies their Hub
+checksums, and extracts and renames only language-model tensors into
+`text.safetensors`. Preparation runs on CPU without CUDA or inference. It refuses
+an existing output path and publishes the prepared directory only after success;
+reuse the complete verified directory on later runs. `--cache-dir` selects a Hub
+cache; otherwise the Hub's configured cache is used. Run download before enabling
+`HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE`. Prepared text checkpoints use
+`model_manifest.json`, the same filename as Qwen3. Rename retained checkpoints' former `manifest.json`
+without changing its contents; existing compiled packages remain usable.
+The manifest records the selected model ID and pinned
+revision, checksums of source shards and all prepared files. Preparation and
+explicit `tools.prepare verify` check checkpoint integrity. Model loading reads
+the prepared files without repeating manifest or checksum verification. Both
+supported checkpoints require tied embeddings and default RoPE.
 
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
@@ -352,35 +375,45 @@ Export the pair with matching settings into a fresh directory:
 Metadata records the `enable_inductor_optimization` flag and resolved
 `inductor_configs`; the runtime rejects package pairs with different configs.
 The flag is off by default and
-requires no runtime switch. Rerun the model, runtime and end-to-end validators with
+requires no runtime switch. Rerun the unified numerical and runtime-contract checks with
 `--packages artifacts/qwen35/0.8b/text-optimized`, since these optimizations can
 change floating-point results.
 
 ## Generate and validate
 
+The prepared manifest selects the model family for the shared offline token
+commands. Token output must be a new file. For a copied or retained checkpoint,
+run an explicit integrity check when needed; successful download already performs
+verification:
+
 ```bash
+"$QWEN_PY" -m tools.prepare verify --model-dir work/qwen35/0.8b/text
+
 "$QWEN_PY" -m tools.prepare encode --model-dir work/qwen35/0.8b/text \
   --prompt "What is 17 + 25?" --output work/prompt.ids
 "$BUILD/xinfer_aoti" artifacts/qwen35/0.8b/text \
   work/prompt.ids work/generated.ids
-"$QWEN_PY" -m tools.prepare decode --model-dir work/qwen35/0.8b/text --input work/generated.ids
+"$QWEN_PY" -m tools.prepare decode --model-dir work/qwen35/0.8b/text \
+  --input work/generated.ids
 
-"$QWEN_PY" -m compiler.qwen35.tests.validate_fused \
-  --output artifacts/qwen35/0.8b/fused-validation-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
-  --output artifacts/qwen35/0.8b/model-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+"$QWEN_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
+"$QWEN_PY" -m tools.validation.validate \
+  --packages artifacts/qwen35/0.8b/text \
+  --output artifacts/qwen35/0.8b/validation
+"$QWEN_PY" -m tools.validation.qwen35.validate_runtime \
   --output artifacts/qwen35/0.8b/runtime-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
-  --output artifacts/qwen35/0.8b/end-to-end-new
 ```
 
-The focused fused validator compares output and both carried states with
-HF convolution, gates, recurrence and chunked prefill. It reports `fusion_passed` separately
-from full FP32 numerical acceptance, retains every comparison failure and
-cross-checks the HF path against the same FP32 control. Python JIT, Python AOTI
-and standalone C++ must agree bitwise. Inspect complete reports before treating
-a nonzero exit as an expected numerical gate.
+Kernel numerical and behavior checks run through `test_kernels`; the
+`test_kernels_aoti` module checks exact direct-kernel/Python AOTI parity.
+The unified numerical command selects Qwen3.5 from package metadata and runs
+HF → eager → Python AOTI → C++ AOTI. The eager stage includes the adapters
+and linear packing selected by package metadata. It checks adjacent stages and
+Python AOTI directly against HF. Teacher forcing uses identical tokens and
+partitions throughout. Independent FP32 HF controls
+remain diagnostic. `validate_runtime` separately checks runtime/CLI contracts.
+Inspect complete reports before treating a nonzero exit as an expected
+numerical gate.
 
 Use matching model, package and tokenization paths for the complete 4B model:
 
@@ -391,58 +424,48 @@ Use matching model, package and tokenization paths for the complete 4B model:
   work/qwen35/4b/prompt.ids work/qwen35/4b/generated.ids
 "$QWEN_PY" -m tools.prepare decode --model-dir work/qwen35/4b/text \
   --input work/qwen35/4b/generated.ids
-"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
+"$QWEN_PY" -m tools.validation.validate \
   --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
-  --output artifacts/qwen35/4b/model-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+  --output artifacts/qwen35/4b/validation
+"$QWEN_PY" -m tools.validation.qwen35.validate_runtime \
   --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
   --output artifacts/qwen35/4b/runtime-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
-  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
-  --output artifacts/qwen35/4b/end-to-end-new
 ```
 
-Run the standard model, runtime and end-to-end validators against the same
-prepared checkpoint and package pair. Full-model validation includes the
-independent FP32 control, all requested cases, native/Python bitwise comparisons,
-and carried-state and generation checks. HF numerical checks retain their
-existing 5% limits. Review the complete reports before accepting a new package.
+Run the unified numerical and runtime-contract checks against the same prepared
+checkpoint and package pair. Both reuse prompt definitions and long-prompt text
+from `tools/validation/common/prompts.py`, preserving existing texts and case names.
+Both model families generate HF references during numerical validation, without
+saved-reference input files or a separate preparation command. Qwen3 additionally
+checks its manual HF greedy decoding against HF `generate()`.
+The numerical report preserves the model and
+end-to-end fixture origins, intermediate-stage isolation, independent FP32
+controls, native/Python bitwise comparisons, carried state and generation
+checks. Logits and state retain both 5% error limits. HF token and greedy
+agreement remains required for the original end-to-end fixtures; model-only
+token differences remain diagnostic. Review the complete reports before
+accepting a new package.
 
-For the 4B kernel geometry, prepare a pinned layer-0 fixture once, then select
-32 value heads in the same validator:
-
-```bash
-"$QWEN_PY" -m compiler.qwen35.tests.block \
-  --model Qwen/Qwen3.5-4B --output work/qwen35/4b/block
-"$QWEN_PY" -m compiler.qwen35.tests.validate_fused \
-  --value-heads 32 --block-dir work/qwen35/4b/block \
-  --binary "$BUILD/qwen35_fused" \
-  --output artifacts/qwen35/4b/fused-validation-new
-```
-
-Reuse a verified existing fixture with `--block-dir` instead of preparing it
-again. The default `--value-heads 16` retains the 0.8B suite; an explicit block
-fixture must match the selected geometry. Both suites retain T=1..512 and the
-97-token dispatch threshold. Kernel/block results do not establish full-model
-4B support or acceptance of longer inputs.
+The kernel unit and AOTI test modules each cover both the 0.8B and 4B
+geometries automatically, using synthetic fixtures without a model checkpoint.
+Both retain T=1..512 and the 97-token dispatch threshold.
+Kernel/block results do not establish full-model 4B support or acceptance of
+longer inputs.
 
 Chunking reorders arithmetic across sequence partitions. Core output and
 recurrent-state partition comparisons use the existing BF16/FP32 numerical
 limits, while convolution history remains exact. Repeated requests and
-same-input JIT/AOTI/C++ comparisons retain their bitwise requirements.
+same-input direct-kernel/AOTI comparisons retain their bitwise requirements.
 
 Use `--packages` and `--binary`/`--native`/`--cli` to select other artifact and
 build directories. Validation output directories must be fresh.
-Runtime and end-to-end reports include package and native binary checksums.
-The focused fused suite checks preparation, core output and both carried states
-through the `qwen35_fused` native target. Each geometry covers BF16/FP32, T=1..512
-boundaries, mixed prefill/decode continuations, whole versus partitioned inputs
-and repeated requests through four fused AOTI packages, including chunk-boundary
-and prefill gate-extreme cases. These describe test coverage, not acceptance.
-The standalone GDN processes verify that neither Python nor custom-op libraries
-are mapped. Full-model processes require the shared native attention library
-while remaining free of Python libraries. Full-model checks retain all state
-tensors, HF/FP32 controls, dispatch counts, stable KV storage, appended-write
+Runtime and unified numerical reports include package and native binary checksums.
+The AOTI unit tests check core output and both carried states for BF16/FP32
+prefill/decode, dynamic lengths and mixed continuations. Broader numerical,
+partitioning and gate-extreme checks live in `test_kernels`. These describe test
+coverage, not full-model acceptance. Full-model native processes require the
+shared attention library while remaining free of Python libraries. Full-model
+checks retain all state tensors, HF/FP32 controls, dispatch counts, stable KV storage, appended-write
 regions, future-prefix isolation and CLI rejection cases. Numerical validators exit
 nonzero for acceptance failures and retain the reports.
 
@@ -479,15 +502,12 @@ native library dependency beyond the full-model FlashAttention path.
 
 ```bash
 "$QWEN_PY" -m compiler.qwen35.export
-"$QWEN_PY" -m compiler.qwen35.tests.validate_runtime \
+"$QWEN_PY" -m tools.validation.qwen35.validate_runtime \
   --packages artifacts/qwen35/0.8b/text \
   --output artifacts/qwen35/0.8b/packing-runtime-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_model \
+"$QWEN_PY" -m tools.validation.validate \
   --packages artifacts/qwen35/0.8b/text \
-  --output artifacts/qwen35/0.8b/packing-model-new
-"$QWEN_PY" -m compiler.qwen35.tests.validate_end_to_end \
-  --packages artifacts/qwen35/0.8b/text \
-  --output artifacts/qwen35/0.8b/packing-end-to-end-new
+  --output artifacts/qwen35/0.8b/packing-validation-new
 ```
 
 Exports default to `artifacts/qwen35/0.8b/text`. Use a fresh `--output` directory
@@ -499,11 +519,13 @@ full packing report remain in export logs and the separate `prefill.packing.json
 names to each packed constant,
 which helps profiling attribution.
 
-The model validator adds `packing_vs_adapter` and `aoti_vs_packing` comparisons
-for packed packages, using eager exported graphs to distinguish packing effects
+For packed packages, the eager stage runs the exported graphs after adapters
+and linear packing have both been applied. The `eager_vs_hf` and
+`python_aoti_vs_eager` comparisons separate the combined eager transformation
 from compilation. Changed matrix shapes can change floating-point reductions;
-all original HF/FP32 checks and limits remain in place. Unpacked eager graphs
-remain an internal numerical control; the export CLI has no packing switch.
+HF/FP32 controls and numerical limits remain in place. The export CLI has no
+packing switch.
+
 Hold packing constant across compiler-tuning arms. For a packing A/B experiment,
 use an unpacked control checkout with the same selected Inductor configuration.
 
@@ -569,7 +591,7 @@ current benchmark command for new measurements.
 ## Numerical issues and historical evidence
 
 - **Q35-NUM-001:** lost BF16 rounding before DeltaNet gated normalization.
-  `python -m compiler.qwen35.diagnostics.probe_rounding` reproduces the issue;
+  `python -m tools.diagnostics.qwen35.probe_rounding` reproduces the issue;
   exit zero means reproduced, not fixed.
 - **Q35-NUM-002:** partition-sensitive greedy choices in earlier experiments.
   Triton full-model tests also record differences already present before
@@ -584,8 +606,8 @@ source snapshots. The retired fixed-shape block exporter
 historical commands require that checkout or its source snapshot. The legacy
 `qwen35_block` runner, `tests/validate_block.py` and fixed-shape sequence helpers
 were subsequently retired; their last containing commit is `a63eb21`.
-The shared block helpers remain in `tests/block.py` for the active GDN validators
-and rounding diagnostic. Its preparation command also accepts
-`--model Qwen/Qwen3.5-4B` for manual block diagnostics.
+`TensorState` and `BlockStep` live in `compiler/qwen35/tests/delta.py` for
+synthetic unit tests and the rounding diagnostic. The diagnostic loads the
+prepared full-model text checkpoint; it does not need a separate block checkpoint.
 Generated evidence remains ignored in `artifacts/qwen35/`; builds and caches
 remain ignored in `work/`.

@@ -1,29 +1,42 @@
-Historical commands below retain earlier module names. Current preparation uses
-`python -m tools.prepare`; see the model guide for its interface.
-
 # Qwen3.5 experiment record
 
 The current full-model path uses dynamic prefill, packaged Triton GDN and native
 prefix FlashAttention with caller-owned KV buffers. See
 [current commands](../../compiler/qwen35/README.md) and
 [the Flash integration record](#prefix-flash-and-in-place-kv-2026-11-02).
+Current checkpoint download, verification and token commands use
+`python -m tools.prepare`; acquisition has moved out of the model implementation.
 Current benchmark commands use `python -m tools.benchmark` for both models;
 benchmark reports contain performance results independently of validation.
+The retained rounding diagnostic now runs with
+`python -m tools.diagnostics.qwen35.probe_rounding`.
 Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.
 
+Current numerical validation uses `python -m tools.validation.validate` and
+compares HF → eager → Python AOTI → C++ AOTI. Eager includes adapters and
+package-selected linear packing. Qwen3.5 runtime-contract checks remain under `tools/validation/qwen35/`. The unified HF
+reference uses matched input partitions; historical `hf_full_prompt` report
+labels are retained only in the experiment records below.
+Fused/conditional numerical and behavior checks are unit tests under
+`compiler/qwen35/tests/`; `test_kernels_aoti` covers kernel export and Python AOTI
+execution. The standalone kernel C++ runner has been removed. Historical commands
+below retain their original module paths, binaries and report formats; use their
+recorded checkout, or the current commands in the model guide for a new run.
+
 The fixed-shape block exporter (`diagnostics/export_block.py`) and original HF
 dynamic-export probe (`diagnostics/probe_dynamic.py`) are archived in commit
 `0984678`. That commit also contains the old `diagnostics/block.py` path; its
-shared helpers and preparation command now live in
-`compiler/qwen35/tests/block.py`. The commands below retain their historical
-paths and use the original checkout or recorded source snapshot.
+standalone block preparation and loading are retired. The commands below retain
+their historical paths and use the original checkout or recorded source snapshot.
 
 The legacy `qwen35_block` runner, `tests/validate_block.py` and fixed-shape
 sequence helpers were subsequently retired; their last containing commit is
-`a63eb21`. The active fused/conditional GDN validators and rounding diagnostic
-still use `tests/block.py`.
+`a63eb21`. The current synthetic unit tests and rounding diagnostic use only
+the explicit-state wrappers `TensorState` and `BlockStep` from
+`compiler/qwen35/tests/delta.py`. The diagnostic loads the prepared full-model
+text checkpoint rather than a separate block checkpoint.
 
 ## Full 4B L20 validation: 2026-11-04
 

@@ -1,5 +1,9 @@
 # Qwen3.5 Inductor tuning experiments
 
+Current numerical validation uses `python -m tools.validation.validate`; the
+Qwen3.5 runtime-contract tool remains under `tools/validation/qwen35/`. The module
+paths in this experiment refer to its pinned control checkout; use the
+[current model guide](../../compiler/qwen35/README.md) for new validation runs.
 Current benchmarks use `python -m tools.benchmark` with metadata-selected model
 hooks, shared `run`/`compare`/`check-idle` commands and no validation-report input.
 

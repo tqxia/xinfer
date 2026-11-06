@@ -182,15 +182,10 @@ attention library. Re-export the baseline using that checkout and the same
 Torch 2.13 model environments; the current runtime rejects embedded bundles.
 
 The retained run is `artifacts/l20/shared-weights-20261102/`, with `qwen3/` and
-`qwen35/` subdirectories. The comparison reporter checks identical case manifests,
+`qwen35/` subdirectories. Its `comparison.json` records identical case manifests,
 exact native-output byte digests, Python/native parity, unchanged numerical
-failure cases, GPU savings and deployment size:
-
-```bash
-"$Q3_PY" -m compiler.common.tests.compare_shared_weights \
-  --artifacts artifacts/l20/shared-weights-20261102 \
-  --output artifacts/l20/shared-weights-20261102/comparison.json
-```
+failure cases, GPU savings and deployment size. The experiment-specific report
+generator is no longer maintained.
 
 Large native `.states` files are removed only after Python/native parity and
 SHA-256 recording; `native-output-digests.json`, case manifests, summaries,

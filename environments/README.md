@@ -109,7 +109,7 @@ for MODEL in qwen3 qwen35; do
     -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
     -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
   "$CMAKE" --build "$BUILD" --target \
-    xinfer_aoti xinfer_validate xinfer_benchmark qwen35_fused qwen_runtime_contract -j2
+    xinfer_aoti xinfer_validate xinfer_benchmark qwen_runtime_contract -j2
   bash environments/check.sh --python "$PWD/work/$TARGET/$MODEL$ENV_SUFFIX/bin/python" \
     --target "$TARGET" --model "$MODEL" --build "$BUILD" \
     --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
@@ -118,8 +118,8 @@ done
 
 The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for both
 model families. Model selection comes from the package metadata; there is no
-separate full-model build switch. `qwen35_fused` remains a focused GDN validation
-tool, built with `XINFER_BUILD_VALIDATION`.
+separate full-model build switch. Kernel export/AOTI checks run through
+`compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel runner.
 Each model's Python tools default to executables and the attention library in
 its `build/<model>/` directory. Existing native-path options and
 `XINFER_ATTENTION_OPS_LIBRARY` optionally select another build or installed runtime.
@@ -128,8 +128,7 @@ its `build/<model>/` directory. Existing native-path options and
 symlinks to the shared native installation. Build before either full-model
 export so Python can register the shared native FlashAttention operator. Deploy
 `libxinfer_attention_ops.so` with the shared full-model executables.
-Qwen3.5 packages its GDN kernels and needs no separate GDN custom-op library;
-its standalone GDN validation targets do not use the attention library.
+Qwen3.5 packages its GDN kernels and needs no separate GDN custom-op library.
 
 L20 keeps its host CUDA 12.2 compiler and explicitly links the CUDA 12.6 runtime
 from the selected wheel installation. The two CMake variables select that
@@ -228,8 +227,8 @@ the example below installs from `build/qwen3/`.
 GNUInstallDirs selects executable and library directories, typically `bin/`
 and `lib/` or `lib64/`. `xinfer_aoti` is always included;
 `xinfer_benchmark` and `xinfer_validate` are included when their build options
-are enabled. Focused helpers `qwen35_fused` and `qwen_runtime_contract` remain
-build-only targets. `CMAKE_INSTALL_BINDIR` and `CMAKE_INSTALL_LIBDIR` can customize
+are enabled. The focused `qwen_runtime_contract` helper remains a build-only
+target. `CMAKE_INSTALL_BINDIR` and `CMAKE_INSTALL_LIBDIR` can customize
 the layout and must be relative paths. The following commands read the configured
 library directory from the build cache and use the default `bin/` directory.
 
@@ -288,6 +287,11 @@ for all commands and measurement boundaries.
 
 ## Validation matrix
 
+Run the [CPU tooling unit tests](../docs/development-tools.md#cpu-unit-tests)
+with the matching model environments before GPU validation. Preparation,
+benchmark and validation tests live under their owning `tools/<area>/tests/`;
+compiler/model/operator tests remain under `compiler/*/tests/`.
+
 Run the following on both targets for each new package pair. Use a GPU-idle
 window for performance measurements. Functional checks can establish correctness
 without making a timing claim.
@@ -302,39 +306,39 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   environments.tests.test_check environments.tests.test_setup \
   environments.tests.test_entrypoints compiler.qwen35.tests.test_text_cache \
   compiler.common.tests.test_weights
-"$Q35_PY" -m compiler.qwen35.tests.validate_cond \
-  --binary "$Q35_BUILD/qwen35_fused" --output "$Q35_ROOT/cond-validation"
+"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_kernels
+"$Q35_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
 
-# Generate independent HF fixtures once for this run, or supply verified saved fixtures.
-"$Q3_PY" -m compiler.qwen3.tests.validate \
-  --model-dir "$Q3_MODEL" --output "$Q3_ROOT/reference"
-AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp \
-  --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
+AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
+  --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" \
   --native "$Q3_BUILD/xinfer_validate" --output "$Q3_ROOT/runtime-validation"
-"$Q3_PY" -m compiler.qwen3.tests.smoke_cpp \
-  --packages "$Q3_PACKAGES" --reference "$Q3_ROOT/reference" \
+"$Q3_PY" -m tools.validation.qwen3.validate_runtime \
+  --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" \
   --native "$Q3_BUILD/xinfer_aoti" --output "$Q3_ROOT/native-smoke"
 
-"$Q35_PY" -m compiler.qwen35.tests.validate_model \
-  --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" --output "$Q35_ROOT/model-validation"
-"$Q35_PY" -m compiler.qwen35.tests.validate_runtime \
+"$Q35_PY" -m tools.validation.validate \
+  --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
+  --native "$Q35_BUILD/xinfer_validate" --output "$Q35_ROOT/validation"
+"$Q35_PY" -m tools.validation.qwen35.validate_runtime \
   --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
   --binary "$Q35_BUILD/xinfer_validate" --cli "$Q35_BUILD/xinfer_aoti" \
   --output "$Q35_ROOT/runtime-validation"
-"$Q35_PY" -m compiler.qwen35.tests.validate_end_to_end \
-  --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
-  --native "$Q35_BUILD/xinfer_validate" --output "$Q35_ROOT/end-to-end"
 ```
 
-The standalone GDN suite uses synthetic inputs and adds a checkpoint case when
-its optional block fixture exists at `work/qwen35/0.8b/block`; select another
-verified fixture with `--block-dir`. Its report states whether that case ran.
+The common numerical command reads the model family from package metadata and
+runs HF → eager → Python AOTI → C++ AOTI on matched inputs. Both models generate
+HF references during that run, with no saved-reference prerequisite. Qwen3 also
+cross-checks manual HF greedy decoding against HF `generate()`. Eager includes
+adapters and package-selected linear packing. The runtime commands check CLI
+and deployment contracts separately. The kernel unit and AOTI tests use synthetic inputs without a checkpoint.
+The AOTI module compiles BF16/FP32 prefill/decode packages for both supported
+geometries in temporary directories that are cleaned up automatically.
 
 Inspect every `summary.json`, including after a nonzero validator exit. Require
 finite outputs, legal dynamic boundaries, correct state carry/reset/masking and
 bitwise native/Python AOTI agreement within each target. Qwen3 retains its bounded
 HF logit gates and separate cache/token diagnostics. Qwen3.5's HF numerical
-acceptance remains open; GDN `dispatch_passed` and runtime
+acceptance remains open; passing kernel/AOTI tests and runtime
 `native_runtime_passed` do not replace the full numerical report. The matrix
 does not require cross-target bitwise equality or waive existing thresholds.
 

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.tests.tensors import row_errors
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
@@ -27,7 +28,20 @@ class PrefixFlash(unittest.TestCase):
     def test_grouped_prefix_and_read_only_contract(self):
         torch.manual_seed(35)
         for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256)):
-            for tokens, length in ((1, 1), (1, 129), (2, 3), (16, 129), (512, 1024)):
+            for tokens, length in (
+                (1, 1),
+                (1, 2),
+                (1, 32),
+                (1, 129),
+                (1, 1024),
+                (2, 2),
+                (2, 3),
+                (16, 32),
+                (16, 129),
+                (510, 1022),
+                (512, 512),
+                (512, 1024),
+            ):
                 with self.subTest(heads=heads, tokens=tokens, length=length):
                     q, k, v = self.inputs(heads, kv_heads, dim, tokens)
                     before = [t.clone() for t in (q, k, v)]
@@ -52,12 +66,15 @@ class PrefixFlash(unittest.TestCase):
                             enable_gqa=True,
                             scale=dim**-0.5,
                         )
-                    error = (actual.float() - expected).norm() / expected.norm()
-                    self.assertLess(error.item(), 0.01)
+                    error = row_errors(actual.float().flatten(1), expected.flatten(1))
+                    self.assertLess(error["relative_l2"], 0.01)
+                    self.assertLessEqual(error["peak_relative"], 0.05)
                     k[:, :, length:].fill_(100)
                     v[:, :, length:].fill_(-100)
                     extent.fill_(255)
                     self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, dim**-0.5)))
+                    checks = torch.library.opcheck(self.op, (q, k, v, extent, dim**-0.5))
+                    self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
 
     @torch.inference_mode()
     def test_appended_chunks_use_lower_right_causality(self):
@@ -96,13 +113,15 @@ class PrefixFlash(unittest.TestCase):
 
     @torch.inference_mode()
     def test_invalid_extent_and_head_dimensions(self):
+        for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256)):
+            q, k, v = self.inputs(heads, kv_heads, dim, 2)
+            for length in (0, 1, 1025):
+                with (
+                    self.subTest(heads=heads, length=length),
+                    self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"),
+                ):
+                    self.op(q, k, v, cache_extent(length), dim**-0.5)
         q, k, v = self.inputs(8, 2, 256, 2)
-        for length in (0, 1, 1025):
-            with (
-                self.subTest(length=length),
-                self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"),
-            ):
-                self.op(q, k, v, cache_extent(length), 256**-0.5)
         # A positive GQA multiple is valid even outside the original profiles.
         self.assertEqual(self.op(q[:, :4], k, v, cache_extent(3), 256**-0.5).shape, q[:, :4].shape)
         with self.assertRaisesRegex(RuntimeError, "Query heads must be a positive multiple"):

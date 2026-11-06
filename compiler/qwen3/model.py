@@ -1,4 +1,4 @@
-"""Tensor-only entry point around the original Hugging Face Qwen3 model."""
+"""Load Qwen3 models and adapt caller-owned KV tensors to the HF cache API."""
 
 import torch
 from transformers import AutoModelForCausalLM
@@ -29,29 +29,6 @@ class TensorCache(Cache):
         k.index_copy_(2, position, key)
         v.index_copy_(2, position, value)
         return k, v
-
-
-class QwenStep(torch.nn.Module):
-    def __init__(self, model):
-        super().__init__()
-        self.model = model
-
-    def forward(self, input_ids, cache_position, kv):
-        # The efficient path attends to the full cache with an explicit mask.
-        columns = torch.arange(kv[0].shape[2], device=input_ids.device)
-        future = columns.unsqueeze(0) > cache_position.unsqueeze(1)
-        mask = torch.zeros_like(future, dtype=kv[0].dtype)
-        mask = mask.masked_fill(future, torch.finfo(kv[0].dtype).min)[None, None]
-        result = self.model(
-            input_ids=input_ids,
-            attention_mask=mask,
-            position_ids=cache_position.unsqueeze(0),
-            past_key_values=TensorCache(kv, cache_position),
-            cache_position=cache_position,
-            use_cache=True,
-            logits_to_keep=1,
-        )
-        return result.logits[:, -1, :]
 
 
 def load_model(model_dir):
