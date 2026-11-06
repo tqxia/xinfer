@@ -1,4 +1,4 @@
-"""Fixed-token benchmark measurement, provenance, orchestration and reports."""
+"""Fixed-token benchmark measurement, environment capture, orchestration and reports."""
 
 import os
 import platform
@@ -7,7 +7,7 @@ import subprocess
 import sys
 import time
 
-from compiler.common.artifacts import read_json, require, sha256, write_json
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require, sha256, write_json
 from compiler.common.metadata import (
     COMPARISON_EXCLUDED_FIELDS,
     FIELDS as METADATA_FIELDS,
@@ -60,6 +60,8 @@ def resolve_gpu(device=None):
 
 
 EAGER_BASELINE = "hf_dynamic_cache"
+PROMPT_TEXT = "What is the capital of France? Answer briefly."
+CONTINUATION_TEXT = "Paris is the capital of France. "
 
 TIMING_FIELDS = (
     "reset_ms",
@@ -409,8 +411,8 @@ def worker_environment(gpu, native=False):
     return env
 
 
-def capture_environment(args, out, gpu, model_type, packages, manifest_name, validate_model):
-    from compiler.common.attention import native_attention_library
+def capture_environment(args, out, gpu, model_type, packages, validate_model):
+    from tools.common import native_attention_library
     from compiler.common.weights import validate_shared_weights
 
     binary = args.native.resolve()
@@ -428,7 +430,7 @@ def capture_environment(args, out, gpu, model_type, packages, manifest_name, val
         library is not None,
         "Native benchmark is missing libxinfer_attention_ops.so; rebuild the runtime",
     )
-    manifest = read_json(args.model_dir / manifest_name)
+    manifest = read_json(args.model_dir / MODEL_MANIFEST_NAME)
     environment = dict(
         platform=platform.platform(),
         cpu_count=os.cpu_count(),
@@ -475,7 +477,7 @@ def capture_environment(args, out, gpu, model_type, packages, manifest_name, val
     return environment
 
 
-def run_rounds(args, out, gpu, packages, eager, records, timeout):
+def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout):
     """eager maps one optional profile label to its Python module and worker subcommand."""
     labels = [*eager, *packages]
     require(
@@ -495,6 +497,8 @@ def run_rounds(args, out, gpu, packages, eager, records, timeout):
                     "-m",
                     module,
                     command,
+                    "--model-type",
+                    model_type,
                     "--model-dir",
                     str(args.model_dir.resolve()),
                     "--workload",
@@ -536,24 +540,31 @@ def run_benchmark(
     args,
     *,
     model_type,
+    metadata,
     packages,
     eager,
     reference,
     prepare_tokens,
-    manifest_name,
     validate_model,
     compare=None,
-    correctness=None,
     timeout=900,
 ):
     require(
         min(args.warmup, args.repeats, args.rounds, args.decode_steps) >= 1,
         "Counts must be positive",
     )
+
+    def supported(length):
+        bounds = metadata["decode" if length == 1 else "prefill"]["token_range"]
+        return (
+            bounds[0] <= length <= bounds[1]
+            and length + args.decode_steps <= metadata["decode"]["cache_length"]
+        )
+
     require(
         bool(args.lengths)
         and len(set(args.lengths)) == len(args.lengths)
-        and all(1 <= n <= 512 and n + args.decode_steps <= 1024 for n in args.lengths),
+        and all(supported(length) for length in args.lengths),
         "Provide distinct prompt lengths within the prompt/context limits",
     )
     require(not args.output.exists(), "Choose an absent output directory")
@@ -565,24 +576,15 @@ def run_benchmark(
         workload = make_workload(args, *prepare_tokens())
         write_json(out / "workload.json", workload)
         packages = {label: directory.resolve() for label, directory in packages.items()}
-        environment = capture_environment(
-            args, out, gpu, model_type, packages, manifest_name, validate_model
-        )
+        environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
         if compare is not None:
             compare(environment["packages"], environment["shared_weights"])
-        acceptance = (
-            correctness(environment, out)
-            if correctness is not None
-            else dict(passed=None, reason="No matching end-to-end report supplied")
-        )
-        environment["correctness"] = acceptance
         write_json(out / "environment.json", environment)
-        run_rounds(args, out, gpu, packages, eager, records, timeout)
+        run_rounds(args, out, gpu, model_type, packages, eager, records, timeout)
         summary = dict(
             schema_version=1,
             model_type=model_type,
             status="provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked",
-            numerical_acceptance=acceptance,
             rounds=args.rounds,
             warmup=args.warmup,
             repeats=args.repeats,

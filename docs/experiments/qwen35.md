@@ -7,6 +7,8 @@ The current full-model path uses dynamic prefill, packaged Triton GDN and native
 prefix FlashAttention with caller-owned KV buffers. See
 [current commands](../../compiler/qwen35/README.md) and
 [the Flash integration record](#prefix-flash-and-in-place-kv-2026-11-02).
+Current benchmark commands use `python -m tools.benchmark` for both models;
+benchmark reports contain performance results independently of validation.
 Historical results retain their original artifact hashes. Historical commands
 may reference retired source files; use their recorded source snapshots to
 reproduce those experiments.

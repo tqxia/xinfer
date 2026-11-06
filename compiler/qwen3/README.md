@@ -258,33 +258,51 @@ with `CUDA_VISIBLE_DEVICES`.
 ## Benchmark and profile
 
 ```bash
-"$Q3_PY" -m compiler.qwen3.benchmark run \
+"$Q3_PY" -m tools.benchmark run \
   --packages artifacts/qwen3-flash --native "$BUILD/xinfer_benchmark" \
   --output artifacts/qwen3-benchmark
 ```
 
-`run` compares ordinary HF eager with one compiled profile using identical
-forced tokens. The `eager` baseline uses the unchanged HF model with its own
-dynamic cache and automatic masks/positions, through the same shared benchmark
-helper as Qwen3.5. Both baselines use normal PyTorch SDPA backend selection.
-Each request starts with no cache; reset discards the cache and initial cache
-allocation belongs to prefill. One-token initial requests use
-the same HF path. Worker reports and the benchmark summary identify this
-baseline as `eager_baseline: hf_dynamic_cache`.
+The same metadata-selected command serves Qwen3 and Qwen3.5. `run` compares
+ordinary HF eager (`hf`) with native AOTI (`cpp_aoti`) using identical forced
+tokens. The benchmark tokenizes its own capital-of-France chat prompt and a fixed
+"Paris is the capital of France. " continuation; saved validation fixtures are
+not required. This changes the former Qwen3 workload, so compare workload hashes
+when interpreting historical measurements.
 
-`compare` compares two compiled artifact directories for optimization work.
-Both commands default to the first CUDA-visible GPU, honoring
-`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`. Use `--gpu` with an `nvidia-smi`
-physical GPU index or GPU UUID to override that selection, for example `--gpu 1`
-to select physical GPU 1. Workers, idle checks,
-telemetry and GPU records all use the selected GPU; `environment.json` records
-its `gpu_uuid`.
+The HF baseline uses the unchanged model with its own dynamic cache and
+automatic masks/positions. Both models use normal PyTorch SDPA backend selection.
+Each request starts with no cache; reset discards the cache and initial allocation
+belongs to prefill. One-token initial requests use the same HF path. Reports
+identify this baseline as `eager_baseline: hf_dynamic_cache`.
 
-Both preserve rotated process order, warmups, package/binary/workload hashes,
-memory and GPU telemetry. Use the [development tools guide](../../docs/development-tools.md)
-for paired comparisons and numerical diagnostics. Shared-GPU smoke timings
-are provisional; controlled performance measurements require the idle checks.
-Earlier Qwen3 benchmark results used `QwenStep` with a masked 1,024-slot
-`TensorCache`; rerun comparisons before quoting speedups for the dynamic-cache
-baseline. Numerical validation retains its existing matched-cache controls.
+`compare` measures two compatible compiled package bundles for either model:
+
+```bash
+"$Q3_PY" -m tools.benchmark compare \
+  --baseline-packages artifacts/aoti-baseline \
+  --candidate-packages artifacts/aoti-candidate \
+  --native "$BUILD/xinfer_benchmark" --output artifacts/qwen3-comparison
+"$Q3_PY" -m tools.benchmark check-idle --output artifacts/qwen3-idle.json
+```
+
+`run` defaults to prompt lengths 25, 128 and 512, 64 fixed decode steps,
+two warmups, five measured requests and three process rounds. `compare` defaults
+to four rounds. `--lengths`, `--decode-steps`, `--warmup`, `--repeats` and
+`--rounds` override those counts. Package metadata defines accepted prompt lengths
+and total context capacity.
+
+All commands default to CUDA logical device 0, honoring `CUDA_VISIBLE_DEVICES`
+and `CUDA_DEVICE_ORDER`. Use `--gpu` with an `nvidia-smi` physical GPU index or
+GPU UUID to override that selection. Workers, idle checks, telemetry and GPU
+records all use the selected UUID, recorded as `gpu_uuid` in `environment.json`.
+The standalone idle check needs no model or package directory.
+
+Reports preserve rotated process order, timings, package/binary/workload hashes,
+memory and GPU telemetry. Accuracy checks and reports remain separate from
+benchmarking. Use the [development tools guide](../../docs/development-tools.md)
+for the timing protocol and paired comparisons. `--allow-busy` marks timings
+provisional; controlled measurements require idle checks.
+Earlier Qwen3 results used `QwenStep` with a masked 1,024-slot `TensorCache`;
+rerun comparisons before quoting speedups for the dynamic-cache baseline.
 Historical GB10 speedups do not establish a speedup for another toolchain/GPU.

@@ -1,6 +1,7 @@
 """CPU checks for shared benchmark measurement, orchestration and report contracts."""
 
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -11,12 +12,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from compiler.common import benchmark
-from compiler.common.artifacts import sha256, write_json
+from tools.benchmark import common as benchmark
+from tools.benchmark import cli as benchmark_cli
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256, write_json
 from compiler.common.metadata import validate_metadata_pair
 from compiler.common.tests.test_metadata import metadata_pair
-from compiler.qwen3 import benchmark as qwen3_benchmark
-from compiler.qwen35 import benchmark as qwen35_benchmark
+from tools.benchmark import qwen3 as qwen3_benchmark
+from tools.benchmark import qwen35 as qwen35_benchmark
 
 
 def sample(case, predictions=None):
@@ -180,10 +182,29 @@ class HFEagerBaseline(unittest.TestCase):
                 patch("torch.cuda.reset_peak_memory_stats"),
                 patch("torch.set_num_threads"),
             ):
-                benchmark.eager_worker(args, load, "eager")
+                benchmark.eager_worker(args, load, "hf")
             report = json.loads(args.output.read_text())
             self.assertEqual(report["eager_baseline"], "hf_dynamic_cache")
-            self.assertEqual(report["profile"], "eager")
+            self.assertEqual(report["profile"], "hf")
+
+
+class TokenPreparation(unittest.TestCase):
+    def test_both_models_prepare_own_fixed_tokens_without_reference_files(self):
+        directory = Path("offline-checkpoint")
+        for model_type, hooks in (("qwen3", qwen3_benchmark), ("qwen35", qwen35_benchmark)):
+            with self.subTest(model=model_type):
+                tokenizer = Mock()
+                tokenizer.encode.return_value = [9, 10]
+                with (
+                    patch("tools.prepare.common.load_tokenizer", return_value=tokenizer) as load,
+                    patch("tools.prepare.common.encode_prompt", return_value=[7, 8]) as encode,
+                ):
+                    self.assertEqual(hooks.prepare_tokens(directory), ([7, 8], [9, 10]))
+                load.assert_called_once_with(directory)
+                encode.assert_called_once_with(tokenizer, benchmark.PROMPT_TEXT)
+                tokenizer.encode.assert_called_once_with(
+                    benchmark.CONTINUATION_TEXT, add_special_tokens=False
+                )
 
 
 class BenchmarkContract(unittest.TestCase):
@@ -322,8 +343,9 @@ class GpuSelection(unittest.TestCase):
     OTHER = "GPU-33333333-3333-3333-3333-333333333333"
 
     def test_both_models_use_the_shared_controller(self):
-        self.assertIs(qwen3_benchmark.run_benchmark, benchmark.run_benchmark)
-        self.assertIs(qwen35_benchmark.run_benchmark, benchmark.run_benchmark)
+        self.assertIs(benchmark_cli.run_benchmark, benchmark.run_benchmark)
+        self.assertIs(benchmark_cli.model_hooks("qwen3"), qwen3_benchmark)
+        self.assertIs(benchmark_cli.model_hooks("qwen35"), qwen35_benchmark)
 
     def test_explicit_index_or_uuid_overrides_inherited_visibility(self):
         for selector in ("2", self.GPU):
@@ -484,7 +506,7 @@ class ControllerContract(unittest.TestCase):
         model = root / "model"
         model.mkdir()
         manifest = dict(revision="fixture-revision")
-        write_json(model / "model_manifest.json", manifest)
+        write_json(model / MODEL_MANIFEST_NAME, manifest)
         native = root / "xinfer_benchmark"
         native.write_bytes(b"native benchmark fixture")
         library = root / "libxinfer_attention_ops.so"
@@ -503,10 +525,6 @@ class ControllerContract(unittest.TestCase):
                 )
                 write_json(directory / f"{kind}.json", metadata)
             directories.append(directory)
-        capital = root / "reference/capital"
-        capital.mkdir(parents=True)
-        (capital / "prompt.ids").write_text("7 8\n")
-        (capital / "generated.ids").write_text("9\n")
         args = SimpleNamespace(
             command=mode,
             gpu=None,
@@ -519,13 +537,11 @@ class ControllerContract(unittest.TestCase):
             output=root / "benchmark",
             native=native,
             model_dir=model,
-            reference=root / "reference",
             packages=directories[0],
             baseline_packages=directories[0],
             candidate_packages=directories[1],
             baseline_label="baseline",
             candidate_label="candidate",
-            validation=root / "absent.json",
         )
         return args, library
 
@@ -550,6 +566,7 @@ class ControllerContract(unittest.TestCase):
             return 10
 
         weights = dict(identity_sha256="1" * 64, sources={})
+        hooks = qwen35_benchmark if model_type == "qwen35" else qwen3_benchmark
         with (
             patch.dict(os.environ, CUDA_VISIBLE_DEVICES="3,1", CUDA_DEVICE_ORDER="PCI_BUS_ID"),
             patch.object(benchmark, "resolve_gpu", return_value=gpu) as resolve,
@@ -557,21 +574,19 @@ class ControllerContract(unittest.TestCase):
             patch.object(benchmark, "run_worker", side_effect=worker),
             patch.object(benchmark.platform, "platform", return_value="test-platform"),
             patch.object(benchmark.subprocess, "check_output", side_effect=query),
-            patch("compiler.common.attention.native_attention_library", return_value=library),
+            patch("tools.common.native_attention_library", return_value=library),
             patch("compiler.common.weights.validate_shared_weights", return_value=weights),
-            patch("transformers.AutoTokenizer.from_pretrained") as tokenizer,
-            patch("tools.prepare.common.encode_prompt", return_value=[7, 8]),
+            patch.object(hooks, "prepare_tokens", return_value=([7, 8], [9])) as prepare,
         ):
-            tokenizer.return_value.encode.return_value = [9]
-            invoke = qwen35_benchmark.benchmark if model_type == "qwen35" else qwen3_benchmark.run
             if fail:
                 with self.assertRaisesRegex(RuntimeError, "worker failed"):
-                    invoke(args)
+                    benchmark_cli.run(args)
             else:
-                invoke(args)
+                benchmark_cli.run(args)
             self.assertEqual(os.environ["CUDA_VISIBLE_DEVICES"], "3,1")
             self.assertEqual(os.environ["CUDA_DEVICE_ORDER"], "PCI_BUS_ID")
         resolve.assert_called_once_with(args.gpu)
+        prepare.assert_called_once_with(args.model_dir)
         self.assertTrue(
             all(
                 row["device"] == gpu and row["env"]["CUDA_VISIBLE_DEVICES"] == gpu
@@ -583,57 +598,64 @@ class ControllerContract(unittest.TestCase):
         return workers, idle
 
     def test_models_and_compare_share_gpu_routing_rotation_and_reports(self):
-        for model_type, mode in (("qwen3", "run"), ("qwen3", "compare"), ("qwen35", "run")):
-            for selector in (None, "2"):
-                with (
-                    self.subTest(model=model_type, mode=mode, selector=selector),
-                    tempfile.TemporaryDirectory() as temporary,
-                ):
-                    args, library = self.fixtures(Path(temporary), model_type, mode)
-                    args.gpu = selector
-                    workers, idle = self.run_controller(args, library, model_type)
-                    self.assertEqual(len(workers), 4)
-                    self.assertEqual(idle.call_count, 8)
-                    is_python = [row["command"][0] == sys.executable for row in workers]
-                    self.assertEqual(
-                        is_python, [True, False, False, True] if mode == "run" else [False] * 4
-                    )
-                    if mode == "compare":
+        for model_type in ("qwen3", "qwen35"):
+            for mode in ("run", "compare"):
+                for selector in (None, "2"):
+                    with (
+                        self.subTest(model=model_type, mode=mode, selector=selector),
+                        tempfile.TemporaryDirectory() as temporary,
+                    ):
+                        args, library = self.fixtures(Path(temporary), model_type, mode)
+                        args.gpu = selector
+                        workers, idle = self.run_controller(args, library, model_type)
+                        self.assertEqual(len(workers), 4)
+                        self.assertEqual(idle.call_count, 8)
+                        is_python = [row["command"][0] == sys.executable for row in workers]
                         self.assertEqual(
-                            [Path(row["command"][1]).name for row in workers],
-                            ["baseline", "candidate", "candidate", "baseline"],
+                            is_python, [True, False, False, True] if mode == "run" else [False] * 4
                         )
-                    self.assertTrue(
-                        all(
-                            row["env"]["PYTHONHOME"] == "/nonexistent-python-home"
-                            for row in workers
-                            if row["command"][0] != sys.executable
+                        if mode == "compare":
+                            self.assertEqual(
+                                [Path(row["command"][1]).name for row in workers],
+                                ["baseline", "candidate", "candidate", "baseline"],
+                            )
+                        for row in workers:
+                            if row["command"][0] == sys.executable:
+                                self.assertEqual(
+                                    row["command"][1:4], ["-m", "tools.benchmark", "worker"]
+                                )
+                                argument = row["command"].index("--model-type")
+                                self.assertEqual(row["command"][argument + 1], model_type)
+                            else:
+                                self.assertEqual(
+                                    row["env"]["PYTHONHOME"], "/nonexistent-python-home"
+                                )
+                        environment = json.loads((args.output / "environment.json").read_text())
+                        self.assertEqual(environment["gpu_uuid"], GpuSelection.GPU)
+                        self.assertEqual(
+                            environment["attention_library"]["sha256"], sha256(library)
                         )
-                    )
-                    environment = json.loads((args.output / "environment.json").read_text())
-                    self.assertEqual(environment["gpu_uuid"], GpuSelection.GPU)
-                    self.assertEqual(environment["attention_library"]["sha256"], sha256(library))
-                    self.assertEqual(environment["binary_sha256"], sha256(args.native))
-                    self.assertEqual(
-                        environment["workload_sha256"], sha256(args.output / "workload.json")
-                    )
-                    self.assertTrue((args.output / "native.ldd").is_file())
-                    summary = json.loads((args.output / "summary.json").read_text())
-                    labels = (
-                        {"baseline", "candidate"}
-                        if mode == "compare"
-                        else {"hf", "cpp_aoti"}
-                        if model_type == "qwen35"
-                        else {"eager", "aoti"}
-                    )
-                    self.assertEqual(set(summary["profiles"]), labels)
-                    self.assertEqual(summary["schema_version"], 1)
-                    if mode == "compare":
-                        self.assertNotIn("eager_baseline", summary)
-                    else:
-                        self.assertEqual(summary["eager_baseline"], "hf_dynamic_cache")
-                    self.assertTrue(summary["functional_checks_passed"])
-                    self.assertIsNone(summary["numerical_acceptance"]["passed"])
+                        self.assertEqual(environment["binary_sha256"], sha256(args.native))
+                        self.assertEqual(
+                            environment["workload_sha256"], sha256(args.output / "workload.json")
+                        )
+                        self.assertTrue((args.output / "native.ldd").is_file())
+                        summary = json.loads((args.output / "summary.json").read_text())
+                        labels = (
+                            {"baseline", "candidate"} if mode == "compare" else {"hf", "cpp_aoti"}
+                        )
+                        self.assertEqual(set(summary["profiles"]), labels)
+                        self.assertEqual(summary["schema_version"], 1)
+                        if mode == "compare":
+                            self.assertNotIn("eager_baseline", summary)
+                        else:
+                            self.assertEqual(summary["eager_baseline"], "hf_dynamic_cache")
+                        self.assertTrue(summary["functional_checks_passed"])
+                        self.assertNotIn("numerical_acceptance", summary)
+                        self.assertNotIn("correctness", environment)
+                        self.assertFalse((args.output / "correctness.json").exists())
+                        self.assertFalse(hasattr(args, "validation"))
+                        self.assertFalse(hasattr(args, "reference"))
 
     def test_worker_failure_persists_completed_runs_and_failure_report_for_both_models(self):
         for model_type in ("qwen3", "qwen35"):
@@ -647,90 +669,236 @@ class ControllerContract(unittest.TestCase):
                 )
                 self.assertFalse((args.output / "summary.json").exists())
 
-    def test_matching_qwen35_correctness_evidence_is_preserved(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            args, library = self.fixtures(Path(temporary), "qwen35")
-            metadata = json.loads((args.packages / "decode.json").read_text())
-            validation = dict(
-                passed=False,
-                native_bitwise=True,
-                failures=[{}],
-                greedy_failures=[],
-                package_sha256={
-                    kind: json.loads((args.packages / f"{kind}.json").read_text())["package_sha256"]
-                    for kind in ("prefill", "decode")
-                },
-                shared_weights=metadata["shared_weights"],
-            )
-            args.validation = Path(temporary) / "validation.json"
-            write_json(args.validation, validation)
-            self.run_controller(args, library, "qwen35")
-            summary = json.loads((args.output / "summary.json").read_text())
-            self.assertFalse(summary["numerical_acceptance"]["passed"])
-            self.assertTrue(summary["functional_checks_passed"])
-            self.assertEqual(summary["numerical_acceptance"]["numerical_failures"], 1)
-            self.assertEqual(json.loads((args.output / "correctness.json").read_text()), validation)
+    def test_metadata_selects_model_and_default_paths(self):
+        for model_type in ("qwen3", "qwen35"):
+            with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                args, library = self.fixtures(root, model_type)
+                hooks = qwen35_benchmark if model_type == "qwen35" else qwen3_benchmark
+                expected_model, expected_native = args.model_dir, args.native
+                args.model_dir = args.native = None
+                with (
+                    patch.object(
+                        hooks, "default_model_dir", return_value=expected_model
+                    ) as default,
+                    patch.object(benchmark_cli, "default_build_dir", return_value=root) as build,
+                ):
+                    self.run_controller(args, library, model_type)
+                default.assert_called_once()
+                self.assertEqual(default.call_args.args[0]["decode"]["model_type"], model_type)
+                build.assert_called_once_with(model_type)
+                self.assertEqual(args.model_dir, expected_model)
+                self.assertEqual(args.native, expected_native)
 
-    def test_mismatched_correctness_evidence_is_rejected_before_workers(self):
+    def test_mixed_models_are_rejected_before_worker_or_output_creation(self):
         with tempfile.TemporaryDirectory() as temporary:
-            args, library = self.fixtures(Path(temporary), "qwen35")
-            args.validation = Path(temporary) / "validation.json"
-            write_json(args.validation, dict(package_sha256={}, shared_weights={}))
+            args, _ = self.fixtures(Path(temporary), "qwen3", "compare")
+            for kind, metadata in metadata_pair("qwen35").items():
+                write_json(args.candidate_packages / f"{kind}.json", metadata)
             with (
-                patch.object(benchmark, "resolve_gpu", return_value=GpuSelection.GPU),
-                patch.object(
-                    benchmark,
-                    "capture_environment",
-                    return_value={
-                        "packages": {
-                            "cpp_aoti": {
-                                kind: {
-                                    "metadata": json.loads(
-                                        (args.packages / f"{kind}.json").read_text()
-                                    )
-                                }
-                                for kind in ("prefill", "decode")
-                            }
-                        }
-                    },
-                ),
-                patch("transformers.AutoTokenizer.from_pretrained") as tokenizer,
-                patch("tools.prepare.common.encode_prompt", return_value=[7, 8]),
+                patch.object(benchmark, "resolve_gpu") as resolve,
                 patch.object(benchmark, "run_worker") as worker,
             ):
-                tokenizer.return_value.encode.return_value = [9]
-                with self.assertRaisesRegex(ValueError, "Validation is for different packages"):
-                    qwen35_benchmark.benchmark(args)
-                worker.assert_not_called()
-            self.assertEqual(
-                json.loads((args.output / "failure.json").read_text())["completed_runs"], 0
-            )
+                with self.assertRaisesRegex(ValueError, "Unsupported model type"):
+                    benchmark_cli.run(args)
+            resolve.assert_not_called()
+            worker.assert_not_called()
+            self.assertFalse(args.output.exists())
 
-    def test_check_idle_cli_resolves_default_and_explicit_selection(self):
+    def test_comparison_rejects_different_numerical_contract_before_workers(self):
+        for model_type in ("qwen3", "qwen35"):
+            with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
+                args, library = self.fixtures(Path(temporary), model_type, "compare")
+                for kind in ("prefill", "decode"):
+                    path = args.candidate_packages / f"{kind}.json"
+                    metadata = json.loads(path.read_text())
+                    metadata["triton_enable_fp_fusion"] = False
+                    write_json(path, metadata)
+                with patch.object(benchmark, "run_rounds") as rounds:
+                    with self.assertRaisesRegex(ValueError, "Incomparable packages"):
+                        self.run_controller(args, library, model_type)
+                rounds.assert_not_called()
+                self.assertEqual(
+                    json.loads((args.output / "failure.json").read_text())["completed_runs"], 0
+                )
+
+    def test_comparison_labels_are_checked_before_metadata_or_workers(self):
+        for labels in (
+            ("same", "same"),
+            ("hf", "candidate"),
+            ("baseline", "cpp_aoti"),
+            ("bad-label", "candidate"),
+        ):
+            with self.subTest(labels=labels), tempfile.TemporaryDirectory() as temporary:
+                args, _ = self.fixtures(Path(temporary), "qwen3", "compare")
+                args.baseline_label, args.candidate_label = labels
+                with patch.object(benchmark_cli, "read_package_metadata") as read:
+                    with self.assertRaisesRegex(ValueError, "distinct alphanumeric"):
+                        benchmark_cli.run(args)
+                read.assert_not_called()
+                self.assertFalse(args.output.exists())
+
+    def test_check_idle_cli_resolves_default_and_explicit_selection_without_model(self):
         gpu = GpuSelection.GPU
         for selector in (None, "2", gpu):
             with self.subTest(selector=selector), tempfile.TemporaryDirectory() as temporary:
                 output = Path(temporary) / "idle.json"
-                command = ["benchmark", "check-idle", "--output", str(output)]
+                command = ["check-idle", "--output", str(output)]
                 if selector is not None:
                     command.extend(["--gpu", selector])
                 with (
-                    patch.object(sys, "argv", command),
-                    patch.object(qwen35_benchmark, "resolve_gpu", return_value=gpu) as resolve,
-                    patch.object(qwen35_benchmark, "wait_idle", return_value=[]) as idle,
+                    patch.object(benchmark_cli, "resolve_gpu", return_value=gpu) as resolve,
+                    patch.object(benchmark_cli, "wait_idle", return_value=[]) as idle,
+                    patch.object(benchmark_cli, "model_hooks") as hooks,
                 ):
-                    qwen35_benchmark.main()
+                    benchmark_cli.main(command)
                 resolve.assert_called_once_with(selector)
                 idle.assert_called_once_with(gpu, output=output)
+                hooks.assert_not_called()
+
+    def test_cli_uses_identical_defaults_and_worker_profile_for_both_models(self):
+        for model_type in ("qwen3", "qwen35"):
+            with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "worker.json"
+                hooks = qwen35_benchmark if model_type == "qwen35" else qwen3_benchmark
+                sentinel = object()
+                with (
+                    patch.object(hooks, "eager_loader", return_value=sentinel),
+                    patch.object(benchmark_cli, "eager_worker") as worker,
+                ):
+                    benchmark_cli.main(
+                        [
+                            "worker",
+                            "--model-type",
+                            model_type,
+                            "--model-dir",
+                            "model",
+                            "--workload",
+                            "workload.json",
+                            "--output",
+                            str(output),
+                        ]
+                    )
+                args, loader, profile = worker.call_args.args
+                self.assertEqual(
+                    (args.model_dir, args.workload, args.output),
+                    (Path("model"), Path("workload.json"), output),
+                )
+                self.assertIs(loader, sentinel)
+                self.assertEqual(profile, "hf")
+        for mode in ("run", "compare"):
+            command = (
+                ["run", "--packages", "packages"]
+                if mode == "run"
+                else [
+                    "compare",
+                    "--baseline-packages",
+                    "baseline",
+                    "--candidate-packages",
+                    "candidate",
+                ]
+            )
+            with patch.object(benchmark_cli, "run") as run:
+                benchmark_cli.main(command + ["--output", "benchmark"])
+            args = run.call_args.args[0]
+            self.assertEqual(args.lengths, [25, 128, 512])
+            self.assertEqual((args.decode_steps, args.warmup, args.repeats), (64, 2, 5))
+            self.assertEqual(args.rounds, 3 if mode == "run" else 4)
+
+    def test_cli_rejects_validation_and_reference_options(self):
+        for option in ("--validation", "--reference"):
+            with (
+                self.subTest(option=option),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(benchmark_cli, "run") as run,
+            ):
+                with self.assertRaises(SystemExit) as stopped:
+                    benchmark_cli.main(
+                        ["run", "--packages", "packages", "--output", "benchmark", option, "report"]
+                    )
+                self.assertEqual(stopped.exception.code, 2)
+                run.assert_not_called()
 
     def test_invalid_gpu_preserves_absent_output(self):
+        for model_type in ("qwen3", "qwen35"):
+            with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
+                args, _ = self.fixtures(Path(temporary), model_type)
+                args.output = Path(temporary) / "missing-parent" / "output"
+                with patch.object(benchmark, "resolve_gpu", side_effect=ValueError("invalid GPU")):
+                    with self.assertRaisesRegex(ValueError, "invalid GPU"):
+                        benchmark_cli.run(args)
+                self.assertFalse(args.output.parent.exists())
+
+
+class WorkloadLimits(unittest.TestCase):
+    def invoke(self, root, length, capacity, decode_steps=64, bounds=(2, 8192)):
+        args = SimpleNamespace(
+            warmup=1,
+            repeats=1,
+            rounds=1,
+            decode_steps=decode_steps,
+            lengths=[length],
+            allow_busy=True,
+            output=root / "benchmark",
+            gpu=None,
+        )
+        metadata = {
+            "prefill": dict(token_range=list(bounds)),
+            "decode": dict(token_range=[1, 1], cache_length=capacity),
+        }
+        return args, metadata
+
+    def run_core(self, args, metadata):
+        # This isolates workload construction from the current runtime ABI's
+        # package-format limits; it must use the supplied package capabilities.
+        with (
+            patch.object(benchmark, "resolve_gpu", return_value=GpuSelection.GPU),
+            patch.object(benchmark, "capture_environment", return_value={}),
+            patch.object(benchmark, "run_rounds"),
+            patch.object(benchmark, "summarize", return_value={}),
+        ):
+            benchmark.run_benchmark(
+                args,
+                metadata=metadata,
+                model_type="qwen35",
+                packages={},
+                eager={},
+                reference="hf",
+                prepare_tokens=lambda: ([7, 8], [9]),
+                validate_model=lambda _: None,
+            )
+        return json.loads((args.output / "workload.json").read_text())
+
+    def test_declared_8k_prompt_and_larger_capacity_are_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:
-            args, _ = self.fixtures(Path(temporary), "qwen35")
-            args.output = Path(temporary) / "missing-parent" / "output"
-            with patch.object(benchmark, "resolve_gpu", side_effect=ValueError("invalid GPU")):
-                with self.assertRaisesRegex(ValueError, "invalid GPU"):
-                    qwen35_benchmark.benchmark(args)
-            self.assertFalse(args.output.parent.exists())
+            args, metadata = self.invoke(Path(temporary), 8192, 8256)
+            workload = self.run_core(args, metadata)
+            self.assertEqual(len(workload["cases"][0]["prompt"]), 8192)
+            self.assertEqual(len(workload["cases"][0]["decode_tokens"]), 64)
+
+    def test_prompt_and_remaining_capacity_limits_reject_before_gpu_or_output(self):
+        for length, capacity, decode, bounds in (
+            (8193, 16384, 64, (2, 8192)),
+            (8192, 8255, 64, (2, 8192)),
+            (2, 1024, 1, (4, 512)),
+            (0, 1024, 1, (2, 512)),
+        ):
+            with (
+                self.subTest(length=length, capacity=capacity, bounds=bounds),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                args, metadata = self.invoke(Path(temporary), length, capacity, decode, bounds)
+                with patch.object(benchmark, "resolve_gpu") as resolve:
+                    with self.assertRaisesRegex(ValueError, "prompt/context limits"):
+                        self.run_core(args, metadata)
+                resolve.assert_not_called()
+                self.assertFalse(args.output.exists())
+
+    def test_single_token_uses_decode_entry_range(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, metadata = self.invoke(Path(temporary), 1, 1024, bounds=(4, 512))
+            workload = self.run_core(args, metadata)
+            self.assertEqual(workload["cases"][0]["prompt"], [7])
 
 
 if __name__ == "__main__":

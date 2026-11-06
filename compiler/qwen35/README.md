@@ -510,48 +510,61 @@ use an unpacked control checkout with the same selected Inductor configuration.
 ## Benchmark
 
 ```bash
-"$QWEN_PY" -m compiler.qwen35.benchmark run \
-  --validation artifacts/qwen35/0.8b/end-to-end-new/summary.json \
+"$QWEN_PY" -m tools.benchmark run \
+  --packages artifacts/qwen35/0.8b/text \
   --output artifacts/qwen35/0.8b/benchmark-new
-```
-
-For 4B, pass all three matching paths explicitly:
-
-```bash
-"$QWEN_PY" -m compiler.qwen35.benchmark run \
-  --model-dir work/qwen35/4b/text --packages artifacts/qwen35/4b/text \
-  --validation artifacts/qwen35/4b/end-to-end-new/summary.json \
+"$QWEN_PY" -m tools.benchmark run \
+  --packages artifacts/qwen35/4b/text \
   --output artifacts/qwen35/4b/benchmark-new
 ```
 
-Both `run` and `check-idle` default to the first CUDA-visible GPU, honoring
-`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER`. To select a physical GPU
-explicitly, pass an `nvidia-smi` index or GPU UUID with `--gpu`; for example,
-`--gpu 1` selects physical GPU 1 and overrides the inherited visibility mask.
-Benchmark workers, idle checks, telemetry and GPU records use the same selected
-UUID, recorded as `gpu_uuid` in `environment.json`. Qwen3 uses the same selection
-policy.
+Package metadata selects the model family and the prepared 0.8B or 4B checkpoint.
+`--model-dir` selects another local path for that same checkpoint; `--native`
+selects another `xinfer_benchmark` build. The native executable defaults to
+`build/qwen35/xinfer_benchmark`. The same CLI and defaults serve Qwen3.
 
-Profiles compare ordinary HF eager (`hf`) with native AOTI (`cpp_aoti`) using
-identical fixed tokens. Both models use the shared HF dynamic-cache benchmark
-helper: the unchanged model creates and carries its own cache and constructs
-its masks and positions. Both baselines use normal PyTorch SDPA backend
-selection. Qwen3.5 retains environment checks while its matched validation/export
-setup keeps the separately forced efficient backend. Reset discards the cache,
-so initial allocation is counted in prefill; one-token initial requests follow the same path. Worker
-reports and the benchmark summary record `eager_baseline: hf_dynamic_cache`.
-EOS is data during timing. Reports retain numerical acceptance,
-reset/prefill/decode timings, memory, workload and telemetry.
-`environment.json` records package, binary and workload checksums.
-`--allow-busy` is for functional checks and marks timings provisional. Final
-measurements require an idle environment. Earlier Qwen3.5 benchmarks used an
-HF `StaticCache` with an explicit 1,024-slot mask; rerun comparisons for the new
-dynamic-cache baseline. The matched static-cache `HFRuntime` remains a numerical
-validation control.
+Both models support paired package comparison and a standalone idle check:
+
+```bash
+"$QWEN_PY" -m tools.benchmark compare \
+  --baseline-packages artifacts/qwen35/4b/baseline \
+  --candidate-packages artifacts/qwen35/4b/candidate \
+  --output artifacts/qwen35/4b/comparison-new
+"$QWEN_PY" -m tools.benchmark check-idle --output artifacts/qwen35-idle.json
+```
+
+`run` compares ordinary HF eager (`hf`) with native AOTI (`cpp_aoti`) using
+identical fixed tokens. Both models tokenize the capital-of-France chat prompt
+and a fixed "Paris is the capital of France. " continuation in the benchmark.
+The unchanged HF model creates and carries its own dynamic cache and constructs
+its masks and positions. Normal PyTorch SDPA backend selection remains enabled.
+Qwen3.5 retains its environment checks. Reset discards the cache, so initial
+allocation is counted in prefill; one-token initial requests follow the same
+path. Reports record `eager_baseline: hf_dynamic_cache`. EOS is data during timing.
+
+Defaults are prompt lengths 25, 128 and 512, 64 decode steps, two warmups,
+five measured requests and three process rounds (`compare` uses four rounds).
+The corresponding count options override these values. Accepted prompt lengths
+and total context capacity come from package metadata.
+
+All commands default to CUDA logical device 0, honoring `CUDA_VISIBLE_DEVICES`
+and `CUDA_DEVICE_ORDER`. `--gpu` accepts an `nvidia-smi` physical index or GPU
+UUID and overrides inherited visibility. Workers, idle checks, telemetry and GPU
+records use the same UUID, stored as `gpu_uuid` in `environment.json`.
+The standalone idle check loads no model and needs no package directory.
+
+Reports contain reset/prefill/decode timings, memory, workload and telemetry,
+with package, binary and workload checksums in `environment.json`. Accuracy
+validation and its reports remain separate; benchmarks do not consume validation
+reports. `--allow-busy` marks timings provisional. Controlled measurements require
+an idle environment.
+Earlier Qwen3.5 benchmarks used an HF `StaticCache` with an explicit 1,024-slot
+mask; rerun comparisons for the dynamic-cache baseline. The matched static-cache
+HF wrapper in the validation model hooks remains a numerical control.
 
 [The Inductor tuning guide](../../docs/experiments/qwen35-inductor-tuning.md)
-defines separate generated-GEMV and GEMM-autotuning experiments, package-pair
-requirements, validation and native A/B measurement.
+records the original generated-GEMV and GEMM-autotuning experiments. Use the
+current benchmark command for new measurements.
 
 ## Numerical issues and historical evidence
 

@@ -262,6 +262,30 @@ the matching native stack at those library paths; relocating that external
 stack is a separate step. Deploy each complete five-file model package directory
 alongside the installed runtime.
 
+## Benchmark tools
+
+Use the same metadata-selected command with each model's Python environment:
+
+```bash
+"$Q3_PY" -m tools.benchmark run \
+  --model-dir "$Q3_MODEL" --packages "$Q3_PACKAGES" \
+  --native "$Q3_BUILD/xinfer_benchmark" --output "$Q3_ROOT/benchmark"
+"$Q35_PY" -m tools.benchmark run \
+  --model-dir "$Q35_MODEL" --packages "$Q35_PACKAGES" \
+  --native "$Q35_BUILD/xinfer_benchmark" --output "$Q35_ROOT/benchmark"
+"$Q35_PY" -m tools.benchmark check-idle --output "$Q35_ROOT/idle.json"
+```
+
+Both families also support `compare`, using `--baseline-packages`,
+`--candidate-packages` and `--output`. Use a fresh output path for each invocation.
+GPU selection,
+fixed-token timing, defaults and reports are shared. `run` reports `hf` and
+`cpp_aoti` profiles using the plain HF dynamic-cache baseline. Workload limits
+come from package metadata. Benchmarks prepare their own tokens and do not
+consume numerical validation reports. See the
+[benchmark protocol](../docs/development-tools.md#benchmark-hf-and-native-aoti)
+for all commands and measurement boundaries.
+
 ## Validation matrix
 
 Run the following on both targets for each new package pair. Use a GPU-idle

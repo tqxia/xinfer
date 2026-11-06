@@ -47,8 +47,13 @@ claim that the new artifact passed. Current refactor verification is recorded in
 
 ## Measurement and next work
 
-Both model benchmarks compare ordinary HF dynamic-cache eager and one compiled
-profile through the shared cached-forward helper. Reports mark this baseline
+One metadata-selected `python -m tools.benchmark` command serves both models.
+`run` compares ordinary HF dynamic-cache eager and one compiled profile through
+the shared cached-forward helper; `compare` measures two compatible package
+bundles; `check-idle` records the selected GPU activity without loading a model.
+The benchmark prepares its own fixed tokens and derives workload limits from
+package metadata. Accuracy validation remains a separate tool. Reports mark
+the HF baseline
 with `eager_baseline: hf_dynamic_cache`; earlier masked-cache speedups need fresh
 runs. Paired baseline/candidate runs remain available for optimizations and
 record workload, package/native identities, numerical settings, rotated process order,

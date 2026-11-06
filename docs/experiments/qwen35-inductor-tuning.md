@@ -1,5 +1,8 @@
 # Qwen3.5 Inductor tuning experiments
 
+Current benchmarks use `python -m tools.benchmark` with metadata-selected model
+hooks, shared `run`/`compare`/`check-idle` commands and no validation-report input.
+
 Use commit `6a0b4c7` (dynamic prefill plus packaged Triton GDN) as the control.
 The old fixed-prefill commit `f67bdef` is not the control for this experiment.
 The aim is to improve batch-one BF16 decode, especially its linear projections,

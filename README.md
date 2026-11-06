@@ -10,8 +10,10 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
 `runtime/<model>/` owns model-specific package ABI checks. Shared file
-and benchmark helpers live in `compiler/common/`; numerical validation support
-lives in `compiler/common/tests/validation.py`.
+helpers live in `compiler/common/`; numerical validation support lives in
+`compiler/common/tests/validation.py`. Benchmark orchestration, measurement and
+model hooks live in `tools/benchmark/`; tooling native-library discovery lives
+in `tools/common.py`.
 `environments/` owns project setup, native-stack checks and target profiles;
 its Bash entry points are `setup.sh` and `check.sh`.
 `runtime/common/` owns the runner, state storage, device and package preflight,
@@ -22,7 +24,9 @@ KV buffers and replaces functional conv/recurrent state using metadata update
 rules and the runtime ABI's output order. Generation stops at EOS or the token
 budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
-Tests and focused diagnostics live beside their model. Detailed results live
+Preparation and benchmark unit tests live beside their tools under
+`tools/<area>/tests/`; compiler/model tests and focused diagnostics remain beside
+their model. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 generated native builds belong in `build/<model>/`; venvs and scratch scripts
 belong in `work/`. These directories are ignored.
@@ -43,6 +47,7 @@ Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your
 "$Q3_PY" -m tools.prepare --help
 "$Q3_PY" -m compiler.qwen3.export --help
 "$Q3_PY" -m compiler.qwen3.tests.validate_cpp --help
+"$Q3_PY" -m tools.benchmark --help
 ```
 
 Use a target's native stack and each model's isolated HF environment, following the
@@ -68,6 +73,9 @@ files record its checksum. Deploy the complete five-file package directory. The 
 storage to both loaders with `user_managed`; rebuild with Torch 2.13 or newer
 and re-export existing embedded-weight packages before using the current runtime.
 
+`python -m tools.benchmark` selects the model from package metadata. Both models
+support `run`, paired package `compare` and standalone `check-idle`. Workloads are
+tokenized by the benchmark itself, with prompt/context limits read from metadata.
 Benchmarks split reset, prefill, decode and whole-request timing. Both model
 eager workers use the unchanged HF model and its dynamic cache, with automatic
 masks and positions; reset discards the cache and initial allocation is timed
@@ -77,7 +85,8 @@ record reset-plus-prefill and consumed positions. The Python benchmark
 controller shares environment capture, rotated process order, failure handling
 and summaries across models. Warmup predictions
 are checked as well as measured repeats. Benchmark reports include package,
-binary and workload checksums. Qwen3 keeps HF eager/FP32 references for
+binary and workload checksums. Benchmark reports contain performance and harness
+results; numerical accuracy reports remain in the validation tooling. Qwen3 keeps HF eager/FP32 references for
 validation, with bounded HF logit error and separate cache/token drift
 diagnostics. CUDA Graph integration is deferred.
 
