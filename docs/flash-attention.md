@@ -3,7 +3,7 @@
 The existing Flash module adapter is the sole supported Qwen3 export backend.
 It targets batch-one BF16 Qwen3-0.6B, retains eight KV heads and attends only to
 the populated cache prefix. There is no backend selector or alternate compiled
-eager-numerics profile. Independent HF eager/FP32 references remain unmodified.
+eager-numerics profile. The independent BF16 HF eager reference remains unmodified.
 
 ## Compilation and runtime contract
 

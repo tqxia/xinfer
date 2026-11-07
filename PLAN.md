@@ -9,7 +9,7 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
 
 ## Supported Qwen3 pipeline
 
-- Load the original checkpoint read-only; preserve independent HF eager/FP32
+- Load the original checkpoint read-only; preserve independent BF16 HF eager
   reference execution and offline tokenization/text decoding.
 - Install the existing Flash module adapter before export. Export bounded
   dynamic prefill (2–512 tokens per call) and decode (one token) with the same ABI.
@@ -49,7 +49,8 @@ and caches, correct write regions/masking, stable storage, reset/reuse, boundary
 and overflow rejection, and native/Python AOTI generation agreement. HF logits
 retain the 5% relative-L2 and peak-normalized error limits. HF cache differences
 and differing top-token/greedy choices are diagnostic reports, with HF parity
-separate from overall acceptance. Keep FP32 controls in reports.
+separate from overall acceptance. Full-model validation uses the BF16 HF baseline
+without a separate FP32 HF control model.
 
 The saved pre-refactor Flash matrix has 26 cases/185 rows, bitwise native/Python
 AOTI parity, 14/56 HF cache tensors over the former limit and two top-token
@@ -96,7 +97,7 @@ native generation, benchmark and validation executables.
 Ordinary L20 exports and C++ execution completed for the new long-context
 profile for 0.8B and the complete 4B model. Native/Python AOTI outputs matched
 bitwise, and full 16,384-slot inference-memory probes completed. HF numerical
-acceptance remains open. Keep the existing HF/FP32 comparisons and
+acceptance remains open. Keep the existing BF16 HF comparisons and
 Q35-NUM-001/Q35-NUM-002 diagnostics.
 The [experiment record](docs/experiments/qwen35.md) preserves earlier block probes,
 fixed-shape packages and export failures as historical evidence. Those results
@@ -131,12 +132,12 @@ state preservation, reset/reuse, generation and GPU memory. Measure export and
 packed-reference peaks as well as inference memory. Use the
 [L20 Docker testing environment](environments/l20/docker/README.md) for
 the real 4B checkpoint. Export uses ordinary strict tracing and linear packing;
-the standard validators run HF BF16 and full-model FP32 controls alongside the
-adapted and packed eager stage and AOTI packages. Preserve all existing numerical,
+the standard validators run the BF16 HF baseline alongside the adapted and
+packed eager stage and AOTI packages. Preserve all existing numerical,
 state, native/Python bitwise and generation gates, including the 5% HF limits.
 Retain complete reports before accepting the full-model milestone.
 
-The [real 4B L20 rerun](docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
+The historical [4B L20 rerun](docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
 completed ordinary export, full FP32 controls, native parity, generation and
 shared-weight memory checks without OOM. Its required HF/adapter/packing
 numerical gates still fail, so the full-model milestone is not yet accepted.
@@ -165,8 +166,8 @@ These profiles still need GB10 re-export and validation.
 Keep regression coverage for 1/511/512/513/8191/8192-token prompts, a one-token
 remainder, nonzero offsets, reset/reuse, the selected capacity boundary and
 overflow/budget rejection. Run matched teacher-forced partitions through HF,
-adapted/packed eager, Python AOTI and C++ AOTI, retaining independent BF16/FP32
-controls, strict native parity and existing HF numerical limits. Stream state
+adapted/packed eager, Python AOTI and C++ AOTI, retaining the independent BF16 HF
+baseline, strict native parity and existing HF numerical limits. Stream state
 comparisons and retain selected checkpoints to bound CPU memory and disk use.
 
 Use separate idle-target benchmarks for complete-prompt prefill and time to

@@ -159,6 +159,7 @@ class ValidationStages(unittest.TestCase):
         self.suite.model_dir = Path("unused-checkpoint")
         self.suite.specs = []
         self.suite.capacity = 1024
+        self.suite.max_prefill = 512
         self.suite.vocab_size = 16
         self.suite.pair = {"prefill": {"model_specific": {}}}
         self.original = SimpleNamespace(config=object())
@@ -254,6 +255,16 @@ class ValidationStages(unittest.TestCase):
         self.assertEqual(self.events, ["adapter", "wrapper"])
         self.wrapper.assert_called_once_with(self.original)
         self.export_step.assert_not_called()
+
+    def test_greedy_replay_reference_uses_default_bf16_model(self):
+        runtime = Mock(spec=["close"])
+        self.hf.side_effect = None
+        self.hf.return_value = runtime
+        with self.suite.reference() as actual:
+            self.assertIs(actual, runtime)
+        self.loader.assert_called_once_with(self.suite.model_dir)
+        self.install.assert_not_called()
+        runtime.close.assert_called_once_with()
 
 
 if __name__ == "__main__":

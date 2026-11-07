@@ -36,10 +36,12 @@ Use environment checking to verify the selected stack and configured build.
 
 ## Correctness contracts
 
-Preserve HF → adapted/optimized eager → Python AOTI → C++ AOTI validation, with
-identical teacher-forced inputs and independent HF/FP32 controls. Generate HF
-references during validation. Keep native/Python bitwise equality, finite-value,
-state ownership, masking, reset/reuse, generation and boundary checks strict.
+Preserve BF16 HF → adapted/optimized eager → Python AOTI → C++ AOTI validation,
+with identical teacher-forced inputs and an unmodified BF16 HF baseline. Generate
+HF references during validation. Full-model validation does not load a separate
+FP32 HF control model; standalone kernel FP32 checks remain required. Keep
+native/Python bitwise equality, finite-value, state ownership, masking, reset/reuse,
+generation and boundary checks strict.
 
 Do not loosen tolerances, change references or suppress failures to make an
 optimization pass. Report HF numerical acceptance separately from native parity;

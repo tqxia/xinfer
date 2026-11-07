@@ -215,24 +215,6 @@ class Suite:
     def capture_states(self, case, step):
         return capture_long_state(case, step) if case.get("long_context") else True
 
-    def fp32_cases(self, cases):
-        selected = {
-            "length_96",
-            "length_97",
-            "length_98",
-            "length_512",
-            "context_end",
-            "capital_teacher",
-            "long_prompt_513",
-            "long_prompt_8192",
-            "long_context_end",
-        }
-        return [
-            case
-            for case in cases
-            if case["origin"]["suite"] == "model" or case["origin"]["name"] in selected
-        ]
-
     def native_state_keys(self, cases):
         return {
             (case["name"], step)
@@ -289,8 +271,9 @@ class Suite:
             torch.cuda.empty_cache()
 
     @contextmanager
-    def reference(self, dtype):
-        model = load_model(self.model_dir, dtype=dtype)
+    def reference(self):
+        """Reload unmodified BF16 HF for matched greedy-trajectory replay."""
+        model = load_model(self.model_dir)
         runtime = HFStage(
             model,
             self.specs,

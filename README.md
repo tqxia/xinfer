@@ -124,6 +124,6 @@ controller shares environment capture, rotated process order, failure handling
 and summaries across models. Warmup predictions
 are checked as well as measured repeats. Benchmark reports include package,
 binary and workload checksums. Benchmark reports contain performance and harness
-results; numerical accuracy reports remain in the validation tooling. Qwen3 keeps HF eager/FP32 references for
+results; numerical accuracy reports remain in the validation tooling. Qwen3 keeps an independent BF16 HF eager reference for
 validation, with bounded HF logit error and separate cache/token drift
 diagnostics. CUDA Graph integration is deferred.

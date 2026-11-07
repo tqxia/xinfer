@@ -60,7 +60,7 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
     ]
     replay = {}
     if mismatches:
-        with suite.reference(torch.bfloat16) as runtime:
+        with suite.reference() as runtime:
             for case in mismatches:
                 name = case["name"]
                 ids = compiled.greedy[name]["ids"]
@@ -100,7 +100,7 @@ def validate_chain(suite, packages, native, output, metadata, report):
     )
     numerical_policy = replace(policy, tokens_required=False)
     report["reference_protocol"] = dict(
-        cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
+        dtype="bfloat16", cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
     )
     report["state_snapshot_policy"] = dict(
         kv="populated prefix; unused future fill checked independently on capture"
@@ -117,7 +117,6 @@ def validate_chain(suite, packages, native, output, metadata, report):
         if policy.tokens_required
         else "reported",
         native_python_aoti="bitwise",
-        fp32_controls="reported",
     )
     report["native_sha256"] = sha256(native)
     hf = eager = None
@@ -239,35 +238,5 @@ def validate_chain(suite, packages, native, output, metadata, report):
 
     print("Control: HF logits on compiled greedy trajectories", flush=True)
     _greedy_anchors(suite, report, hf, compiled, specs, policy, chats)
-    print("Control: independent FP32 HF", flush=True)
-    checked = 0
-    fp32_cases = suite.fp32_cases(cases)
-    require(fp32_cases, "Missing independent FP32 controls")
-    require(len({case["name"] for case in fp32_cases}) == len(fp32_cases), "Duplicate FP32 control")
-    require(
-        all(case in cases for case in fp32_cases), "FP32 control inputs differ from the main chain"
-    )
-    with suite.reference(torch.float32) as runtime:
-        for case in fp32_cases:
-            # The control is compared one request at a time; completed control
-            # snapshots can be released after their metrics have been recorded.
-            control_case = {key: value for key, value in case.items() if key != "same_as"}
-            control = teacher_trace(runtime, [control_case], specs, suite.capture_states)
-            for label, actual in (("hf", hf), ("python_aoti", compiled)):
-                compare_traces(
-                    report,
-                    label,
-                    "hf_fp32",
-                    actual,
-                    control,
-                    specs,
-                    policy,
-                    required=False,
-                    logit_keys=set(control.logits),
-                    state_keys=set(control.states),
-                    greedy_names=set(),
-                )
-            checked += len(control.logits)
-            del control
-    report["controls"] = dict(hf_fp32_steps=checked, matched_greedy_logits=True)
+    report["controls"] = dict(matched_greedy_logits=True)
     report["passed"] = not report["failures"] and report["native_bitwise"]

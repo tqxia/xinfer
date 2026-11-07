@@ -284,15 +284,6 @@ class Suite:
             bool(case.get("fixture")) or case.get("dump_cache", False)
         )
 
-    def fp32_cases(self, cases):
-        return [
-            case
-            for case in cases
-            if case.get("fixture")
-            or case.get("dump_cache")
-            or case["name"] in ("long_prompt_513", "long_prompt_8192", "long_context_end")
-        ]
-
     def native_state_keys(self, cases):
         return {
             (case["name"], step)
@@ -351,12 +342,9 @@ class Suite:
             torch.cuda.empty_cache()
 
     @contextmanager
-    def reference(self, dtype):
+    def reference(self):
+        """Reload unmodified BF16 HF for matched greedy-trajectory replay."""
         model = load_model(self.model_dir)
-        if dtype == torch.float32:
-            model.float()
-        else:
-            require(dtype == torch.bfloat16, "Unsupported HF reference dtype")
         runtime = HFRuntime(
             model,
             self.specs,

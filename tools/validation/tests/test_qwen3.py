@@ -132,6 +132,18 @@ class LiveHFReferences(unittest.TestCase):
             self.assertEqual(model.HFRuntime(self.original, []).capacity, 32768)
             ceiling.assert_called_once_with(self.original.config)
 
+    def test_greedy_replay_reference_uses_default_bf16_model(self):
+        runtime = Mock(spec=["close"])
+        with (
+            patch.object(model, "load_model", return_value=self.original) as loader,
+            patch.object(model, "HFRuntime", return_value=runtime),
+            patch.object(model.torch.cuda, "empty_cache"),
+        ):
+            with self.suite.reference() as actual:
+                self.assertIs(actual, runtime)
+            loader.assert_called_once_with(self.root)
+        runtime.close.assert_called_once_with()
+
     def test_hf_generate_uses_fresh_greedy_config_and_cache(self):
         prompt = next(iter(self.prompt_ids.values()))
         self.runtime.position = 17

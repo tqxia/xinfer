@@ -2,7 +2,7 @@
 
 Qwen3 has one supported compiled profile: fused BF16 AOTInductor with valid-prefix
 FlashAttention and native GQA. The original HF model supplies the weights and
-independent eager/FP32 references. The runtime performs inference and generation
+an independent BF16 eager reference. The runtime performs inference and generation
 in C++ without Python.
 
 The native executables are shared with Qwen3.5: `xinfer_aoti` for generation,
@@ -258,8 +258,8 @@ Use a fresh output directory for validation. The chain runs HF → eager →
 Python AOTI → C++ AOTI on matched inputs. Eager applies the Flash adapter before
 execution. The HF stage generates greedy continuations in memory, checks them
 against HF `generate()`, and fixes the teacher-forced inputs used by later stages.
-The chain compares adjacent stages and Python AOTI directly with HF, retaining
-independent FP32 controls. Cache boundaries, future-slot poisoning, write regions,
+The chain compares adjacent stages and Python AOTI directly with the BF16 HF
+baseline. Cache boundaries, future-slot poisoning, write regions,
 storage reuse and overflow remain strict. The optional `--model-dir` selects a
 prepared checkpoint; no saved-reference input is required. Validation separates
 two conclusions:
@@ -274,7 +274,7 @@ two conclusions:
   bitwise or token parity.
 
 Logit comparisons use identical fed tokens, including when greedy trajectories
-differ. Independent HF eager and FP32 controls remain in the reports. Focused
+differ. The independent BF16 HF eager baseline remains in the reports. Focused
 attention/operator checks retain their own numerical correctness requirements.
 The original HF SDPA reference is not replaced by the compiled Flash adapter.
 See [numerical history](../../docs/experiments/qwen3-numerics.md) for the recorded

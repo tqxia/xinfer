@@ -14,7 +14,7 @@ and full 16,384-slot inference-memory probes on L20 for both sizes. Native/Pytho
 AOTI outputs matched bitwise. HF numerical acceptance remains open, and this new
 profile has not been validated on GB10.
 
-The [real 4B L20 run](../../docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
+The historical [4B L20 run](../../docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
 validates export, shared-weight loading and native/Python parity. Full HF/FP32
 controls ran; the required numerical limits remain unmet.
 
@@ -435,8 +435,8 @@ The unified numerical command selects Qwen3.5 from package metadata and runs
 HF → eager → Python AOTI → C++ AOTI. The eager stage includes the adapters
 and linear packing selected by package metadata. It checks adjacent stages and
 Python AOTI directly against HF. Teacher forcing uses identical tokens and
-partitions throughout. Independent FP32 HF controls
-remain diagnostic. `validate_runtime` separately checks runtime/CLI contracts.
+partitions throughout against the BF16 HF baseline. `validate_runtime`
+separately checks runtime/CLI contracts.
 Inspect complete reports before treating a nonzero exit as an expected
 numerical gate.
 
@@ -464,8 +464,8 @@ Both model families generate HF references during numerical validation, without
 saved-reference input files or a separate preparation command. Qwen3 additionally
 checks its manual HF greedy decoding against HF `generate()`.
 The numerical report preserves the model and
-end-to-end fixture origins, intermediate-stage isolation, independent FP32
-controls, native/Python bitwise comparisons, carried state and generation
+end-to-end fixture origins, intermediate-stage isolation, the BF16 HF baseline,
+native/Python bitwise comparisons, carried state and generation
 checks. Logits and state retain both 5% error limits. HF token and greedy
 agreement remains required for the original end-to-end fixtures; model-only
 token differences remain diagnostic. Review the complete reports before
@@ -490,7 +490,7 @@ prefill/decode, dynamic lengths and mixed continuations. Broader numerical,
 partitioning and gate-extreme checks live in `test_kernels`. These describe test
 coverage, not full-model acceptance. Full-model native processes require the
 shared attention library while remaining free of Python libraries. Full-model
-checks retain all state tensors, HF/FP32 controls, dispatch counts, stable KV storage, appended-write
+checks retain all state tensors, BF16 HF comparisons, dispatch counts, stable KV storage, appended-write
 regions, future-prefix isolation and CLI rejection cases. Numerical validators exit
 nonzero for acceptance failures and retain the reports.
 
@@ -502,6 +502,8 @@ cleanup revalidation is recorded in
 `artifacts/qwen35/0.8b/remove-recurrent-validation/summary.json`: all 396 native
 calls / 1,188 tensors match Python AOTI bitwise; fusion checks pass. The fused
 and HF paths each retain 125 FP32 accuracy failures, so overall acceptance is open.
+These historical FP32 diagnostics are not run by the current full-model validator;
+its reference is the BF16 HF baseline.
 All of these reports precede the chunked prefill PoC. Re-export and run the
 current validators into fresh output directories for its validation.
 The [experiment record](../../docs/experiments/qwen35.md#unified-deltanet-preparation-and-recurrence-2026-10-29)
@@ -548,7 +550,7 @@ For packed packages, the eager stage runs the exported graphs after adapters
 and linear packing have both been applied. The `eager_vs_hf` and
 `python_aoti_vs_eager` comparisons separate the combined eager transformation
 from compilation. Changed matrix shapes can change floating-point reductions;
-HF/FP32 controls and numerical limits remain in place. The export CLI has no
+BF16 HF comparisons and numerical limits remain in place. The export CLI has no
 packing switch.
 
 Hold packing constant across compiler-tuning arms. For a packing A/B experiment,

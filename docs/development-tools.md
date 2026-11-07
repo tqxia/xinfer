@@ -201,13 +201,13 @@ partitions at every stage. Adjacent numerical comparisons distinguish the
 combined eager transformations from compilation; a direct Python-AOTI/HF
 comparison retains the end-result bound. Native/Python AOTI comparison is
 bitwise. Long-context cases retain identical chunk partitions across the HF,
-adapted/packed eager and AOTI stages, with independent BF16/FP32 controls and
+adapted/packed eager and AOTI stages, with the independent BF16 HF baseline and
 selected state checkpoints. Runtime parity and open HF numerical acceptance
 remain separate conclusions; existing HF limits are unchanged. Inductor code-generation options apply in the compiled stage.
 
 `tools/validation/common/` owns shared execution, comparisons and native trace
 handling. Each model's `model.py` supplies loading, the eager transformations,
-fixtures and independent HF reference controls. Shared prompt definitions in
+fixtures and the independent BF16 HF reference. Shared prompt definitions in
 `tools/validation/common/prompts.py` retain each model's texts and case names;
 Qwen3.5 numerical and runtime-contract checks also reuse its long-prompt text.
 Each HF stage generates its chat continuations and logits during the run, then
@@ -256,8 +256,9 @@ full-model relative-L2 and peak-normalized limits remain 5%; focused kernel
 unit tests retain their own limits. Qwen3 requires bounded logits and reports
 HF cache/token/greedy drift. Qwen3.5 also requires state bounds; its original
 end-to-end fixtures retain required Python-AOTI/HF top-token and greedy-token
-agreement, while model-only token comparisons remain diagnostic. Independent
-FP32 HF controls remain diagnostic. Native/Python AOTI comparisons remain
+agreement, while model-only token comparisons remain diagnostic. Full-model
+validation does not load a separate FP32 HF control model. Standalone kernel
+FP32 checks are unchanged. Native/Python AOTI comparisons remain
 bitwise. Structural cache/write, poisoning, reset/reuse and overflow checks are
 required independently of numerical differences. Historical reports retain
 their original layouts and labels.
@@ -406,7 +407,7 @@ must still satisfy the existing 5% relative-L2 and peak-normalized limits.
 
 C++/Python AOTI bitwise agreement, finite-value checks, cache writes and masking,
 reset/reuse, stable storage, boundary rejection and native/Python generation
-agreement remain strict. Independent HF eager and FP32 controls are retained.
+agreement remain strict. The independent BF16 HF eager baseline is retained.
 This policy does not change model arithmetic or make HF numerical equivalence a
 claim of the compiled profile. See [FlashAttention](flash-attention.md) for the
 recorded differences and supported workload.

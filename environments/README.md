@@ -329,7 +329,7 @@ without making a timing claim.
 | Model | L20 | GB10 |
 |---|---|---|
 | Qwen3-0.6B | Native/Python AOTI parity, HF logit limits, state/token diagnostics | Same gates |
-| Qwen3.5-0.8B | CPU cache regression, GDN dispatch, native parity, HF/FP32 report | Same gates |
+| Qwen3.5-0.8B | CPU cache regression, GDN dispatch, native parity, BF16 HF report | Same gates |
 
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \

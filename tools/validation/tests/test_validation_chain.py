@@ -2,14 +2,21 @@
 
 from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import unittest
 
 import torch
 
 from tools.validation.common.chain import Policy, compare_traces, new_report
-from tools.validation.common.runner import Trace, capture_state, greedy, run_stage, teacher_trace
-from tools.validation.common.pipeline import _greedy_anchors
+from tools.validation.common.runner import (
+    Stage,
+    Trace,
+    capture_state,
+    greedy,
+    run_stage,
+    teacher_trace,
+)
+from tools.validation.common.pipeline import _greedy_anchors, validate_chain
 
 
 CONV = dict(layer=0, kind="conv", shape=[1, 2, 4], dtype="float32", update="replace")
@@ -141,7 +148,7 @@ class StageComparisons(unittest.TestCase):
         self.assertEqual([row["case"] for row in report["failures"]], [end[0]])
         self.assertEqual(len(report["top1_differences"]), 2)
 
-    def test_fp32_diagnostics_do_not_inherit_required_state_or_token_gates(self):
+    def test_diagnostics_do_not_inherit_required_state_or_token_gates(self):
         reference = self.trace(
             logits={CASE_KEY: torch.tensor([[1.0, 0.99]])},
             states={CASE_KEY: (torch.ones(1, 2, 4),)},
@@ -178,9 +185,11 @@ class StageComparisons(unittest.TestCase):
         required = self.compare(actual, reference, policy=Policy(tokens_required=True))
         self.assertTrue(required["failures"])
         self.assertTrue(required["greedy_failures"])
-        fp32 = self.compare(actual, reference, policy=Policy(tokens_required=True), required=False)
-        self.assertEqual(fp32["failures"], [])
-        self.assertEqual(fp32["greedy_failures"], [])
+        diagnostic = self.compare(
+            actual, reference, policy=Policy(tokens_required=True), required=False
+        )
+        self.assertEqual(diagnostic["failures"], [])
+        self.assertEqual(diagnostic["greedy_failures"], [])
 
 
 class CPURuntime:
@@ -236,6 +245,67 @@ class RequestRuntime:
         self.calls.append(tuple(tokens))
         self.position += len(tokens)
         return torch.tensor([[0.0, 1.0, 0.0]], dtype=torch.bfloat16)
+
+
+class ValidationPipeline(unittest.TestCase):
+    def test_chain_completes_without_fp32_hooks_or_report_fields(self):
+        from tools.validation.common import pipeline
+
+        cases = [dict(name="teacher", steps=[[1, 2], [1]])]
+        chats = [dict(name="chat", prompt=[1, 2], limit=2)]
+        specs = [KEY, CONV]
+        capture = lambda case, step: True
+
+        class BF16Runtime(CPURuntime):
+            def step(self, tokens):
+                return super().step(tokens).to(torch.bfloat16)
+
+            def close(self):
+                pass
+
+        def stages():
+            for name in ("hf", "hf_dynamic", "eager"):
+                yield Stage(name, BF16Runtime())
+
+        for model_type in ("qwen3", "qwen35"):
+            with self.subTest(model_type=model_type):
+                suite = SimpleNamespace(
+                    model_type=model_type,
+                    specs=specs,
+                    capacity=8,
+                    state_required=model_type == "qwen35",
+                    tokens_required=model_type == "qwen35",
+                    eos=[2],
+                    stages=stages,
+                    fixtures=lambda hf: (cases, chats),
+                    stage_cases=lambda name, cases: cases,
+                    capture_states=capture,
+                    native_state_keys=lambda cases: {("teacher", 0), ("teacher", 1)},
+                    reference=Mock(side_effect=AssertionError("Unexpected HF reload")),
+                )
+                native = run_stage(BF16Runtime(), cases, chats, specs, capture, suite.eos)
+                report = new_report(model_type)
+                with (
+                    patch.object(pipeline, "sha256", return_value="native-digest"),
+                    patch.object(pipeline, "load_aoti_runtime", return_value=BF16Runtime()),
+                    patch.object(pipeline, "_contract_probes", return_value={}),
+                    patch.object(pipeline, "run_native", return_value=(native, {})),
+                    patch.object(pipeline.torch.cuda, "empty_cache"),
+                ):
+                    validate_chain(suite, "packages", "native", "output", {}, report)
+                self.assertTrue(report["passed"])
+                self.assertTrue(report["native_bitwise"])
+                self.assertEqual(
+                    [stage["name"] for stage in report["stages"]],
+                    ["hf", "hf_dynamic", "eager", "python_aoti", "cpp_aoti"],
+                )
+                self.assertEqual(report["reference_protocol"]["dtype"], "bfloat16")
+                self.assertNotIn("fp32_controls", report["numerical_policy"])
+                self.assertEqual(report["controls"], dict(matched_greedy_logits=True))
+                self.assertFalse(
+                    any("hf_fp32" in row["comparison"] for row in report["comparisons"])
+                )
+                suite.reference.assert_not_called()
 
 
 class StageExecution(unittest.TestCase):
@@ -352,6 +422,7 @@ class StageExecution(unittest.TestCase):
             [dict(name="chat", prompt=[0, 1, 0, 1, 0])],
         )
         self.assertEqual(runtime.calls, [(0, 1), (0, 1), (0,), (1,)])
+        suite.reference.assert_called_once_with()
         self.assertEqual(report["failures"], [])
         self.assertEqual(len(report["comparisons"]), 2)
 
