@@ -24,7 +24,7 @@ public:
   }
 
   at::Tensor step(const std::vector<int64_t> &tokens) {
-    spec_.check_tokens(tokens);
+    spec_.check_step_tokens(tokens);
     const auto length = static_cast<int64_t>(tokens.size());
     require(length <= spec_.capacity - position_, "Context capacity exceeded");
     const auto options = at::TensorOptions().device(device_).dtype(at::kLong);
@@ -43,6 +43,14 @@ public:
     position_ += length;
     ++(length == 1 ? decode_calls_ : prefill_calls_);
     return outputs[0];
+  }
+
+  at::Tensor prefill(const std::vector<int64_t> &prompt) {
+    // Validate the complete request before its first chunk can change state.
+    spec_.check_tokens(prompt);
+    require(static_cast<int64_t>(prompt.size()) <= spec_.capacity - position_,
+            "Context capacity exceeded");
+    return xinfer::prefill(*this, prompt, spec_.max_prefill);
   }
 
   std::vector<int64_t> generate(const std::vector<int64_t> &prompt, int64_t limit,

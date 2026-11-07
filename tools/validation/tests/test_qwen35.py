@@ -19,6 +19,7 @@ class HFCacheProtocol(unittest.TestCase):
             layer_types=["linear_attention", "full_attention"],
             num_key_value_heads=1,
             head_dim=2,
+            vocab_size=4,
         )
         original.parameters.side_effect = lambda: iter([torch.empty(1, dtype=dtype)])
         original.return_value = SimpleNamespace(
@@ -203,6 +204,7 @@ class ValidationStages(unittest.TestCase):
             self.suite.vocab_size,
             self.suite.capacity,
             owner=self.original,
+            max_prefill=512,
         )
         self.install.assert_called_once_with(self.original)
         with self.assertRaises(StopIteration):
@@ -217,7 +219,8 @@ class ValidationStages(unittest.TestCase):
             for kind, function in functions.items()
         }
 
-        def export_entry(original, kind):
+        def export_entry(original, kind, capacity):
+            self.assertEqual(capacity, self.suite.capacity)
             self.assertIs(original, self.original)
             self.assertEqual(self.events[0], "adapter")
             self.events.append(kind)
@@ -227,7 +230,10 @@ class ValidationStages(unittest.TestCase):
         self.check_eager(self.begin(), functions)
         self.assertEqual(self.events, ["adapter", "prefill", "decode"])
         self.export_step.assert_has_calls(
-            [call(self.original, "prefill"), call(self.original, "decode")]
+            [
+                call(self.original, "prefill", self.suite.capacity),
+                call(self.original, "decode", self.suite.capacity),
+            ]
         )
         self.assertEqual(self.export_step.call_count, 2)
         for entry in exported.values():

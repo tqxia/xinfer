@@ -45,11 +45,14 @@ tests live under `tools/<area>/tests/`. Compiler metadata/export, model loading,
 adapters and kernel tests remain under `compiler/*/tests/`; environment tests
 remain under `environments/tests/`.
 
-These tooling checks use temporary fixtures and mocks, without checkpoint
+These CPU checks use temporary fixtures and mocks, without checkpoint
 downloads, compiled packages, native binaries or a GPU:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
+  compiler.common.tests.test_context compiler.common.tests.test_metadata \
+  compiler.qwen3.tests.test_packages compiler.qwen3.tests.test_export \
+  tools.tests.test_common \
   tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \
   tools.benchmark.tests.test_benchmark \
   tools.validation.tests.test_common tools.validation.tests.test_qwen3_runtime \
@@ -57,10 +60,11 @@ CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   tools.validation.tests.test_validation_chain \
   tools.validation.tests.test_validation_runtime \
   tools.validation.tests.test_validation_native \
-  tools.validation.tests.test_validation_modes
+  tools.validation.tests.test_validation_modes tools.validation.tests.test_context
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
-  tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model
+  tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
+  compiler.qwen35.tests.test_text_cache compiler.qwen35.tests.test_export
 ```
 
 Use each model's environment for its tests: Qwen3.5 model hooks require its
@@ -109,7 +113,10 @@ family from that manifest and use only local files:
 
 Use the same commands with the matching Qwen3.5 environment and prepared text
 directory. Tokenization keeps the official non-thinking chat template; encoding
-refuses an existing output file. Model modules retain checkpoint loading and
+checks the encoded token count against the model's declared context ceiling.
+The native package's selected capacity and requested
+output budget are checked again during generation. Encoding refuses an existing
+output file. Model modules retain checkpoint loading and
 execution; the full-model acquisition and token CLIs live in `tools/prepare/`.
 
 ## Shared native executables
@@ -118,27 +125,40 @@ Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validat
 targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
 reads the package metadata to select the model-specific contract. Both entry
 JSON files require the shared
-[`schema_version: 3` format](package-metadata.md), `runtime_abi_version: 1`, and an
-explicit `model_type` of `qwen3` or `qwen35`. Schema 1, schema 2 and unversioned
-sidecars must be converted or re-exported; model selection reads the versioned
+[`schema_version: 5` format](package-metadata.md), `runtime_abi_version: 1`, and an
+explicit `model_type` of `qwen3` or `qwen35`. Schema 1 through schema 4 and
+unversioned sidecars must be converted or re-exported; model selection reads the versioned
 metadata directly.
 
 The common `Runner<Spec>` owns package loaders, shared weights, device checks,
-token validation, positions and prefill/decode dispatch. Its common state policy
-uses metadata update rules and ABI-derived output positions to retain KV buffers
+token validation, positions, prompt chunking and prefill/decode dispatch.
+New exports choose `cache_length` with `--max-context-length`, defaulting to the
+model's declared ceiling. Compiled prefill remains `token_range: [2,512]`.
+The per-request `--max-output-tokens` budget shares context with the prompt;
+there is no separate prompt-cap option.
+A long request is split into calls of at most
+512 tokens, with a final single token routed to decode. Request/ID/budget checks
+cover the entire prompt before its first chunk executes. Ordinary L20 exports,
+C++ execution and full 16,384-slot inference-memory probes completed for
+Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B, with bitwise native/Python AOTI
+agreement. Qwen3 passed its existing HF numerical gates; Qwen3.5 HF acceptance
+remains open. The new profile has not been validated on GB10. The common state
+policy uses metadata update rules and ABI-derived output positions to retain KV buffers
 and replace functional conv/recurrent outputs. Reset reuses KV storage and zeros
 replacement state. Returned tensors are checked for shape, dtype, device,
 contiguity and required KV aliases before replacement state is adopted. The
 generation CLI refuses existing output/trace files and path aliases. Native benchmarks use
 the same report header and timing boundaries for both models. The validation
-binary retains the existing model-specific trace layouts so current Python
-numerical checks and historical output comparisons remain usable.
+binary records every logit and selected state checkpoints. Expanded-capacity
+checks store the populated KV prefix and complete functional state; untouched
+future KV is checked separately. The case manifest records checkpoint coverage.
 
-With `XINFER_BUILD_VALIDATION=ON`, the `xinfer_state_contract` target checks the
-common state policy on CPU without model packages or a GPU:
+With `XINFER_BUILD_VALIDATION=ON`, two targets check state ownership and complete
+prompt partitioning/generation on CPU without model packages or a GPU:
 
 ```bash
 CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_state_contract
+CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_generation_contract
 ```
 
 `Spec` validates metadata and the model ABI. Each native runtime construction
@@ -180,7 +200,10 @@ following the package metadata. Teacher forcing uses identical tokens and
 partitions at every stage. Adjacent numerical comparisons distinguish the
 combined eager transformations from compilation; a direct Python-AOTI/HF
 comparison retains the end-result bound. Native/Python AOTI comparison is
-bitwise. Inductor code-generation options apply in the compiled stage.
+bitwise. Long-context cases retain identical chunk partitions across the HF,
+adapted/packed eager and AOTI stages, with independent BF16/FP32 controls and
+selected state checkpoints. Runtime parity and open HF numerical acceptance
+remain separate conclusions; existing HF limits are unchanged. Inductor code-generation options apply in the compiled stage.
 
 `tools/validation/common/` owns shared execution, comparisons and native trace
 handling. Each model's `model.py` supplies loading, the eager transformations,
@@ -268,7 +291,9 @@ workload checksums accompany the measurements. Accuracy reports remain in the
 validation tools.
 
 Benchmark summaries include reset, prefill, reset-plus-prefill (`first_prediction_ms`),
-decode, per-token decode and whole-request distributions. Memory records include
+decode, per-token decode and whole-request distributions. Prefill timing
+covers the complete native prompt, including every compiled chunk and the final
+prediction, rather than only the final chunk. Memory records include
 the sampled device-memory peak and its delta from the process's initial reading,
 as well as PyTorch allocator peaks. Device-memory samples can include other GPU
 users. Repeated predictions, their counts, consumed positions and single-threaded
@@ -284,6 +309,9 @@ do not change the measured workload. Both models start with
 HF creates its dynamic cache and determines masks and positions. Normal PyTorch
 SDPA backend selection remains enabled. Reset discards the cache; the first
 prefill includes cache allocation. Initial one-token requests use the same path.
+HF receives the whole prompt in one call, whereas native AOTI uses chunks bounded
+by the package prefill range. `prefill_execution` in the summary records this
+partition difference; the benchmark is not a matched-partition numerical test.
 
 The benchmark tokenizes its own capital-of-France chat prompt and the fixed
 "Paris is the capital of France. " continuation. It needs no validation fixtures
@@ -311,8 +339,12 @@ LibTorch, following the runtime installation guide.
 Defaults are prompt lengths 25, 128 and 512, 64 fixed decode steps, two warmups,
 five measured requests per case and three process rounds. `compare` defaults to
 four rounds. `--lengths`, `--decode-steps`, `--warmup`, `--repeats` and `--rounds`
-override these counts. The package's `token_range` and `cache_length` define legal
-prompt and context limits.
+override these counts. The package's `cache_length` bounds complete request
+context, including both prompt and forced output tokens; `token_range`
+bounds each compiled call. Use
+`--lengths 511 512 513 8191 8192` to measure chunk boundaries and the complete
+long prompt. Recheck idle conditions and available device memory before running
+long-context workloads.
 
 `run`, `compare` and `check-idle` default to CUDA logical device 0 under the current
 `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` settings. `--gpu` accepts an

@@ -16,7 +16,7 @@ const std::vector<at::Tensor> &state(const qwen::Runtime &runtime) { return runt
 const std::vector<at::Tensor> &state(const qwen35::Runtime &runtime) { return runtime.state(); }
 
 template <class Spec> void mutate(Spec &spec) {
-  spec.max_prompt = spec.capacity = spec.vocab = 0;
+  spec.max_prefill = spec.capacity = spec.vocab = 0;
   spec.eos = {-1};
   spec.state.clear();
   spec.prefill_metadata = Json();

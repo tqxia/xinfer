@@ -42,9 +42,29 @@ Use the pinned Ruff and clang-format tools with the repository settings; see
 
 Both exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
 Model-specific extras live under `model_specific`; common fields have identical
-names and validation for both families. Schema 3 records the calling convention
-as `runtime_abi_version: 1`. Retained schema 1, schema 2 and unversioned sidecars
-need conversion or re-export before use with the current runtime.
+names and validation for both families. Schema 5 records compiled capacity and
+per-call bounds. Request prompts and output budgets share that capacity. It retains
+`runtime_abi_version: 1`. Retained schema 1 through schema 4 and unversioned
+sidecars need conversion or re-export before use with the current runtime.
+
+Both exporters accept `--max-context-length`. When omitted, capacity is derived
+from the selected model's text-config `max_position_embeddings`: 40,960 for the
+pinned Qwen3-0.6B and 262,144 for both Qwen3.5 checkpoints. An explicit capacity
+must be in 512..that ceiling. The selected capacity determines actual KV allocation.
+Compiled prefill remains dynamic over 2–512 tokens per call; shared generation
+splits a longer prompt automatically, using decode for a one-token remainder.
+Metadata records `cache_length` and per-entry `token_range`. There is no extra
+prompt cap: the full prompt plus `xinfer_aoti --max-output-tokens` must fit the
+package's context. Retained 1,024-slot packages keep that capacity when their
+sidecars are converted into a new schema 5 bundle. Larger caches require re-export.
+The recorded 16,384-slot L20 profiles completed export, C++ execution and full
+inference-memory probes for Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B. Qwen3
+passed that suite's HF numerical gates; Qwen3.5 HF numerical acceptance remains
+open. Fresh model-default exports and full-capacity C++ checks also completed
+for Qwen3-0.6B and Qwen3.5-0.8B, with native/Python AOTI bitwise parity.
+Their focused HF numerical comparisons retain failures; see the
+[default-capacity validation record](docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07).
+These expanded profiles have not been validated on GB10.
 
 Run Python tools from the repository root as modules, for example:
 
@@ -90,9 +110,12 @@ and re-export existing embedded-weight packages before using the current runtime
 
 `python -m tools.benchmark` selects the model from package metadata. Both models
 support `run`, paired package `compare` and standalone `check-idle`. Workloads are
-tokenized by the benchmark itself, with prompt/context limits read from metadata.
-Benchmarks split reset, prefill, decode and whole-request timing. Both model
-eager workers use the unchanged HF model and its dynamic cache, with automatic
+tokenized by the benchmark itself, with context capacity read from metadata.
+Benchmarks split reset, complete-prompt prefill, decode and whole-request timing.
+Native prefill includes every chunk. The unchanged HF benchmark receives the
+whole prompt in one call, so its partition differs from native execution; reports
+record this distinction. Numerical validation instead uses matched partitions.
+Both model eager workers use the unchanged HF model and its dynamic cache, with automatic
 masks and positions; reset discards the cache and initial allocation is timed
 in prefill. Reports identify the baseline as `eager_baseline: hf_dynamic_cache`.
 Earlier masked-cache speedups require fresh comparisons. Both model workers

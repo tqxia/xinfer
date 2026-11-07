@@ -8,12 +8,13 @@ from pathlib import Path
 
 import torch
 
-from compiler.common.artifacts import MODEL_MANIFEST_NAME
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
+from compiler.common.context import model_context_limit, resolve_context_length
 from compiler.common.attention import cache_extent
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import CACHE_LENGTH, MAX_PROMPT, allocate_cache, load_model
+from compiler.qwen3.model import MAX_PREFILL, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL
 
 
@@ -21,11 +22,33 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
+    parser.add_argument(
+        "--max-context-length",
+        type=int,
+        help="Compiled KV-cache capacity; defaults to model max_position_embeddings",
+    )
     args = parser.parse_args()
     if args.output.is_symlink() or (
         args.output.exists() and (not args.output.is_dir() or any(args.output.iterdir()))
     ):
         parser.error(f"Output must be a new or empty directory: {args.output}")
+    try:
+        context_config = read_json(args.model_dir / "config.json")
+        capacity = resolve_context_length(context_config, args.max_context_length)
+        ceiling = model_context_limit(context_config)
+    except ValueError as error:
+        parser.error(str(error))
+    print(
+        json.dumps(
+            dict(
+                event="context",
+                cache_length=capacity,
+                model_max_position_embeddings=ceiling,
+                max_prefill_tokens=MAX_PREFILL,
+            )
+        ),
+        flush=True,
+    )
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     from torch.fx.experimental import _config as symbolic_config
@@ -43,7 +66,7 @@ def main():
 
     def export_entry(kind, staging_directory):
         length = 1 if kind == "decode" else 16
-        cache = allocate_cache(model.config)
+        cache = allocate_cache(model.config, capacity)
         inputs = (
             torch.ones((1, length), dtype=torch.int64, device="cuda"),
             torch.arange(length, device="cuda"),
@@ -52,9 +75,9 @@ def main():
         )
         token_shape = {}
         if kind == "prefill":
-            seq = torch.export.Dim("tokens", min=2, max=MAX_PROMPT)
+            seq = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
             token_shape = {1: seq}
-        extent = torch.export.Dim("kv_extent", min=2, max=CACHE_LENGTH + 1)
+        extent = torch.export.Dim("kv_extent", min=2, max=capacity + 1)
         shapes = (
             token_shape,
             {} if kind == "decode" else {0: seq},
@@ -83,12 +106,12 @@ def main():
             metadata = make_metadata(
                 model_type="qwen3",
                 entry_point=kind,
-                token_range=[1, 1] if kind == "decode" else [2, MAX_PROMPT],
+                token_range=[1, 1] if kind == "decode" else [2, MAX_PREFILL],
                 checkpoint=checkpoint,
                 torch_version=torch.__version__,
                 cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                 cuda_compute_capability=list(torch.cuda.get_device_capability()),
-                cache_length=CACHE_LENGTH,
+                cache_length=capacity,
                 vocab_size=model.config.vocab_size,
                 eos_token_ids=model.generation_config.eos_token_id,
                 state=state,

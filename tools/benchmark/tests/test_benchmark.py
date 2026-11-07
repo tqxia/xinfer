@@ -187,6 +187,31 @@ class HFEagerBaseline(unittest.TestCase):
             self.assertEqual(report["eager_baseline"], "hf_dynamic_cache")
             self.assertEqual(report["profile"], "hf")
 
+    def test_eager_worker_rejects_retired_prompt_cap_before_loading(self):
+        for capacity in (None, 2048):
+            with self.subTest(capacity=capacity), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                args = SimpleNamespace(
+                    output=root / "worker.json",
+                    workload=root / "workload.json",
+                    model_dir=Path("checkpoint"),
+                )
+                workload = dict(
+                    max_prompt_length=128, cases=[dict(prompt=[1] * 129, decode_tokens=[2])]
+                )
+                if capacity is not None:
+                    workload["cache_length"] = capacity
+                write_json(args.workload, workload)
+                load = Mock()
+                with patch("torch.empty") as allocate:
+                    with self.assertRaisesRegex(
+                        ValueError, "Benchmark workload no longer accepts max_prompt_length"
+                    ):
+                        benchmark.eager_worker(args, load, "hf")
+                allocate.assert_not_called()
+                load.assert_not_called()
+                self.assertFalse(args.output.exists())
+
 
 class TokenPreparation(unittest.TestCase):
     def test_both_models_prepare_own_fixed_tokens_without_reference_files(self):
@@ -806,7 +831,7 @@ class ControllerContract(unittest.TestCase):
             self.assertEqual(args.rounds, 3 if mode == "run" else 4)
 
     def test_cli_rejects_validation_and_reference_options(self):
-        for option in ("--validation", "--reference"):
+        for option in ("--validation", "--reference", "--max-prompt-length"):
             with (
                 self.subTest(option=option),
                 patch("sys.stderr", new_callable=io.StringIO),
@@ -831,7 +856,7 @@ class ControllerContract(unittest.TestCase):
 
 
 class WorkloadLimits(unittest.TestCase):
-    def invoke(self, root, length, capacity, decode_steps=64, bounds=(2, 8192)):
+    def invoke(self, root, length, capacity, decode_steps=64, bounds=(2, 512)):
         args = SimpleNamespace(
             warmup=1,
             repeats=1,
@@ -876,10 +901,18 @@ class WorkloadLimits(unittest.TestCase):
             self.assertEqual(len(workload["cases"][0]["prompt"]), 8192)
             self.assertEqual(len(workload["cases"][0]["decode_tokens"]), 64)
 
+    def test_context_capacity_allows_requests_above_8k_without_a_policy_cap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, metadata = self.invoke(Path(temporary), 8193, 16384)
+            workload = self.run_core(args, metadata)
+            self.assertEqual(len(workload["cases"][0]["prompt"]), 8193)
+            self.assertEqual(workload["cache_length"], 16384)
+            self.assertNotIn("max_prompt_length", workload)
+
     def test_prompt_and_remaining_capacity_limits_reject_before_gpu_or_output(self):
         for length, capacity, decode, bounds in (
-            (8193, 16384, 64, (2, 8192)),
-            (8192, 8255, 64, (2, 8192)),
+            (16385, 16384, 64, (2, 512)),
+            (8192, 8255, 64, (2, 512)),
             (2, 1024, 1, (4, 512)),
             (0, 1024, 1, (2, 512)),
         ):

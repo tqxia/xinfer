@@ -16,6 +16,8 @@ from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts
 from tools.validation.common.runner import ExplicitRuntime, Stage, greedy
 from tools.validation.qwen35.common import fixtures as model_fixtures
+from tools.common import prompt_chunks
+from tools.validation.common.context import capture_long_state, long_context_cases
 
 
 def default_model_dir(pair):
@@ -28,12 +30,14 @@ def default_model_dir(pair):
 class HFStage:
     """Expose StaticCache and padded DynamicCache through one runtime interface."""
 
-    def __init__(self, model, specs, capacity, *, dynamic=False):
+    def __init__(self, model, specs, capacity, *, dynamic=False, max_prefill=512):
         self.model = model
+        self.vocab_size = model.config.vocab_size
         self.dtype = next(model.parameters()).dtype
         self.specs = specs
         self.dynamic = dynamic
         self.capacity = capacity
+        self.max_prefill = max_prefill
         self.cache = None
         self.position = 0
 
@@ -115,6 +119,7 @@ class Suite:
         self.specs = pair["decode"]["state"]
         self.vocab_size = pair["decode"]["vocab_size"]
         self.capacity = pair["decode"]["cache_length"]
+        self.max_prefill = pair["prefill"]["token_range"][1]
         self.eos = pair["decode"]["eos_token_ids"]
         configure_text()
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
@@ -128,6 +133,8 @@ class Suite:
         """Retain the numerical-model and end-to-end fixtures without renaming origins."""
         cases = []
         for original in model_fixtures(self.tokenizer):
+            if sum(map(len, original["steps"])) > self.capacity:
+                continue
             name = original["name"]
             case = dict(original, name="model_" + name, origin=dict(suite="model", name=name))
             if name == "repeat":
@@ -137,10 +144,12 @@ class Suite:
             cases.append(case)
 
         paragraph = self.tokenizer.encode(PARAGRAPH)
-        stream = (paragraph * (1024 // len(paragraph) + 1))[:1024]
+        stream = (paragraph * (self.capacity // len(paragraph) + 1))[: self.capacity]
         teacher = []
         for length in (1, 2, 3, 22, 31, 32, 33, 63, 64, 65, 96, 97, 98, 127, 128, 129, 511, 512):
             decode = 64 if length == 512 else 8
+            if length + decode > self.capacity:
+                continue
             teacher.append(
                 dict(
                     name=f"length_{length}",
@@ -150,7 +159,12 @@ class Suite:
         teacher.append(
             dict(
                 name="context_end",
-                steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
+                steps=(
+                    [stream[:512], stream[512:960], stream[960:1023], stream[1023:]]
+                    if self.capacity == 1024
+                    else prompt_chunks(stream[:-1], self.max_prefill) + [stream[-1:]]
+                ),
+                long_context=self.capacity > 1024,
                 check_overflow=True,
             )
         )
@@ -171,6 +185,7 @@ class Suite:
                 same_as="length_65",
             )
         )
+        teacher.extend(long_context_cases(paragraph, self.capacity, self.max_prefill))
         chats = [
             dict(
                 name=prompt["name"],
@@ -191,10 +206,14 @@ class Suite:
         cases += [
             dict(case, origin=dict(suite="end_to_end", name=case["name"])) for case in teacher
         ]
+        for case in teacher:
+            if case["name"] in ("long_prompt_513", "long_prompt_8191", "long_prompt_8192"):
+                prompt = [token for chunk in case["steps"][:-2] for token in chunk]
+                chats.append(dict(name=case["name"] + "_generate", prompt=prompt, limit=3))
         return cases, chats
 
     def capture_states(self, case, step):
-        return True
+        return capture_long_state(case, step) if case.get("long_context") else True
 
     def fp32_cases(self, cases):
         selected = {
@@ -204,6 +223,9 @@ class Suite:
             "length_512",
             "context_end",
             "capital_teacher",
+            "long_prompt_513",
+            "long_prompt_8192",
+            "long_context_end",
         }
         return [
             case
@@ -212,7 +234,12 @@ class Suite:
         ]
 
     def native_state_keys(self, cases):
-        return {(case["name"], step) for case in cases for step in range(len(case["steps"]))}
+        return {
+            (case["name"], step)
+            for case in cases
+            for step in range(len(case["steps"]))
+            if self.capture_states(case, step)
+        }
 
     def stage_cases(self, name, cases):
         if name == "hf_dynamic":
@@ -223,9 +250,16 @@ class Suite:
         """Record HF before applying the adapters and package-selected graph passes."""
         model, wrapper, functions = load_model(self.model_dir), None, None
         try:
-            require(state_specs(model.config) == self.specs, "State descriptors differ")
-            yield Stage("hf", HFStage(model, self.specs, self.capacity))
-            yield Stage("hf_dynamic", HFStage(model, self.specs, self.capacity, dynamic=True))
+            require(
+                state_specs(model.config, self.capacity) == self.specs, "State descriptors differ"
+            )
+            bounds = dict(
+                max_prefill=getattr(self, "max_prefill", 512),
+            )
+            yield Stage("hf", HFStage(model, self.specs, self.capacity, **bounds))
+            yield Stage(
+                "hf_dynamic", HFStage(model, self.specs, self.capacity, dynamic=True, **bounds)
+            )
             from compiler.qwen35.adapters.delta import install_delta
 
             install_delta(model)
@@ -237,14 +271,17 @@ class Suite:
                 from compiler.qwen35.export import export_step
 
                 functions = {
-                    kind: export_step(model, kind)[0].module() for kind in ("prefill", "decode")
+                    kind: export_step(model, kind, self.capacity)[0].module()
+                    for kind in ("prefill", "decode")
                 }
             else:
                 wrapper = TextStep(model)
                 functions = dict(prefill=wrapper, decode=wrapper)
             yield Stage(
                 "eager",
-                ExplicitRuntime(functions, self.specs, self.vocab_size, self.capacity, owner=model),
+                ExplicitRuntime(
+                    functions, self.specs, self.vocab_size, self.capacity, owner=model, **bounds
+                ),
             )
         finally:
             wrapper, functions, model = None, None, None
@@ -254,9 +291,16 @@ class Suite:
     @contextmanager
     def reference(self, dtype):
         model = load_model(self.model_dir, dtype=dtype)
-        runtime = HFStage(model, self.specs, self.capacity)
+        runtime = HFStage(
+            model,
+            self.specs,
+            self.capacity,
+            max_prefill=self.max_prefill,
+        )
         try:
-            require(state_specs(model.config) == self.specs, "State descriptors differ")
+            require(
+                state_specs(model.config, self.capacity) == self.specs, "State descriptors differ"
+            )
             yield runtime
         finally:
             runtime.close()

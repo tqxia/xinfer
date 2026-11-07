@@ -40,7 +40,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     ids = torch.tensor([tokenizer.encode("The", add_special_tokens=False)], device="cuda")
     hidden = model.model.layers[0].input_layernorm(model.model.embed_tokens(ids))
-    inputs = (hidden, *zero_state(model.config)[:2])
+    inputs = (hidden, *zero_state(model.config, capacity=512)[:2])
     wrapper = BlockStep(model.model.layers[0].linear_attn)
     graph = torch.export.export(wrapper, inputs, strict=True).module()
     nodes = [

@@ -115,7 +115,7 @@ def encode_prompt(tokenizer, prompt):
         enable_thinking=False,
         return_dict=False,
     )
-    require(1 <= len(ids) <= 512, f"Expected 1..512 prompt tokens, got {len(ids)}")
+    require(bool(ids), "Prompt must contain tokens")
     return ids
 
 

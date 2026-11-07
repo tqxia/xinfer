@@ -119,7 +119,8 @@ for MODEL in qwen3 qwen35; do
     -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
     -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
   PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" --build "$BUILD" --target \
-    xinfer_aoti xinfer_validate xinfer_benchmark qwen_runtime_contract -j2
+    xinfer_aoti xinfer_validate xinfer_benchmark qwen_runtime_contract \
+    xinfer_state_contract xinfer_generation_contract -j2
   bash environments/check.sh --python "$MODEL_PY" \
     --target "$TARGET" --model "$MODEL" --build "$BUILD" \
     --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
@@ -217,7 +218,7 @@ size and SHA-256 checksum. Each export writes the archive once, records its
 checksum in both metadata files, and publishes the complete directory after
 both entries succeed. One entry alone is an incomplete bundle. Dependency
 versions, full compiler options and graph/timing diagnostics are written to
-export logs. The deployment sidecars use metadata schema 3 with
+export logs. The deployment sidecars use metadata schema 5 with
 `runtime_abi_version: 1` and retain the state, compatibility, integrity, checkpoint
 and numerical contract. The runtime ABI defines the fixed batch/dtype, Flash
 attention, cache/extent representation and model input/output rules. Current
@@ -228,6 +229,22 @@ re-export for Torch 2.13; a version match does not establish compatibility with
 older generated code. The old 2.7 loader extracts Qwen3.5's libraries into `/tmp`
 regardless of `TMPDIR`, so retain about 3 GB plus margin there for rollback runs,
 in addition to compile-cache space.
+
+New exports default to the model's declared context ceiling: 40,960 slots for
+Qwen3-0.6B and 262,144 for both Qwen3.5 checkpoints. `--max-context-length` chooses
+an explicit capacity within that ceiling before GPU state loading.
+Their compiled prefill calls remain bounded to 2–512 tokens, with one-token
+decode. The shared runner chunks long prompts automatically and validates the
+complete prompt plus generation budget before execution. Schema 5 records
+per-call `token_range` and `cache_length`; no separate prompt-cap option exists.
+The native request uses `--max-output-tokens`. Existing 1,024-slot bundles require a separate
+schema 5 sidecar conversion, retaining compiled bounds, or a fresh export for
+larger capacity. Any additional input policy belongs to the calling application. See the
+[metadata migration contract](../docs/package-metadata.md). Ordinary long-context
+exports, C++ execution and full 16,384-slot inference-memory probes completed on
+L20 for Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B. Native/Python AOTI parity
+passed for all three; Qwen3 passed its existing HF numerical gates. Qwen3.5 HF
+acceptance remains open. The new profile has not been validated on GB10.
 
 ## Install and relocate the runtime
 
@@ -254,7 +271,7 @@ mv "$PREFIX" "$MOVED_PREFIX"
 "$Q3_PY" -m tools.prepare encode --model-dir "$Q3_MODEL" \
   --prompt "What is the capital of France?" --output "$Q3_ROOT/install-prompt.ids"
 "$MOVED_PREFIX/bin/xinfer_aoti" "$Q3_PACKAGES" \
-  "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-new-tokens 8
+  "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-output-tokens 8
 
 # Python export/validation can use the installed attention library too.
 export XINFER_ATTENTION_OPS_LIBRARY="$MOVED_PREFIX/$INSTALL_LIBDIR/libxinfer_attention_ops.so"
@@ -286,7 +303,10 @@ Use the same metadata-selected command with each model's Python environment:
 ```
 
 Both families also support `compare`, using `--baseline-packages`,
-`--candidate-packages` and `--output`. Use a fresh output path for each invocation.
+`--candidate-packages` and `--output`. Native prefill timing covers all prompt
+chunks; the ordinary HF benchmark processes the whole prompt in one call, and
+reports record that partition difference. Numerical validation uses matched
+partitions instead. Use a fresh output path for each invocation.
 GPU selection,
 fixed-token timing, defaults and reports are shared. `run` reports `hf` and
 `cpp_aoti` profiles using the plain HF dynamic-cache baseline. Workload limits

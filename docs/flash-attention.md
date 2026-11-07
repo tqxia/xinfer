@@ -19,9 +19,14 @@ eager-numerics profile. Independent HF eager/FP32 references remain unmodified.
    lower-right causality. The same implementation handles initial prefill,
    appended chunks and decode. There is no `flash-attn` pip-package dependency.
 
-The fixed cache layout is `[1,8,1024,128]`. The query has 16 heads, dimension 128,
-with 1–512 tokens. A CPU uint8 extent tensor of shape `[valid_length + 1]` passes
-populated prefix length through metadata; its data is ignored. The extra one
+Qwen3's cache layout is `[1,8,C,128]`, with `C` defaulting to the pinned model's
+40,960-position ceiling; runtime capacity is derived from the
+package state descriptors and the native operator's K/V tensors. The query has
+16 heads, dimension 128, with 1–512 tokens per compiled call. The shared runner
+splits complete prompts into calls of at most 512 tokens, subject to compiled
+context capacity and the requested output budget; a one-token remainder
+uses decode. A CPU uint8 extent tensor of
+shape `[valid_length + 1]` passes populated prefix length through metadata; its data is ignored. The extra one
 avoids input size-one specialization. Prefix slicing stays inside the opaque
 operator and export requires `backed_size_oblivious=False`. The native flat
 input list has 59 tensors: IDs, positions, 56 K/V tensors, then the extent.
@@ -52,9 +57,18 @@ state, checkpoint/toolchain/architecture and numerical checks. See the
 [ABI definition](package-metadata.md#runtime-abi-1).
 Old efficient packages and legacy eager-numerics packages require re-export.
 Compatible ordinary Flash packages retain the same compiled ABI, but their JSON
-sidecars must use the [schema 3 metadata contract](package-metadata.md). Verified
-schema 1, schema 2 and unversioned sidecars can be converted without changing
-compatible compiled graphs or weights.
+sidecars must use the [schema 5 metadata contract](package-metadata.md). Verified
+schema 1 through schema 4 and unversioned sidecars can be converted in a
+separate bundle directory without changing compatible compiled graphs or
+weights. A conversion retains the compiled `cache_length`, sets schema 5 and
+removes any former `max_prompt_length` field. Calling applications own any
+additional input policy; conversion does not expand the graph.
+Re-export for a chosen larger capacity and rebuild the attention library for
+generalized capacity support. The previously recorded 16,384-slot Qwen3 profile
+completed ordinary export and C++ execution on L20, with bitwise native/Python
+AOTI agreement, passing existing HF numerical gates and a full-capacity
+inference-memory probe. Those results do not validate the current 40,960-slot
+default. The recorded 16K profile has not been validated on GB10.
 
 ```bash
 # First select Q3_PY and build with the matching target toolchain.

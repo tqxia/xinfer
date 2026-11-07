@@ -13,6 +13,7 @@ from compiler.common.metadata import (
     FIELDS as METADATA_FIELDS,
     read_package_metadata,
 )
+from tools.common import prompt_chunks
 
 
 def resolve_gpu(device=None):
@@ -272,6 +273,18 @@ def eager_worker(args, load_runtime, profile):
 
     require(not args.output.exists(), "Output already exists")
     workload = read_json(args.workload)
+    require(
+        "max_prompt_length" not in workload,
+        "Benchmark workload no longer accepts max_prompt_length",
+    )
+    if "cache_length" in workload:
+        capacity = workload["cache_length"]
+        for case in workload["cases"]:
+            require(1 <= len(case["prompt"]) <= capacity, "Context capacity exceeded")
+            require(
+                len(case["prompt"]) + len(case["decode_tokens"]) <= workload["cache_length"],
+                "Context capacity exceeded",
+            )
     torch.set_num_threads(1)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
@@ -555,10 +568,13 @@ def run_benchmark(
     )
 
     def supported(length):
-        bounds = metadata["decode" if length == 1 else "prefill"]["token_range"]
-        return (
-            bounds[0] <= length <= bounds[1]
-            and length + args.decode_steps <= metadata["decode"]["cache_length"]
+        prefill, decode = metadata["prefill"], metadata["decode"]
+        if not (1 <= length and length + args.decode_steps <= decode["cache_length"]):
+            return False
+        lower, upper = prefill["token_range"]
+        return all(
+            len(chunk) == 1 or lower <= len(chunk) <= upper
+            for chunk in prompt_chunks(range(length), upper)
         )
 
     require(
@@ -574,6 +590,7 @@ def run_benchmark(
     records = []
     try:
         workload = make_workload(args, *prepare_tokens())
+        workload["cache_length"] = metadata["decode"]["cache_length"]
         write_json(out / "workload.json", workload)
         packages = {label: directory.resolve() for label, directory in packages.items()}
         environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
@@ -590,6 +607,10 @@ def run_benchmark(
             repeats=args.repeats,
             decode_steps=args.decode_steps,
             functional_checks_passed=True,
+            prefill_execution=dict(
+                native_chunk_tokens=metadata["prefill"]["token_range"][1],
+                hf="whole_prompt" if eager else None,
+            ),
             profiles=summarize(records, workload, reference),
         )
         if eager:

@@ -132,7 +132,12 @@ export TORCHINDUCTOR_CACHE_DIR="$PWD/work/inductor-qwen3-flash"
 "$Q3_PY" -m compiler.qwen3.export --output artifacts/qwen3-flash
 ```
 
-The command accepts `--model-dir`. There is no numerical-mode or attention
+The command accepts `--model-dir` and `--max-context-length`. When omitted,
+capacity defaults to the selected model's declared context ceiling (40,960 for
+the pinned checkpoint), and that capacity is actually allocated for K/V state.
+The chosen capacity must be in 512..`max_position_embeddings` from the selected
+checkpoint config (40,960 for the pinned checkpoint); invalid values are rejected
+before GPU model loading. There is no numerical-mode or attention
 selector. Export retains `emulate_precision_casts=True` and disables TF32;
 ordinary Inductor fusion remains enabled. Use the same toolchain and tuning
 cache for both entry points and record their actual compilation settings.
@@ -142,9 +147,10 @@ new pair rather than assuming cross-build bitwise reproducibility.
 The directory contains weightless `prefill.pt2` and `decode.pt2`, matching JSON
 metadata, exported graph text and `weights.pt`. The archive embeds its constant
 mappings in `extra/weights.json`; there is no separate `weights.json` file. Both
-entry metadata files use the shared `schema_version=3` format and record the
+entry metadata files use the shared `schema_version=5` format and record the
 package and archive sizes and checksums. Common fields include `entry_point`,
-`token_range`, `torch_version`, `cuda_compute_capability`, `vocab_size`,
+`token_range`, `cache_length`, `torch_version`,
+`cuda_compute_capability`, `vocab_size`,
 `eos_token_ids` and ordered state descriptors. Each state gives its layer, kind,
 shape, dtype and update policy; readers derive contiguous strides and names.
 `runtime_abi_version=1` defines batch-one BF16 execution, input/output order,
@@ -180,7 +186,7 @@ The native loader receives 59 flat inputs: IDs, positions, 56 cache tensors, and
 the extent tensor. Inputs are:
 
 - CUDA int64 IDs `[1,T]` and contiguous absolute positions `[T]`.
-- Caller-owned contiguous CUDA BF16 K/V buffers `[1,8,1024,128]`, sharing the
+- Caller-owned contiguous CUDA BF16 K/V buffers `[1,8,C,128]`, sharing the
   same stable storage between prefill and decode. Native allocations satisfy
   the 16-byte alignment requirement.
 - A CPU uint8 extent vector of shape `[populated_length + 1]`. Only its shape is
@@ -188,16 +194,30 @@ the extent tensor. Inputs are:
   synchronization or size-one specialization.
 - One output: last-token CUDA BF16 logits `[1,151936]`.
 
-Prefill accepts 2–512 tokens; decode accepts one token, including a one-token
-prompt at position zero. Total context capacity is 1,024. Earlier positions
-must already be populated. Runtime checks reject invalid IDs, nonpositive or
-oversized budgets, incompatible metadata and cache overflow before model work.
+Each compiled prefill call accepts 2–512 tokens; decode accepts one token,
+including a one-token prompt at position zero. Default context capacity is
+40,960 for the pinned model; `--max-context-length` can select a smaller export.
+Shared generation
+splits a long prompt into calls of at most 512 tokens, with a one-token remainder
+sent to decode. `cache_length` records compiled capacity and `token_range` only
+a compiled call's bounds. The prompt and requested output budget must fit their
+combined context; there is no independent prompt cap. Earlier
+positions must already be populated. Retained converted bundles keep their
+original capacity; calling applications own any additional admission policy.
+Larger state buffers require re-export, as described in
+[package metadata](../../docs/package-metadata.md). The previously recorded
+16,384-slot profile completed ordinary export and C++ execution on L20, with
+bitwise native/Python AOTI agreement and a full-capacity inference-memory probe.
+Qwen3 passed its existing HF numerical gates. Those results do not validate the
+current 40,960-slot default. The recorded 16K profile has not been validated on GB10.
+Runtime checks reject invalid IDs, nonpositive
+or oversized budgets, incompatible metadata and cache overflow before model work.
 The runtime also checks the actual CUDA device against the package's compute
 capability before loading GPU weights. The common metadata reader validates
 the schema version, model identity and all shared contracts. Native file
 preflight verifies package and archive sizes and checksums before GPU weight
-allocation. Missing or unsupported schema versions are rejected. Schema 1 and
-unversioned sidecars must be converted or the bundle re-exported; there are no
+allocation. Missing or unsupported schema versions are rejected. Schema 1,
+schema 2, schema 3, schema 4 and unversioned sidecars must be converted or the bundle re-exported; there are no
 legacy field aliases. `model_type="qwen3"` selects the Qwen3 state policy after
 common parsing.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
@@ -264,7 +284,7 @@ See [numerical history](../../docs/experiments/qwen3-numerics.md) for the record
 
 ```bash
 "$BUILD/xinfer_aoti" artifacts/qwen3-flash work/prompt.ids work/generated.ids \
-  --max-new-tokens 64 --trace work/native-logits.f32
+  --max-output-tokens 64 --trace work/native-logits.f32
 "$Q3_PY" -m tools.prepare decode --model-dir "$Q3_MODEL" --input work/generated.ids
 ```
 
@@ -272,8 +292,10 @@ The native executable runs without an activated venv or interpreter. It resets
 the cache for each request and stops at EOS or the requested limit. Output IDs
 include EOS when reached; trace rows are raw little-endian float32. Input,
 output and trace paths must differ. The prompt plus complete requested budget
-must fit 1,024 tokens even if EOS might arrive earlier. Select the visible GPU
-with `CUDA_VISIBLE_DEVICES`.
+must fit the package context capacity (40,960 by default), even if EOS
+might arrive earlier. `--max-output-tokens` defaults to 64. The requested output
+budget determines the remaining prompt allowance; there is no separate prompt cap.
+Select the visible GPU with `CUDA_VISIBLE_DEVICES`.
 
 ## Benchmark and profile
 
@@ -294,7 +316,10 @@ The HF baseline uses the unchanged model with its own dynamic cache and
 automatic masks/positions. Both models use normal PyTorch SDPA backend selection.
 Each request starts with no cache; reset discards the cache and initial allocation
 belongs to prefill. One-token initial requests use the same HF path. Reports
-identify this baseline as `eager_baseline: hf_dynamic_cache`.
+identify this baseline as `eager_baseline: hf_dynamic_cache`. Native prefill
+timing includes all prompt chunks and the final prediction. HF receives the
+whole prompt in one call; reports retain this partition difference. Numerical
+validation uses matched partitions instead.
 
 `compare` measures two compatible compiled package bundles for either model:
 
@@ -309,8 +334,11 @@ identify this baseline as `eager_baseline: hf_dynamic_cache`.
 `run` defaults to prompt lengths 25, 128 and 512, 64 fixed decode steps,
 two warmups, five measured requests and three process rounds. `compare` defaults
 to four rounds. `--lengths`, `--decode-steps`, `--warmup`, `--repeats` and
-`--rounds` override those counts. Package metadata defines accepted prompt lengths
-and total context capacity.
+`--rounds` override those counts. Package metadata defines total context capacity
+(`cache_length`); prompt and forced output tokens must fit that context for both
+HF and native workers, while
+`token_range` limits each compiled call. Use `--lengths 511 512 513 8191 8192`
+to measure chunk boundaries and the complete long prompt.
 
 All commands default to CUDA logical device 0, honoring `CUDA_VISIBLE_DEVICES`
 and `CUDA_DEVICE_ORDER`. Use `--gpu` with an `nvidia-smi` physical GPU index or

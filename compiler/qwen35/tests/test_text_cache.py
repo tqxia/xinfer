@@ -1,10 +1,35 @@
 """CPU regression for full-attention cache updates after symbolic DeltaNet dispatch."""
 
 import unittest
+from types import SimpleNamespace
 
 import torch
 
-from compiler.qwen35.model import TextCache
+from compiler.qwen35.model import TextCache, state_specs
+
+
+class StateCapacity(unittest.TestCase):
+    def test_kv_capacity_is_independent_of_deltanet_geometry(self):
+        config = SimpleNamespace(
+            linear_num_key_heads=16,
+            linear_key_head_dim=128,
+            linear_num_value_heads=32,
+            linear_value_head_dim=128,
+            linear_conv_kernel_dim=4,
+            num_key_value_heads=4,
+            head_dim=256,
+            layer_types=["linear_attention", "full_attention"],
+            max_position_embeddings=262144,
+        )
+        baseline = state_specs(config, capacity=1024)
+        scaled = state_specs(config, capacity=16384)
+        default = state_specs(config)
+        self.assertEqual(baseline[:2], scaled[:2])
+        self.assertEqual(default[:2], scaled[:2])
+        self.assertEqual(default[2]["shape"], [1, 4, 262144, 256])
+        self.assertEqual(baseline[2]["shape"], [1, 4, 1024, 256])
+        self.assertEqual(scaled[2]["shape"], [1, 4, 16384, 256])
+        self.assertEqual(scaled[2]["shape"], scaled[3]["shape"])
 
 
 class AttentionUpdate(torch.nn.Module):

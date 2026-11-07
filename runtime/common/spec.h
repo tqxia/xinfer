@@ -100,7 +100,7 @@ inline const std::vector<std::string> &metadata_fields() {
 inline void check_metadata_schema(const Json &metadata) {
   require(metadata.is_object() && metadata.contains("schema_version") &&
               metadata_integer(metadata.at("schema_version"), 1) &&
-              metadata.at("schema_version") == 3,
+              metadata.at("schema_version") == 5,
           "Unsupported package metadata schema version; convert retained metadata or re-export "
           "both packages");
 }
@@ -134,13 +134,16 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
     metadata_check(std::find(fields.begin(), fields.end(), field) != fields.end(), field);
   const auto &m = metadata;
   metadata_check(m.at("entry_point") == entry, "entry_point");
-  metadata_check(metadata_integer(m.at("cache_length"), 1) && m.at("cache_length") == 1024,
+  // The shape-only extent input has capacity + 1 elements.
+  metadata_check(metadata_integer(m.at("cache_length"), 512) &&
+                     m.at("cache_length").get<int64_t>() < std::numeric_limits<int64_t>::max(),
                  "cache_length");
   metadata_check(metadata_integer(m.at("vocab_size"), 1), "vocab_size");
   const Json expected_tokens = entry == "prefill" ? Json::array({2, 512}) : Json::array({1, 1});
   const auto &tokens = m.at("token_range");
   metadata_check(tokens.is_array() && tokens.size() == 2 && metadata_integer(tokens[0], 1) &&
-                     metadata_integer(tokens[1], 1) && tokens == expected_tokens,
+                     metadata_integer(tokens[1], 1) && tokens == expected_tokens &&
+                     tokens[1].get<int64_t>() <= m.at("cache_length").get<int64_t>(),
                  "token_range");
   metadata_check(m.at("torch_version").is_string() &&
                      !m.at("torch_version").get<std::string>().empty(),
@@ -248,7 +251,7 @@ struct SpecBase {
     validate_metadata_pair(prefill_metadata, metadata);
     model_type = parse_model_type(metadata.at("model_type").get<std::string>());
     capacity = metadata.at("cache_length");
-    max_prompt = prefill_metadata.at("token_range").at(1);
+    max_prefill = prefill_metadata.at("token_range").at(1);
     vocab = metadata.at("vocab_size");
     eos = metadata.at("eos_token_ids").get<std::vector<int64_t>>();
     compute_capability = metadata.at("cuda_compute_capability").get<std::vector<int64_t>>();
@@ -277,7 +280,7 @@ struct SpecBase {
   }
 
   ModelType model_type;
-  int64_t capacity = 0, max_prompt = 512, vocab = 0;
+  int64_t capacity = 0, max_prefill = 0, vocab = 0;
   std::vector<int64_t> eos, compute_capability;
   Json prefill_metadata, metadata, shared_weights;
   std::vector<StateSpec> state;
@@ -289,11 +292,22 @@ struct SpecBase {
     return bundle;
   }
 
-  void check_tokens(const std::vector<int64_t> &ids) const {
-    require(!ids.empty() && static_cast<int64_t>(ids.size()) <= max_prompt,
-            "Expected 1..512 input tokens");
+  void check_token_ids(const std::vector<int64_t> &ids) const {
     for (auto id : ids)
       require(id >= 0 && id < vocab, "Token ID out of range");
+  }
+
+  void check_tokens(const std::vector<int64_t> &ids) const {
+    require(!ids.empty() && static_cast<int64_t>(ids.size()) <= capacity,
+            "Expected 1.." + std::to_string(capacity) + " input tokens");
+    check_token_ids(ids);
+  }
+
+  void check_step_tokens(const std::vector<int64_t> &ids) const {
+    require(!ids.empty() && static_cast<int64_t>(ids.size()) <= max_prefill,
+            "Expected 1.." + std::to_string(max_prefill) + " tokens per compiled call");
+    // A compiled call has its own bound, independent of complete request length.
+    check_token_ids(ids);
   }
 
   void check_request(const std::vector<int64_t> &ids, int64_t limit) const {
@@ -322,7 +336,8 @@ inline std::vector<int64_t> read_ids(const fs::path &path, const SpecBase &spec)
   std::vector<int64_t> ids;
   for (std::string word; file >> word;) {
     ids.push_back(integer(word));
-    require(static_cast<int64_t>(ids.size()) <= spec.max_prompt, "Expected 1..512 input tokens");
+    require(static_cast<int64_t>(ids.size()) <= spec.capacity,
+            "Expected 1.." + std::to_string(spec.capacity) + " input tokens");
   }
   require(file.eof(), "Failed to read token IDs: " + path.string());
   spec.check_tokens(ids);

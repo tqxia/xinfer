@@ -8,8 +8,9 @@ from pathlib import Path
 
 import torch
 
-from compiler.common.artifacts import MODEL_MANIFEST_NAME
-from compiler.qwen35.config import ARTIFACT_DIR, CACHE_LENGTH, TEXT_DIR
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
+from compiler.common.context import model_context_limit, resolve_context_length
+from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.weights import compile_shared
 from compiler.common.attention import cache_extent
@@ -57,21 +58,22 @@ def delta_graph(exported, kind, layers):
     return counts
 
 
-def export_step(model, kind):
+def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
+    capacity = resolve_context_length(model.config, capacity)
     dynamic = kind == "prefill"
     length = 32 if dynamic else 1
     torch.manual_seed(35)
     inputs = (
         torch.randint(0, model.config.vocab_size, (1, length), device="cuda"),
         torch.arange(length, device="cuda"),
-        zero_state(model.config),
+        zero_state(model.config, capacity),
         cache_extent(length),
     )
-    extent = torch.export.Dim("kv_extent", min=2, max=CACHE_LENGTH + 1)
+    extent = torch.export.Dim("kv_extent", min=2, max=capacity + 1)
     shapes = ({}, {}, [None] * len(inputs[2]), {0: extent})
     if dynamic:
-        tokens = torch.export.Dim("tokens", min=2, max=512)
+        tokens = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
         shapes = ({1: tokens}, {0: tokens}, [None] * len(inputs[2]), {0: extent})
     exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
@@ -84,6 +86,11 @@ def main():
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
     parser.add_argument(
+        "--max-context-length",
+        type=int,
+        help="Compiled KV-cache capacity; defaults to model max_position_embeddings",
+    )
+    parser.add_argument(
         "--enable-inductor-optimization",
         action="store_true",
         help="Enable optional Inductor optimizations (currently combo kernels)",
@@ -93,6 +100,23 @@ def main():
         args.output.exists() and (not args.output.is_dir() or any(args.output.iterdir()))
     ):
         parser.error(f"Output must be a new or empty directory: {args.output}")
+    try:
+        context_config = read_json(args.model_dir / "config.json")
+        capacity = resolve_context_length(context_config, args.max_context_length)
+        ceiling = model_context_limit(context_config)
+    except ValueError as error:
+        parser.error(str(error))
+    print(
+        json.dumps(
+            dict(
+                event="context",
+                cache_length=capacity,
+                model_max_position_embeddings=ceiling,
+                max_prefill_tokens=MAX_PREFILL,
+            )
+        ),
+        flush=True,
+    )
     configure_text()
     from torch.fx.experimental import _config as symbolic_config
 
@@ -110,7 +134,7 @@ def main():
         dynamic = kind == "prefill"
         length = 32 if dynamic else 1
         start = time.perf_counter()
-        exported, packing = export_step(model, kind)
+        exported, packing = export_step(model, kind, capacity)
         (staging_directory / f"{kind}.packing.json").write_text(
             json.dumps(packing, indent=2) + "\n"
         )
@@ -152,7 +176,7 @@ def main():
             metadata = make_metadata(
                 model_type="qwen35",
                 entry_point=kind,
-                token_range=[2, 512] if dynamic else [length, length],
+                token_range=[2, MAX_PREFILL] if dynamic else [length, length],
                 checkpoint=dict(
                     model_id=checkpoint["model"],
                     revision=checkpoint["revision"],
@@ -161,10 +185,10 @@ def main():
                 torch_version=torch.__version__,
                 cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
                 cuda_compute_capability=torch.cuda.get_device_capability(),
-                cache_length=CACHE_LENGTH,
+                cache_length=capacity,
                 vocab_size=config.vocab_size,
                 eos_token_ids=model.generation_config.eos_token_id,
-                state=state_specs(config),
+                state=state_specs(config, capacity),
                 triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
                 model_specific=dict(
                     delta_backend="triton_op",

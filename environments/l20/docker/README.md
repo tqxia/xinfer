@@ -12,6 +12,40 @@ when programs run, and `LDFLAGS` supplies the same directories through
 newer entry points are required by LibTorch. NVCC and headers remain from the
 12.4 SDK; the container runtime supplies the host GPU driver.
 
+The pinned base's `/root/.bashrc` globally prepends Nsight's `host-linux-x64`
+directory to `LD_LIBRARY_PATH`. That selects its private `libstdc++` for PyTorch
+and causes AOTI loader TLS destructors to crash at process exit with both retained
+and larger-context packages. The Dockerfile remains unchanged; use the temporary
+running-container workaround below.
+
+Run scripted jobs directly through `docker exec`, or use non-login `bash -c`
+when shell redirection is needed. These preserve the image's intended library
+environment without sourcing the inherited login setup. If a login shell is
+required, first make a task-specific backup of `/root/.bashrc` in the running
+test container, then remove only this global export from that file:
+
+```text
+export LD_LIBRARY_PATH=/opt/nvidia/nsight-systems/2024.2.3/host-linux-x64/:$LD_LIBRARY_PATH
+```
+
+Keep Nsight installed and preserve the Torch CUDA paths and other startup
+settings. Start a fresh `docker exec` after correction; editing `.bashrc` does
+not repair a shell's already inherited environment. Do not clear
+`LD_LIBRARY_PATH` wholesale, since that also removes the selected Torch CUDA
+libraries. Do not add the profiler's private library directory around
+`nsys profile`: the profiled child can inherit that override.
+
+Use the installed `/opt/nvidia/nsight-systems/2024.2.3/bin/nsys` launcher by
+absolute path. The CUDA SDK's `nsys` wrapper refers to an absent older Nsight
+installation. The installed launcher works with the normal image library
+environment; no global library override or image `PATH` change is needed for
+this workaround.
+
+An experimental `xinfer/l20:torch2.13-cu126-envfix` image was built and tested,
+but it is not the default. Per the 2026-11-07 decision, its Dockerfile changes
+were withdrawn; the running-container workaround remains temporary. Revisiting
+an NVIDIA official base image is deferred in [the project plan](../../../PLAN.md).
+
 Project source, model checkpoints, generated packages and reports live in host
 bind mounts. The final image contains the installed environment and the small
 build recipe; wheel archives remain in the offline build context and build cache.

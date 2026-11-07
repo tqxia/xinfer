@@ -4,9 +4,10 @@ import torch
 from transformers import AutoModelForCausalLM
 from transformers.cache_utils import Cache
 
+from compiler.common.context import resolve_context_length
 
-CACHE_LENGTH = 1024
-MAX_PROMPT = 512
+
+MAX_PREFILL = 512
 
 
 class TensorCache(Cache):
@@ -44,8 +45,9 @@ def load_model(model_dir):
     )
 
 
-def allocate_cache(config):
-    shape = (1, config.num_key_value_heads, CACHE_LENGTH, config.head_dim)
+def allocate_cache(config, capacity=None):
+    capacity = resolve_context_length(config, capacity)
+    shape = (1, config.num_key_value_heads, capacity, config.head_dim)
     return tuple(
         torch.zeros(shape, dtype=torch.bfloat16, device="cuda")
         for _ in range(2 * config.num_hidden_layers)

@@ -16,4 +16,6 @@ def validate_model_metadata(metadata):
             and item["update"] == "inplace",
             "Unsupported package metadata: state",
         )
-        require(item["shape"] == [1, 8, 1024, 128], "Unsupported Flash cache shape")
+        require(
+            item["shape"] == [1, 8, metadata["cache_length"], 128], "Unsupported Flash cache shape"
+        )

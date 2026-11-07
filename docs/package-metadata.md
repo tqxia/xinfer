@@ -1,6 +1,6 @@
 # Package metadata
 
-Both model families use `schema_version: 3` and `runtime_abi_version: 1` in
+Both model families use `schema_version: 5` and `runtime_abi_version: 1` in
 `prefill.json` and `decode.json`.
 `compiler/common/metadata.py` builds, finalizes and reads the shared Python
 format. `runtime/common/spec.h` is the common C++ reader. Model-specific modules
@@ -12,10 +12,33 @@ both models.
 | `schema_version`, `runtime_abi_version`, `model_type`, `entry_point`, `token_range` | Metadata format, calling convention, model selection and entry bounds |
 | `torch_version`, `cxx11_abi`, `cuda_compute_capability` | Runtime compatibility |
 | `checkpoint`, `vocab_size`, `eos_token_ids` | Verified checkpoint identity, vocabulary and an explicit EOS list |
-| `cache_length`, `state` | Contiguous state shapes, types, ownership and context capacity |
+| `cache_length`, `state` | Compiled context capacity and contiguous state shapes/types/ownership |
 | `export_options`, `tf32`, `triton_enable_fp_fusion`, `inductor_configs` | Export and numerical contract |
 | `package_bytes`, `package_sha256`, `shared_weights` | Package and archive integrity |
 | `model_specific` | DeltaNet numerical policy and minimal packing settings; empty for Qwen3 |
+
+`cache_length` is chosen at export with `--max-context-length`. Its default is
+the selected model's declared text-model context ceiling, not a fixed 16K value.
+The exporter checks the selected checkpoint's text-config
+`max_position_embeddings` before allocating model state. Both supported model
+families use their declared default-RoPE ceiling; no scaling factor is inferred.
+The compiled capacity must be at least 512 and cannot exceed that model ceiling.
+KV state descriptors contain exactly `cache_length` slots.
+
+`token_range` describes one compiled invocation: decode accepts `[1,1]` and
+prefill `[2,512]`, independently of the complete prompt length. The runtime splits
+a prompt into calls of at most 512 tokens and uses decode for a one-token
+remainder. The complete prompt plus requested generation budget must fit the
+context before execution begins; an oversized budget is rejected, not clamped.
+Changing the selected capacity requires re-export of both entry points.
+
+There is no separate prompt cap in the runtime or package. The native generation
+CLI accepts `--max-output-tokens` (default 64), and both prompt and output must
+be nonempty and fit their combined context budget. The retired
+`--max-prompt-length` and `--max-new-tokens` options are rejected; Hugging Face
+library calls retain their upstream `max_new_tokens` keyword. Schema 5 also
+rejects the former `max_prompt_length` package field. Runtime requests cannot
+enlarge a package's state or symbolic bounds.
 
 Every ordered state descriptor gives its `layer`, `kind`, `shape`, `dtype` and
 `update` policy. KV inputs use `inplace`; conv/recurrent inputs use `replace`.
@@ -51,7 +74,7 @@ Readers validate state shapes, layer order, dtypes, ownership and request bounds
 against this supported ABI. The version does not replace those checks. The
 seven former descriptions (`batch_size`, `dtype`, `input_mutation`,
 `attention_backend`, `custom_attention`, `cache_input` and `kv_extent`) are no
-longer serialized, and schema 3 rejects them as unknown fields.
+longer serialized, and schema 5 rejects them as unknown fields.
 
 The metadata schema describes representation; the runtime ABI describes calls
 between the compiled graph and the runner. They evolve independently of
@@ -78,8 +101,8 @@ export events. They are not required package fields; `provenance` and
 `diagnostics` are no longer serialized in the deployment sidecars. Retain the
 export log when investigating a build.
 
-Metadata schema version 3 is independent of the runtime ABI and embedded
-weight-archive format. Schema 1, schema 2 and unversioned sidecars are not read
+Metadata schema version 5 is independent of the runtime ABI and embedded
+weight-archive format. Schema 1 through schema 4 and unversioned sidecars are not read
 by current runtimes. Re-export with the current exporter, or convert verified
 retained sidecars into a new directory using the canonical schema. This
 metadata-only conversion can keep compatible `.pt2` files and `weights.pt` byte
@@ -87,11 +110,30 @@ for byte; the archive binds package hashes, not JSON sidecar hashes. Keep the
 original bundle and binary when retaining historical evidence. Runtime readers
 contain no legacy-field translation paths.
 
+For a verified schema 3 or schema 4 bundle, preserve the original directory and
+create a separate copy for conversion. Set `schema_version` to 5 in **both**
+sidecars and remove `max_prompt_length` if present. Retain the original capacity
+(`cache_length: 1024` for the older profile), the
+compiled token ranges, state shapes, runtime ABI and every numerical/integrity
+field unchanged. The converted bundle can reuse its immutable `.pt2` files and
+`weights.pt` without recompilation. Validate the new pair with the current
+reader before use. Earlier prompt-admission caps are no longer enforced by the
+runtime; a calling application may enforce its own input policy. Conversion does
+not promote the cache to a larger profile.
+
+Removing the request-policy field changes metadata representation only. Larger KV buffers
+and prompt chunking preserve the input/output order, extent representation,
+state ownership and attention semantics of runtime ABI 1 and attention-library
+ABI 1. Rebuild the native attention library and runner for generalized capacity
+support before using newly exported long-context packages.
+
 Verified schema 2 L20 bundles are converted under
 `artifacts/l20/runtime-abi-20261104/migrated/{qwen3,qwen35}`. Conversion checks the
 previous fixed descriptions before assigning runtime ABI 1; it retains all
 numerical, checkpoint and integrity fields. The original bundles are preserved,
-and the converted copies reuse their compiled graphs and weights.
+and the converted copies reuse their compiled graphs and weights. Those retained
+sidecars predate schema 5; make a separate schema 5 copy before using them with
+the current reader.
 
 ## Historical schema 1 validation: 2026-11-03
 

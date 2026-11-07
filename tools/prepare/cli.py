@@ -9,6 +9,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from tools.prepare.qwen3 import REVISIONS as QWEN3_REVISIONS
 from tools.prepare.qwen35 import REVISIONS as QWEN35_REVISIONS
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
+from compiler.common.context import model_context_limit
 
 
 MODELS = {model: "qwen3" for model in QWEN3_REVISIONS} | {
@@ -62,8 +63,10 @@ def main(argv=None):
                     not args.output.exists() and not args.output.is_symlink(),
                     "Output already exists",
                 )
+                ceiling = model_context_limit(read_json(args.model_dir / "config.json"))
                 tokenizer = load_tokenizer(args.model_dir)
                 ids = encode_prompt(tokenizer, args.prompt)
+                require(len(ids) <= ceiling, f"Expected 1..{ceiling} prompt tokens, got {len(ids)}")
                 write_ids(args.output, ids)
                 print(f"Wrote {len(ids)} tokens to {args.output}")
             else:

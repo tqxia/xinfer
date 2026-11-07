@@ -26,7 +26,7 @@ from compiler.common.metadata import (
 )
 from compiler.qwen3.packages import validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
-from tools.common import native_attention_library
+from tools.common import native_attention_library, prompt_chunks
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.validation import read_ids as ids_from
@@ -101,15 +101,16 @@ def compare_native_trace(prompt, generated, trace_path, budget):
     )
     tokens, position = prompt, 0
     for token, row in zip(generated, rows):
-        ids = torch.tensor([tokens], dtype=torch.int64, device="cuda")
-        positions = torch.arange(position, position + len(tokens), device="cuda")
-        scores = (decode if len(tokens) == 1 else prefill)(
-            ids, positions, cache, cache_extent(position + len(tokens))
-        )
+        for chunk in prompt_chunks(tokens, metadata["prefill"]["token_range"][1]):
+            ids = torch.tensor([chunk], dtype=torch.int64, device="cuda")
+            positions = torch.arange(position, position + len(chunk), device="cuda")
+            scores = (decode if len(chunk) == 1 else prefill)(
+                ids, positions, cache, cache_extent(position + len(chunk))
+            )
+            position += len(chunk)
         assert torch.isfinite(scores).all().item()
         assert scores.argmax(-1).item() == token
         assert scores.float().cpu().numpy()[0].tobytes() == row.tobytes()
-        position += len(tokens)
         tokens = [token]
     assert all(torch.isfinite(tensor).all().item() for tensor in cache)
 
@@ -132,7 +133,7 @@ for case in sorted(chat_prompts("qwen3"), key=lambda item: item["name"]):
     ids, trace = out / f"{name}.ids", out / f"{name}.f32"
     budget = 64
     result = run_native(
-        [packages, prompt_path, ids, "--max-new-tokens", budget, "--trace", trace],
+        [packages, prompt_path, ids, "--max-output-tokens", budget, "--trace", trace],
         name,
         environment=run_env,
     )
@@ -149,15 +150,27 @@ capital_prompt = prompt_paths["capital"]
 
 bad = out / "invalid.ids"
 cases = [
-    ("empty", "", [], "Expected 1..512 input tokens"),
+    ("empty", "", [], f"Expected 1..{spec['cache_length']} input tokens"),
     ("negative", "-1", [], "Token ID out of range"),
     ("vocab", "151936", [], "Token ID out of range"),
     ("fraction", "1.5", [], "Invalid integer"),
     ("overflow", "999999999999999999999999999999", [], "Invalid integer"),
-    ("long_prompt", "1 " * 513, [], "Expected 1..512 input tokens"),
-    ("zero_budget", "1", ["--max-new-tokens", "0"], "Generation budget"),
-    ("negative_budget", "1", ["--max-new-tokens", "-1"], "Generation budget"),
-    ("context_budget", "1 " * 512, ["--max-new-tokens", "513"], "Generation budget"),
+    (
+        "long_prompt",
+        "1 " * (spec["cache_length"] + 1),
+        [],
+        f"Expected 1..{spec['cache_length']} input tokens",
+    ),
+    ("retired_prompt_limit", "1", ["--max-prompt-length", "128"], "Unknown option"),
+    ("retired_output_limit", "1", ["--max-new-tokens", "1"], "Unknown option"),
+    ("zero_budget", "1", ["--max-output-tokens", "0"], "Generation budget"),
+    ("negative_budget", "1", ["--max-output-tokens", "-1"], "Generation budget"),
+    (
+        "context_budget",
+        "1 " * spec["cache_length"],
+        ["--max-output-tokens", "1"],
+        "Generation budget",
+    ),
     ("unknown_flag", "1", ["--unknown", "1"], "Unknown option"),
     ("missing_value", "1", ["--trace"], "Missing option value"),
     (
@@ -407,7 +420,7 @@ directory = package_fixture("declared_package_sizes", metadata_with_sizes(), wit
 prompt_path = capital_prompt
 ids_path, trace_path = directory / "generated.ids", directory / "logits.f32"
 result = run_native(
-    [directory, prompt_path, ids_path, "--max-new-tokens", "1", "--trace", trace_path],
+    [directory, prompt_path, ids_path, "--max-output-tokens", "1", "--trace", trace_path],
     "declared_package_sizes",
 )
 assert result.returncode == 0, failure_detail(result, "declared_package_sizes")
@@ -422,7 +435,9 @@ for item in metadata.values():
     item["cuda_compute_capability"] = [99, 0]
 directory = package_fixture("gpu_architecture", metadata, with_weights=True)
 output = directory / "generated.ids"
-result = run_native([directory, prompt_path, output, "--max-new-tokens", "1"], "gpu_architecture")
+result = run_native(
+    [directory, prompt_path, output, "--max-output-tokens", "1"], "gpu_architecture"
+)
 assert result.returncode != 0 and "GPU architecture mismatch" in result.stderr, failure_detail(
     result, "gpu_architecture"
 )
@@ -511,13 +526,18 @@ for name, python_message, native_message in weight_cases:
     report["rejections"].append(name)
 
 seed = ids_from(capital_prompt)
-for length, budget in ((1, 3), (2, 3), (512, 3), (len(seed), 1)):
+boundary_requests = [(length, 3) for length in (1, 2, 511, 512, 513, 8191, 8192, 8193)]
+boundary_requests += [(len(seed), 1), (128, 1)]
+for length, budget in boundary_requests:
+    if length + budget > spec["cache_length"]:
+        continue
     prompt = (seed * (length // len(seed) + 1))[:length]
     stem = f"length-{length}-budget-{budget}"
     input_path, ids_path, trace_path = (out / f"{stem}.{ext}" for ext in ("input", "ids", "f32"))
     input_path.write_text(" ".join(map(str, prompt)))
     result = run_native(
-        [packages, input_path, ids_path, "--max-new-tokens", budget, "--trace", trace_path], stem
+        [packages, input_path, ids_path, "--max-output-tokens", budget, "--trace", trace_path],
+        stem,
     )
     assert result.returncode == 0, failure_detail(result, stem)
     generated = ids_from(ids_path)

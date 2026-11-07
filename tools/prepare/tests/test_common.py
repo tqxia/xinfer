@@ -180,18 +180,19 @@ class OfflineTokens(unittest.TestCase):
             with self.subTest(text=text), self.assertRaisesRegex(ValueError, "must not be empty"):
                 common.encode_prompt(tokenizer, text)
             tokenizer.apply_chat_template.assert_not_called()
-        for count in (0, 513):
+        tokenizer.apply_chat_template.return_value = []
+        with self.assertRaisesRegex(ValueError, "Prompt must contain tokens"):
+            common.encode_prompt(tokenizer, "Hello")
+        for count in (512, 513, 8192, 8193, 16384):
             tokenizer.apply_chat_template.return_value = [7] * count
-            with self.subTest(count=count), self.assertRaisesRegex(ValueError, "Expected 1..512"):
-                common.encode_prompt(tokenizer, "Hello")
-        tokenizer.apply_chat_template.return_value = [7] * 512
-        self.assertEqual(len(common.encode_prompt(tokenizer, "Hello")), 512)
+            self.assertEqual(len(common.encode_prompt(tokenizer, "Hello")), count)
 
 
 class PreparationCLI(unittest.TestCase):
     def checkpoint(self, directory, model, *, qwen3=False):
         manifest = {"repo_id" if qwen3 else "model": model, "revision": REVISION}
         (directory / MODEL_MANIFEST_NAME).write_text(json.dumps(manifest))
+        (directory / "config.json").write_text(json.dumps(dict(max_position_embeddings=32768)))
         return manifest
 
     def test_download_routes_every_model_and_honors_explicit_output_and_cache(self):
@@ -282,6 +283,45 @@ class PreparationCLI(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 common.write_ids(output, [9])
             self.assertEqual(output.read_text(), "4 5\n")
+
+    def test_encode_uses_declared_model_ceiling_and_rejects_retired_prompt_cap(self):
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.checkpoint(directory, next(iter(cli.MODELS)), qwen3=True)
+            (directory / "config.json").write_text(
+                json.dumps(dict(text_config=dict(max_position_embeddings=10000)))
+            )
+            tokenizer = SimpleNamespace(apply_chat_template=Mock(return_value=[4] * 8193))
+
+            def arguments(name, extra=()):
+                return [
+                    "encode",
+                    "--model-dir",
+                    str(directory),
+                    "--prompt",
+                    "Hello",
+                    "--output",
+                    str(directory / name),
+                    *extra,
+                ]
+
+            with (
+                patch.object(cli, "load_tokenizer", return_value=tokenizer),
+                redirect_stdout(io.StringIO()),
+            ):
+                cli.main(arguments("long.ids"))
+                self.assertEqual(len((directory / "long.ids").read_text().split()), 8193)
+                with (
+                    patch("sys.stderr", new_callable=io.StringIO),
+                    self.assertRaises(SystemExit) as stopped,
+                ):
+                    cli.main(arguments("capped.ids", ["--max-prompt-length", "128"]))
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertFalse((directory / "capped.ids").exists())
+                tokenizer.apply_chat_template.return_value = [4] * 10001
+                with self.assertRaisesRegex(ValueError, "Expected 1..10000"):
+                    cli.main(arguments("oversized.ids"))
+                self.assertFalse((directory / "oversized.ids").exists())
 
     def test_decode_rejects_invalid_ids_before_calling_the_tokenizer_decoder(self):
         with TemporaryDirectory() as temporary:

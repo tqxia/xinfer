@@ -8,8 +8,11 @@ are outside this experiment. Python prepares the model and tokenizes/decodes
 offline; C++ loads the compiled packages and performs generation.
 
 Use the explicit 4B paths below to select that checkpoint. Defaults remain 0.8B.
-Kernel/block validation and full-model numerical acceptance are separate gates;
-longer prompts remain a later milestone.
+Kernel/block validation and full-model numerical acceptance are separate gates.
+The recorded 8K-prompt/16K-context runs completed ordinary export, C++ execution
+and full 16,384-slot inference-memory probes on L20 for both sizes. Native/Python
+AOTI outputs matched bitwise. HF numerical acceptance remains open, and this new
+profile has not been validated on GB10.
 
 The [real 4B L20 run](../../docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
 validates export, shared-weight loading and native/Python parity. Full HF/FP32
@@ -19,15 +22,26 @@ Generation, fixed-token timing and native validation use the shared
 `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executables. Package
 metadata selects Qwen3.5 and its mixed-state policy; no model CLI flag is needed.
 
-Prefill is always dynamic: each input of 2–512 tokens uses one prefill call.
-A single token uses the decode package. Batch size is one and context capacity
-is 1,024. Both sizes use BF16 weights/activations and FP32 RoPE frequencies.
-State geometry comes from the selected checkpoint:
+Prefill is always dynamic: each compiled call accepts 2–512 tokens. A single
+token uses the decode package. Omitted `--max-context-length` defaults to the
+selected text config's declared context ceiling, 262,144 for both checkpoints.
+`--max-context-length` selects an export capacity in 512..the text config's
+`max_position_embeddings` (262,144 for both pinned checkpoints), checked before
+GPU model loading. Shared generation splits a longer prompt into calls
+of at most 512 tokens, using decode for a one-token remainder. Metadata records
+`cache_length` and compiled `token_range`. There is no separate prompt cap; the
+full prompt and request's `--max-output-tokens` budget must fit context capacity.
+Batch size is one.
+Both sizes use BF16 weights/activations
+and FP32 RoPE frequencies. State geometry comes from the selected checkpoint:
 
 | Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | KV shape |
 | --- | --- | --- | --- | --- | --- |
-| 0.8B | 24 | 18 | 6 | 48 | `[1,2,1024,256]` |
-| 4B | 32 | 24 | 8 | 64 | `[1,4,1024,256]` |
+| 0.8B | 24 | 18 | 6 | 48 | `[1,2,C,256]` |
+| 4B | 32 | 24 | 8 | 64 | `[1,4,C,256]` |
+
+`C` is the selected compiled capacity; default exports allocate the full declared
+window. An explicit smaller capacity can be chosen for a bounded deployment.
 
 Recurrent states use FP32. The caller owns the KV buffers, which are updated in place at the appended
 positions. Returned KV tensors alias those buffers; conv/recurrent inputs remain
@@ -39,7 +53,7 @@ projections, Q/K normalization, RoPE and sigmoid output gate remain in the model
 DeltaNet layers retain their packaged Triton kernels.
 
 One functional dispatcher selects fused recurrence for T<=97 and B3/C64
-chunked FP32 prefill for longer requests. The threshold is provisional. Focused
+chunked FP32 prefill for longer compiled calls. The threshold is provisional. Focused
 validation compares it with HF recurrent/chunked operations and an independent
 FP32 control; full-model and native checks cover generation and carried state.
 HF/compiler numerical acceptance remains **open**. The experiment record retains
@@ -310,10 +324,11 @@ supported checkpoints require tied embeddings and default RoPE.
 Ensure `nvcc` is on `PATH`, or pass `-DCMAKE_CUDA_COMPILER=/path/to/nvcc`.
 Export produces `prefill.pt2`, `decode.pt2`, their `.json` metadata and the shared
 `weights.pt` archive under
-`artifacts/qwen35/0.8b/text`. Both model families use `schema_version=3`, written
+`artifacts/qwen35/0.8b/text`. Both model families use `schema_version=5`, written
 by `compiler/common/metadata.py` and read by the common Python/C++ metadata
 readers. Common fields include `model_type="qwen35"`, `entry_point`, token ranges,
-`runtime_abi_version=1`, Torch version, C++ ABI, GPU architecture, vocabulary,
+`runtime_abi_version=1`, `cache_length`, Torch version,
+C++ ABI, GPU architecture, vocabulary,
 EOS IDs and ordered tensor state descriptors. Each state records its layer, kind, shape, dtype and update
 policy; readers derive names, contiguous strides, layer types and input/output
 order from the supported model ABI. `checkpoint` contains the model ID, revision
@@ -331,10 +346,15 @@ Full resolved Inductor tuning options are logged; metadata retains the
 precision-cast and two weightless-package options. Build diagnostics are not
 required deployment fields.
 
-Runtimes require schema 3 and runtime ABI 1. Retained compatible Flash/shared-weight
-bundles can migrate by rewriting their two JSON sidecars while keeping the compiled graphs
-and weight archive unchanged. Schema 1, schema 2 and unversioned sidecars are
-not read through legacy aliases.
+Runtimes require schema 5 and runtime ABI 1. Retained compatible Flash/shared-weight
+bundles can migrate through a separate copy of their two JSON sidecars while
+keeping the compiled graphs and weight archive unchanged. Conversion sets schema
+5, removes any former `max_prompt_length` field and preserves the original capacity;
+it does not expand those graphs to a chosen larger capacity. See
+[package metadata](../../docs/package-metadata.md) for the conversion contract.
+Earlier prompt-admission caps are no longer runtime settings; calling
+applications own such policy. Schema 1 through schema 4 and unversioned sidecars are not read through legacy
+aliases. Changing cache capacity requires re-export of both entries.
 The archive embeds its mappings in
 `extra/weights.json`; no standalone weight manifest is deployed. Both entry
 metadata files contain the same final archive size and checksum. The exporter
@@ -567,12 +587,19 @@ The unchanged HF model creates and carries its own dynamic cache and constructs
 its masks and positions. Normal PyTorch SDPA backend selection remains enabled.
 Qwen3.5 retains its environment checks. Reset discards the cache, so initial
 allocation is counted in prefill; one-token initial requests follow the same
-path. Reports record `eager_baseline: hf_dynamic_cache`. EOS is data during timing.
+path. Reports record `eager_baseline: hf_dynamic_cache`. Native prefill timing
+includes every prompt chunk and the final prediction; HF processes the whole
+prompt in one call. Reports record that partition difference. Numerical
+validation instead matches partitions across all stages. EOS is data during timing.
 
 Defaults are prompt lengths 25, 128 and 512, 64 decode steps, two warmups,
 five measured requests and three process rounds (`compare` uses four rounds).
-The corresponding count options override these values. Accepted prompt lengths
-and total context capacity come from package metadata.
+The corresponding count options override these values. Context capacity
+(`cache_length`) comes from package metadata; `token_range` limits each compiled
+call. Prompt and forced output tokens must fit that context for both HF and
+native workers. Use
+`--lengths 511 512 513 8191 8192` to measure prompt-chunk boundaries and the
+complete long prompt.
 
 All commands default to CUDA logical device 0, honoring `CUDA_VISIBLE_DEVICES`
 and `CUDA_DEVICE_ORDER`. `--gpu` accepts an `nvidia-smi` physical index or GPU

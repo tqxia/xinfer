@@ -7,6 +7,13 @@ import subprocess
 from compiler.common.artifacts import require
 
 
+def prompt_chunks(tokens, max_prefill):
+    """Partition a request into legal graph calls, including a decode remainder."""
+    require(bool(tokens), "Prompt must contain tokens")
+    require(type(max_prefill) is int and max_prefill >= 2, "Invalid prefill bound")
+    return [tokens[start : start + max_prefill] for start in range(0, len(tokens), max_prefill)]
+
+
 def native_attention_library(native):
     """Resolve the library used by a native worker under its sanitized environment."""
     env = {

@@ -19,7 +19,7 @@ struct Spec : xinfer::SpecBase {
     require(model_type == xinfer::ModelType::Qwen3, "Unsupported model type");
     xinfer::metadata_check(metadata.at("model_specific").empty(), "model_specific");
     xinfer::metadata_check(!state.empty() && state.size() % 2 == 0, "state");
-    const std::vector<int64_t> shape{1, 8, 1024, 128};
+    const std::vector<int64_t> shape{1, 8, capacity, 128};
     for (size_t i = 0; i < state.size(); ++i) {
       const auto &item = state[i];
       xinfer::metadata_check(item.layer == int64_t(i / 2) &&

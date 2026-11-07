@@ -6,7 +6,8 @@ import os
 import torch
 
 from compiler.common.artifacts import read_json, require, write_json
-from tools.common import run
+from tools.common import prompt_chunks, run
+from tools.validation.common.context import state_shape
 from tools.validation.common.runner import Trace
 
 
@@ -16,7 +17,8 @@ def _map(path, dtype, count):
     return torch.from_file(str(path), shared=False, size=count, dtype=dtype)
 
 
-def _states(path, specs):
+def _states(path, specs, position=0, compact=False):
+    specs = [dict(spec, shape=state_shape(spec, position, compact)) for spec in specs]
     widths = [
         math.prod(spec["shape"])
         * torch.empty((), dtype=getattr(torch, spec["dtype"])).element_size()
@@ -32,14 +34,30 @@ def _states(path, specs):
     return tuple(tensors)
 
 
-def run_native(binary, packages, output, cases, chats, metadata):
+def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=None):
     model = metadata["decode"]["model_type"]
     specs = metadata["decode"]["state"]
     vocab = metadata["decode"]["vocab_size"]
     eos = metadata["decode"]["eos_token_ids"]
     manifest = sorted([*cases, *chats], key=lambda case: case.get("order", 1_000_000))
     require(len({case["name"] for case in manifest}) == len(manifest), "Duplicate native case")
-    write_json(output / "cases.json", dict(cases=manifest))
+    selected_states = state_keys is not None
+    compact = selected_states and metadata["decode"].get("cache_length", 0) > 1024
+    if selected_states:
+        manifest = [
+            dict(
+                case,
+                state_steps=[
+                    step
+                    for step in range(len(case.get("steps", [])))
+                    if (case["name"], step) in state_keys
+                ],
+            )
+            for case in manifest
+        ]
+    write_json(
+        output / "cases.json", dict(cases=manifest, trace_format=2 if selected_states else 1)
+    )
     env = {
         key: value
         for key, value in os.environ.items()
@@ -67,7 +85,7 @@ def run_native(binary, packages, output, cases, chats, metadata):
         "Native case coverage differs",
     )
     rows = {row["name"]: row for row in native["cases"]}
-    trace = Trace()
+    trace = Trace(compact_states=compact)
     for case in cases:
         name = case["name"]
         row = rows[name]
@@ -91,7 +109,36 @@ def run_native(binary, packages, output, cases, chats, metadata):
         )
         if case.get("check_overflow"):
             require(row["overflow_rejected_without_mutation"], "Native overflow mutated state")
-        if model == "qwen3":
+        position = 0
+        for step, length in enumerate(lengths):
+            position += length
+            trace.positions[name, step] = position
+        if selected_states:
+            indices = [step for step in range(len(lengths)) if (name, step) in state_keys]
+            require(
+                row["state_steps"] == indices and row["state_prefix"] == compact,
+                "Native state checkpoints differ",
+            )
+            if model == "qwen3":
+                logits = _map(
+                    destination / f"{name}.f32", torch.float32, len(lengths) * vocab
+                ).reshape(-1, 1, vocab)
+            else:
+                logits = _map(
+                    destination / f"{name}.states", torch.bfloat16, len(lengths) * vocab
+                ).reshape(-1, 1, vocab)
+            for step, value in enumerate(logits):
+                trace.logits[name, step] = value.float()
+                if model != "qwen3":
+                    trace.raw_logits[name, step] = value
+            for step in indices:
+                trace.states[name, step] = _states(
+                    destination / f"{name}.{step}.states",
+                    specs,
+                    trace.positions[name, step],
+                    compact,
+                )
+        elif model == "qwen3":
             logits = _map(destination / f"{name}.f32", torch.float32, len(lengths) * vocab).reshape(
                 -1, 1, vocab
             )
@@ -140,7 +187,8 @@ def run_native(binary, packages, output, cases, chats, metadata):
         require(
             row["position"] == len(case["prompt"]) + len(ids) - 1, "Invalid generation position"
         )
-        lengths = [len(case["prompt"])] + [1] * (len(ids) - 1)
+        maximum = metadata.get("prefill", {}).get("token_range", [2, 512])[1]
+        lengths = list(map(len, prompt_chunks(case["prompt"], maximum))) + [1] * (len(ids) - 1)
         require(
             row["prefill_calls"] == sum(length > 1 for length in lengths)
             and row["decode_calls"] == lengths.count(1),
@@ -153,6 +201,8 @@ def run_native(binary, packages, output, cases, chats, metadata):
             ids=ids,
             rows=list(logits),
             position=row["position"],
-            state=_states(destination / f"{name}.states", specs) if model == "qwen35" else (),
+            state=_states(destination / f"{name}.states", specs, row["position"], compact)
+            if model == "qwen35"
+            else (),
         )
     return trace, native

@@ -14,6 +14,7 @@ struct Case {
   int64_t limit = 0;
   double fill = 0;
   bool override_eos = false;
+  std::vector<int64_t> state_steps;
 };
 
 template <class Spec>
@@ -54,13 +55,22 @@ std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::
       require(!c.steps.empty(), "Expected validation steps");
       int64_t position = 0;
       for (const auto &tokens : c.steps) {
-        spec.check_tokens(tokens);
+        spec.check_step_tokens(tokens);
         require(static_cast<int64_t>(tokens.size()) <= spec.capacity - position,
                 "Context capacity exceeded");
         position += tokens.size();
       }
       require(!c.check_overflow || position == spec.capacity,
               "Overflow case must fill the context");
+      if (manifest.value("trace_format", 1) == 2) {
+        c.state_steps = item.value("state_steps", std::vector<int64_t>{});
+        int64_t previous = -1;
+        for (auto step : c.state_steps) {
+          require(step > previous && step < static_cast<int64_t>(c.steps.size()),
+                  "Invalid state checkpoint indices");
+          previous = step;
+        }
+      }
     }
     const bool qwen3 = spec.model_type == ModelType::Qwen3;
     std::vector<std::string> suffixes;
@@ -72,6 +82,9 @@ std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::
       suffixes.push_back(".kv.bf16");
     for (const auto &suffix : suffixes)
       require(!fs::exists(output / (c.name + suffix)), "Output already exists");
+    for (auto step : c.state_steps)
+      require(!fs::exists(output / (c.name + "." + std::to_string(step) + ".states")),
+              "Output already exists");
     cases.push_back(std::move(c));
   }
   require(!cases.empty(), "Expected validation cases");
@@ -83,6 +96,24 @@ template <class Runtime> std::vector<at::Tensor> snapshot(const Runtime &runtime
   for (const auto &tensor : runtime.state())
     copies.push_back(tensor.clone());
   return copies;
+}
+
+template <class Runtime>
+void write_state(std::ofstream &file, const Runtime &runtime, bool compact, double fill) {
+  const auto &state = runtime.state();
+  for (size_t i = 0; i < state.size(); ++i) {
+    const auto &tensor = state[i];
+    require(at::isfinite(tensor).all().template item<bool>(), "Non-finite state");
+    if (compact && runtime.spec().state[i].inplace) {
+      const auto future = tensor.slice(2, runtime.position());
+      const auto expected = at::full_like(future, fill);
+      require(at::equal(future.contiguous().view(at::kByte), expected.contiguous().view(at::kByte)),
+              "Future KV overwritten");
+      write_tensor(file, tensor.slice(2, 0, runtime.position()));
+    } else {
+      write_tensor(file, tensor);
+    }
+  }
 }
 
 void finish(std::ofstream &file, const std::string &message) {
@@ -115,10 +146,14 @@ int main(int argc, char **argv) {
   try {
     require(argc == 4, "Usage: xinfer_validate PACKAGE_DIR CASES_JSON OUTPUT_DIR");
     const auto manifest = read_json(argv[2]);
+    const auto trace_format = manifest.value("trace_format", 1);
+    require(trace_format == 1 || trace_format == 2, "Unsupported validation trace format");
+    const bool selected_states = trace_format == 2;
     const fs::path output(argv[3]);
     return with_model(argv[1], [&](const auto &spec, auto make_runtime) {
       const auto cases = parse_cases(manifest, spec, output);
       const bool qwen3 = spec.model_type == ModelType::Qwen3;
+      const bool compact = selected_states && spec.capacity > 1024;
       c10::InferenceMode inference;
       auto runtime = make_runtime();
       fs::create_directories(output);
@@ -137,6 +172,10 @@ int main(int argc, char **argv) {
         report["cache_buffers"] = persistent.size();
       for (const auto &c : cases) {
         Json row = {{"name", c.name}};
+        if (selected_states) {
+          row["state_steps"] = c.state_steps;
+          row["state_prefix"] = compact;
+        }
         std::ofstream logits, states;
         if (qwen3 || c.greedy)
           logits = output_file(output / (c.name + ".f32"), true);
@@ -151,8 +190,7 @@ int main(int argc, char **argv) {
           row["stop"] =
               std::find(c.eos.begin(), c.eos.end(), ids.back()) != c.eos.end() ? "eos" : "limit";
           if (!qwen3)
-            for (const auto &tensor : runtime->state())
-              write_tensor(states, tensor);
+            write_state(states, *runtime, compact, 0);
         } else {
           runtime->reset(c.fill);
           for (size_t i = 0; i < spec.state.size(); ++i) {
@@ -160,7 +198,8 @@ int main(int argc, char **argv) {
             require(runtime->state()[i].eq(fill).all().template item<bool>(),
                     "State reset left stale data");
           }
-          for (const auto &tokens : c.steps) {
+          for (size_t step = 0; step < c.steps.size(); ++step) {
+            const auto &tokens = c.steps[step];
             const auto inputs = runtime->state();
             const auto before = snapshot(*runtime);
             const int64_t start = runtime->position(), end = start + tokens.size();
@@ -189,17 +228,24 @@ int main(int argc, char **argv) {
                 require(at::equal(inputs[i], before[i]), "Functional input state mutated");
               }
               require(at::isfinite(after).all().template item<bool>(), "Non-finite state");
-              if (!qwen3)
+              if (!qwen3 && !selected_states)
                 write_tensor(states, after);
             }
             check_persistent();
+            if (selected_states && std::find(c.state_steps.begin(), c.state_steps.end(), step) !=
+                                       c.state_steps.end()) {
+              auto checkpoint =
+                  output_file(output / (c.name + "." + std::to_string(step) + ".states"), true);
+              write_state(checkpoint, *runtime, compact, c.fill);
+              finish(checkpoint, "Failed to write state checkpoint");
+            }
           }
           row["rows"] = c.steps.size();
           row["steps"] = c.steps.size();
           row["write_region_checks"] = row["reset_check"] = true;
           row["kv_inputs_updated_in_place"] = row["non_kv_inputs_unchanged"] =
               row["kv_write_regions_preserved"] = true;
-          if (qwen3 && c.dump_cache) {
+          if (qwen3 && c.dump_cache && !selected_states) {
             auto cache = output_file(output / (c.name + ".kv.bf16"), true);
             for (const auto &tensor : runtime->state())
               write_tensor(cache, tensor);

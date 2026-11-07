@@ -11,8 +11,10 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from compiler.common.attention import cache_extent, load_attention_ops
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
-from compiler.qwen35.config import CACHE_LENGTH
 from compiler.qwen35.model import TextCache, configure_text
+
+
+TEST_CAPACITY = 16384
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
@@ -47,7 +49,15 @@ class GatedPrefixFlash:
         self.assertTrue(torch.backends.cuda.mem_efficient_sdp_enabled())
         self.assertEqual(self.config.rope_parameters["partial_rotary_factor"], 0.25)
         self.assertEqual(self.rotary.inv_freq.dtype, torch.float32)
-        for tokens, length in ((1, 1), (1, 129), (2, 3), (16, 129), (2, 1024)):
+        for tokens, length in (
+            (1, 1),
+            (1, 129),
+            (2, 3),
+            (16, 129),
+            (2, 1024),
+            (2, 8192),
+            (2, TEST_CAPACITY),
+        ):
             with self.subTest(tokens=tokens, length=length):
                 hidden = torch.randn(
                     1, tokens, self.hidden_size, device="cuda", dtype=torch.bfloat16
@@ -57,7 +67,7 @@ class GatedPrefixFlash:
                 self.assertEqual(rotary[0].shape, (1, tokens, 64))
                 initial = [
                     torch.randn(
-                        1, self.kv_heads, CACHE_LENGTH, 256, device="cuda", dtype=torch.bfloat16
+                        1, self.kv_heads, TEST_CAPACITY, 256, device="cuda", dtype=torch.bfloat16
                     )
                     for _ in range(2)
                 ]
@@ -67,7 +77,7 @@ class GatedPrefixFlash:
                     for state in states
                 ]
                 pointers = [[tensor.data_ptr() for tensor in state] for state in states]
-                future = torch.arange(CACHE_LENGTH, device="cuda")[None, :] > positions[:, None]
+                future = torch.arange(TEST_CAPACITY, device="cuda")[None, :] > positions[:, None]
                 mask = torch.zeros_like(future, dtype=hidden.dtype).masked_fill(
                     future, torch.finfo(hidden.dtype).min
                 )[None, None]
@@ -154,7 +164,7 @@ class PrefixFlashGeometry(unittest.TestCase):
     def inputs(heads, kv_heads, dim, tokens=16, length=129):
         q = torch.randn(1, heads, tokens, dim, device="cuda", dtype=torch.bfloat16)
         k, v = (
-            torch.randn(1, kv_heads, CACHE_LENGTH, dim, device="cuda", dtype=torch.bfloat16)
+            torch.randn(1, kv_heads, TEST_CAPACITY, dim, device="cuda", dtype=torch.bfloat16)
             for _ in range(2)
         )
         return q, k, v, cache_extent(length), max(dim, 1) ** -0.5

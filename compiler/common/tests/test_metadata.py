@@ -21,9 +21,9 @@ from compiler.common.metadata import (
 )
 
 
-def metadata_pair(model_type="qwen3"):
+def metadata_pair(model_type="qwen3", *, cache_length=1024):
     if model_type == "qwen3":
-        shape = [1, 8, 1024, 128]
+        shape = [1, 8, cache_length, 128]
         states = [
             state_spec(i, kind, shape, "bfloat16", "inplace")
             for i in range(28)
@@ -36,7 +36,7 @@ def metadata_pair(model_type="qwen3"):
             state_spec(0, "recurrent", [1, 16, 128, 128], "float32", "replace"),
         ]
         states += [
-            state_spec(1, kind, [1, 2, 1024, 256], "bfloat16", "inplace")
+            state_spec(1, kind, [1, 2, cache_length, 256], "bfloat16", "inplace")
             for kind in ("key", "value")
         ]
         specific = dict(delta_backend="triton_op")
@@ -50,7 +50,7 @@ def metadata_pair(model_type="qwen3"):
             torch_version="2.13.0+cu126",
             cxx11_abi=True,
             cuda_compute_capability=[8, 9],
-            cache_length=1024,
+            cache_length=cache_length,
             vocab_size=151936,
             eos_token_ids=[151645],
             state=states,
@@ -87,8 +87,58 @@ class PackageMetadata(unittest.TestCase):
                 self.assertEqual(pair["decode"]["eos_token_ids"], [151645])
                 self.assertEqual(pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSION)
 
+    def test_capacity_is_separate_from_compiled_call_bounds_and_prompt_policy(self):
+        for model_type in ("qwen3", "qwen35"):
+            for capacity in (512, 1024, 16384):
+                with self.subTest(model=model_type, capacity=capacity):
+                    pair = metadata_pair(model_type, cache_length=capacity)
+                    validate_metadata_pair(pair["prefill"], pair["decode"])
+                    self.assertEqual(pair["prefill"]["token_range"], [2, 512])
+                    self.assertEqual(pair["decode"]["token_range"], [1, 1])
+                    self.assertEqual(pair["decode"]["cache_length"], capacity)
+                    self.assertNotIn("max_prompt_length", pair["decode"])
+
+    def test_capacity_is_a_required_integer_contract(self):
+        for invalid in (0, -1, 511, True, 1024.0, "1024", 2**63):
+            with self.subTest(value=invalid):
+                metadata = metadata_pair()["decode"]
+                metadata["cache_length"] = invalid
+                with self.assertRaisesRegex(
+                    ValueError, "Unsupported package metadata: cache_length"
+                ):
+                    validate_metadata(metadata)
+        metadata = metadata_pair()["decode"]
+        metadata["cache_length"] = 2**63 - 1
+        with self.assertRaisesRegex(ValueError, "Unsupported package metadata: cache_length"):
+            validate_metadata(metadata)
+        metadata = metadata_pair()["decode"]
+        metadata["max_prompt_length"] = 8192
+        with self.assertRaisesRegex(ValueError, "Unsupported package metadata: max_prompt_length"):
+            validate_metadata(metadata)
+        metadata = metadata_pair()["decode"]
+        metadata["cache_length"] = 16384
+        with self.assertRaisesRegex(ValueError, "Unsupported package metadata: state"):
+            validate_metadata(metadata)
+
+    def test_larger_capacity_does_not_advertise_a_larger_compiled_graph(self):
+        pair = metadata_pair(cache_length=16384)
+        pair["prefill"]["token_range"] = [2, 8192]
+        with self.assertRaisesRegex(ValueError, "Unsupported package metadata: token_range"):
+            validate_metadata_pair(pair["prefill"], pair["decode"])
+
     def test_schema_versions_are_required_and_do_not_alias_weight_format(self):
-        for version in (None, 0, 1, 2, SCHEMA_VERSION + 1, True, 3.0, "3"):
+        for version in (
+            None,
+            0,
+            1,
+            2,
+            3,
+            4,
+            SCHEMA_VERSION + 1,
+            True,
+            float(SCHEMA_VERSION),
+            str(SCHEMA_VERSION),
+        ):
             with self.subTest(version=version):
                 pair = metadata_pair()
                 if version is None:
@@ -118,6 +168,7 @@ class PackageMetadata(unittest.TestCase):
             ("model_type", "qwen35"),
             ("model_specific", {"delta_backend": "changed"}),
             ("checkpoint", {}),
+            ("cache_length", 16384),
         ):
             with self.subTest(field=field):
                 pair = metadata_pair()
@@ -156,13 +207,21 @@ class PackageMetadata(unittest.TestCase):
             "custom_attention",
             "cache_input",
             "kv_extent",
+            "max_prompt_length",
         ):
             with self.subTest(alias=field):
                 metadata = metadata_pair()["decode"]
                 metadata[field] = "legacy"
                 with self.assertRaisesRegex(ValueError, f"Unsupported package metadata: {field}"):
                     validate_metadata(metadata)
-        for field in ("package_bytes", "state", "model_specific", "checkpoint", "inductor_configs"):
+        for field in (
+            "package_bytes",
+            "state",
+            "model_specific",
+            "checkpoint",
+            "inductor_configs",
+            "cache_length",
+        ):
             with self.subTest(missing=field):
                 metadata = metadata_pair()["decode"]
                 metadata.pop(field)

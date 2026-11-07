@@ -9,6 +9,8 @@ int main(int argc, char **argv) {
     require(argc == 4, "Usage: xinfer_benchmark PACKAGE_DIR WORKLOAD_JSON OUTPUT_JSON");
     const auto workload = read_json(argv[2]);
     require(!fs::exists(argv[3]), "Output already exists");
+    require(!workload.contains("max_prompt_length"),
+            "Benchmark workload no longer accepts max_prompt_length");
     return with_model(argv[1], [&](const auto &spec, auto make_runtime) {
       const int warmup = workload.at("warmup"), repeats = workload.at("repeats");
       require(warmup > 0 && repeats > 0 && !workload.at("cases").empty(),

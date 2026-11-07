@@ -12,7 +12,10 @@ from transformers.models.qwen3.modeling_qwen3 import (
 from compiler.common.attention import cache_extent, load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, PrefixCache
-from compiler.qwen3.model import CACHE_LENGTH, TensorCache
+from compiler.qwen3.model import TensorCache
+
+
+TEST_CAPACITY = 16384
 
 
 class AttentionProbe(torch.nn.Module):
@@ -31,7 +34,7 @@ class AttentionProbe(torch.nn.Module):
             cache = PrefixCache(kv, cache_position, kv_extent)
         else:
             cache = TensorCache(kv, cache_position)
-            future = torch.arange(CACHE_LENGTH, device=hidden.device).unsqueeze(
+            future = torch.arange(kv[0].shape[2], device=hidden.device).unsqueeze(
                 0
             ) > cache_position.unsqueeze(1)
             mask = torch.zeros_like(future, dtype=hidden.dtype)
@@ -77,7 +80,7 @@ class PrefixFlashAdapter(unittest.TestCase):
             torch.randn(1, tokens, self.config.hidden_size, device="cuda", dtype=torch.bfloat16),
             torch.arange(length - tokens, length, device="cuda"),
             tuple(
-                torch.randn(1, 8, CACHE_LENGTH, 128, device="cuda", dtype=torch.bfloat16)
+                torch.randn(1, 8, TEST_CAPACITY, 128, device="cuda", dtype=torch.bfloat16)
                 for _ in range(2)
             ),
             cache_extent(length),
@@ -88,7 +91,7 @@ class PrefixFlashAdapter(unittest.TestCase):
         for kind in ("decode", "prefill"):
             example = self.inputs(1 if kind == "decode" else 16, 32)
             tokens = torch.export.Dim("tokens", min=2, max=512)
-            extent = torch.export.Dim("extent", min=2, max=CACHE_LENGTH + 1)
+            extent = torch.export.Dim("extent", min=2, max=TEST_CAPACITY + 1)
             shapes = (
                 {} if kind == "decode" else {1: tokens},
                 {} if kind == "decode" else {0: tokens},
@@ -112,7 +115,7 @@ class PrefixFlashAdapter(unittest.TestCase):
             self.assertTrue(site.args[0].meta["val"].is_contiguous())
             exported_adapter = exported.module()
             cases = (
-                ((1, 1), (1, 2), (1, CACHE_LENGTH))
+                ((1, 1), (1, 2), (1, TEST_CAPACITY))
                 if kind == "decode"
                 else (
                     (2, 2),
@@ -120,7 +123,7 @@ class PrefixFlashAdapter(unittest.TestCase):
                     (16, 32),
                     (510, 1022),
                     (512, 512),
-                    (512, CACHE_LENGTH),
+                    (512, TEST_CAPACITY),
                 )
             )
             for count, length in cases:
@@ -165,7 +168,7 @@ class PrefixFlashAdapter(unittest.TestCase):
         )
         try:
             for name, changes in (
-                ("mask", {"attention_mask": torch.zeros(1, 1, 1, CACHE_LENGTH, device="cuda")}),
+                ("mask", {"attention_mask": torch.zeros(1, 1, 1, TEST_CAPACITY, device="cuda")}),
                 ("cache", {"past_key_value": TensorCache(kv, positions)}),
                 ("positions", {"cache_position": positions.clone()}),
                 ("attention_weights", {"output_attentions": True}),

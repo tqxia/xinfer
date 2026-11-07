@@ -103,3 +103,58 @@ cases per model, covering fresh decode, prefill/decode transitions, forced or
 mixed token sequences and greedy generation. All output hashes and native
 storage/call reports match. These focused checks are retained under
 `artifacts/l20/decode-fastpath-20261103/`.
+
+## Model-derived capacity and request budgets — 2026-11-07
+
+The optional prompt-admission policy recorded in the model experiment reports
+was subsequently removed. Neither runtime nor tooling accepts
+`--max-prompt-length`. The generation CLI uses `--max-output-tokens` (default
+64); the former `--max-new-tokens` spelling is rejected. HF library calls retain
+that library's `max_new_tokens` keyword.
+
+Both exporters resolve an omitted `--max-context-length` from the selected text
+config's `max_position_embeddings`: 40,960 for pinned Qwen3-0.6B and 262,144 for
+both pinned Qwen3.5 checkpoints. Explicit capacities remain supported within
+512..the declared ceiling. Metadata retains the selected `cache_length`; it
+contains no deployment prompt cap. Prompt length plus the complete requested
+output budget must fit that capacity. Decode `[1,1]` and prefill `[2,512]` remain
+independent per-call bounds.
+
+On L20 with Torch 2.13/CUDA 12.6, 173 selected Python CPU tests and both native
+builds' generation/state contracts pass. Fresh Qwen3-0.6B and Qwen3.5-0.8B paired
+exports omit the capacity override and successfully compile at their respective
+model defaults. Both native runners match Python AOTI logits bitwise for
+129-, 513- and 8,193-token prompts with a two-token output budget.
+
+Separate C++ probes fill every context slot in 80 and 512 calls respectively,
+check finite logits and consumed positions, and reject a further step while
+preserving position and state-storage addresses. These are full-capacity
+execution/memory checks, not full-context numerical validation or performance
+measurements. No new default-capacity 4B export or GB10 run was performed.
+
+The focused numerical chain retains seven matched-input cases, 22 teacher
+steps, reset/poisoned-future checks and independent FP32 HF controls per model;
+its longest prompt is 513 tokens. Both C++/Python AOTI comparisons are bitwise.
+Qwen3 has three required HF logit comparison failures on the final decode of the
+98-token case: DynamicCache/HF StaticCache and adapted eager/HF are 5.63793%
+relative L2, and AOTI/HF is 6.21265%, beyond the unchanged 5% limit. Qwen3.5
+retains 1,004 required failures: 980 convolution-state, 22 recurrent-state, one
+top-token and one greedy-token comparison. It has no required logit-threshold
+failure; worst AOTI/HF relative L2 is 1.62410% and peak-relative error 1.48148%.
+The same Qwen3 focused cases run against the retained 2,048-slot package produce
+identical three failure records and error metrics. This fixture failure is not
+introduced by selecting the model-derived default capacity. These numerical
+failures remain open and are separate from native parity.
+Both maintained native CLI validators also pass on retained 2,048-slot bundles,
+including both retired-option rejections and exact context/output-budget checks.
+A one-round Qwen3.5 benchmark smoke at prompt lengths 128/513 and two forced
+decode tokens completes; it establishes harness functionality, not performance.
+
+The focused driver initially selected a poisoned fixture for the HF DynamicCache
+control, which requires an empty initial cache. That one-off driver was corrected
+to retain the poison case on static HF, eager, AOTI and FP32 paths while excluding
+it from DynamicCache, as in the maintained validator. The failed attempt remains
+in the evidence; production validation policy and tolerances were unchanged.
+
+Reports, package identities and the scratch probe/driver are retained under
+`artifacts/context-interface-20261107/` and its associated evidence archive.

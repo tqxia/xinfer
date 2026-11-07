@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from compiler.common.artifacts import require
 from compiler.common.metadata import state_name
+from tools.validation.common.context import state_shape
 from tools.validation.common.validation import (
     DEFAULT_RELATIVE_LIMIT,
     tensor_metrics,
@@ -165,8 +166,22 @@ def compare_traces(
     for case, step in sorted(states):
         left, right = actual.states[case, step], expected.states[case, step]
         require(len(left) == len(right) == len(specs), "Incorrect state tensor count")
+        if actual.compact_states or expected.compact_states:
+            require(
+                actual.compact_states == expected.compact_states, "State capture policies differ"
+            )
+            require(
+                actual.positions[case, step] == expected.positions[case, step],
+                "State positions differ",
+            )
+        position = actual.positions.get((case, step), 0)
         for a, b, spec in zip(left, right, specs):
-            require(list(a.shape) == list(b.shape) == spec["shape"], "State tensor shapes differ")
+            require(
+                list(a.shape)
+                == list(b.shape)
+                == state_shape(spec, position, actual.compact_states),
+                "State tensor shapes differ",
+            )
             compare_tensor(a, b, case, step, state_name(spec), state_spec=spec)
 
     for name in sorted(generations):

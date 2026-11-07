@@ -17,11 +17,15 @@ class PrefixFlash(unittest.TestCase):
         load_attention_ops(model="qwen3")
         cls.op = torch.ops.xinfer.flash_attention.default
 
-    def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1):
+    def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1, capacity=1024):
         options = dict(device="cuda", dtype=torch.bfloat16)
         q = torch.randn(1, heads, tokens, dim * feature_stride, **options)[..., ::feature_stride]
-        k = torch.randn(1, kv_heads, 1024, dim * feature_stride, **options)[..., ::feature_stride]
-        v = torch.randn(1, kv_heads, 1024, dim * feature_stride, **options)[..., ::feature_stride]
+        k = torch.randn(1, kv_heads, capacity, dim * feature_stride, **options)[
+            ..., ::feature_stride
+        ]
+        v = torch.randn(1, kv_heads, capacity, dim * feature_stride, **options)[
+            ..., ::feature_stride
+        ]
         return q, k, v
 
     @torch.inference_mode()
@@ -75,6 +79,41 @@ class PrefixFlash(unittest.TestCase):
                     self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, dim**-0.5)))
                     checks = torch.library.opcheck(self.op, (q, k, v, extent, dim**-0.5))
                     self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
+
+    @torch.inference_mode()
+    def test_long_prefix_and_tensor_derived_capacity(self):
+        # Keep Q short: this checks appended causality at 8K/16K without an
+        # N-by-N reference allocation. Existing cases cover 1K bundles.
+        for heads, kv_heads, dim in ((16, 8, 128), (16, 4, 256)):
+            for length in (8192, 8193, 16384):
+                with self.subTest(heads=heads, length=length):
+                    q, k, v = self.inputs(heads, kv_heads, dim, 2, capacity=16384)
+                    extent = cache_extent(length)
+                    actual = self.op(q, k, v, extent, dim**-0.5)
+                    positions = torch.arange(length - q.shape[2], length, device="cuda")
+                    mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
+                    with sdpa_kernel(SDPBackend.MATH):
+                        expected = F.scaled_dot_product_attention(
+                            q.float(),
+                            k[:, :, :length].float(),
+                            v[:, :, :length].float(),
+                            attn_mask=mask,
+                            enable_gqa=True,
+                            scale=dim**-0.5,
+                        )
+                    error = row_errors(actual.float().flatten(1), expected.flatten(1))
+                    self.assertLess(error["relative_l2"], 0.01)
+                    self.assertLessEqual(error["peak_relative"], 0.05)
+                    k[:, :, length:].fill_(100)
+                    v[:, :, length:].fill_(-100)
+                    self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, dim**-0.5)))
+                    torch.library.opcheck(
+                        self.op,
+                        (q, k, v, extent, dim**-0.5),
+                        test_utils=("test_schema", "test_faketensor"),
+                    )
+                    with self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"):
+                        self.op(q, k, v, cache_extent(16385), dim**-0.5)
 
     @torch.inference_mode()
     def test_appended_chunks_use_lower_right_causality(self):

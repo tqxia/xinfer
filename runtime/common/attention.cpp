@@ -20,9 +20,9 @@ at::Tensor flash_attention(const at::Tensor &q, const at::Tensor &k, const at::T
               "xinfer attention requires BF16");
   TORCH_CHECK(q.dim() == 4 && q.size(0) == 1 && q.size(2) >= 1 && q.size(2) <= 512,
               "Unsupported Q shape");
-  TORCH_CHECK(k.dim() == 4 && v.dim() == 4 && k.size(0) == 1 && k.size(2) == 1024 &&
+  TORCH_CHECK(k.dim() == 4 && v.dim() == 4 && k.size(0) == 1 && k.size(2) > 0 &&
                   k.size(3) == q.size(3) && v.sizes() == k.sizes(),
-              "Expected matching full-capacity K/V inputs [1,kv_heads,1024,head_dim]");
+              "Expected matching full-capacity K/V inputs [1,kv_heads,capacity,head_dim]");
   TORCH_CHECK(q.size(1) > 0 && k.size(1) > 0 && q.size(1) % k.size(1) == 0,
               "Query heads must be a positive multiple of KV heads");
   TORCH_CHECK(q.size(3) >= 8 && q.size(3) <= 256 && q.size(3) % 8 == 0,

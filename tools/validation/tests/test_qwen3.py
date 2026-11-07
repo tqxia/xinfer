@@ -73,7 +73,7 @@ class LiveHFReferences(unittest.TestCase):
                 logits[0, token] = 10
                 return logits
 
-        self.runtime = CPURuntime(self.original, [])
+        self.runtime = CPURuntime(self.original, [], capacity=self.suite.capacity)
         self.cache = self.enterContext(
             patch.object(model, "StaticCache", return_value=sentinel.fresh_cache)
         )
@@ -119,6 +119,18 @@ class LiveHFReferences(unittest.TestCase):
         boundary = next(case for case in cases if case["name"] == "prefix_boundaries")
         self.assertTrue(boundary["check_overflow"])
         self.assertEqual(sum(map(len, boundary["steps"])), 1024)
+
+    def test_hf_capacity_uses_explicit_or_state_bounds_before_model_default(self):
+        specs = [dict(shape=[1, 8, 1024, 128], update="inplace")]
+        with patch.object(
+            model, "model_context_limit", side_effect=AssertionError("Unexpected model fallback")
+        ) as ceiling:
+            self.assertEqual(model.HFRuntime(self.original, specs, capacity=2048).capacity, 2048)
+            self.assertEqual(model.HFRuntime(self.original, specs).capacity, 1024)
+            ceiling.assert_not_called()
+        with patch.object(model, "model_context_limit", return_value=32768) as ceiling:
+            self.assertEqual(model.HFRuntime(self.original, []).capacity, 32768)
+            ceiling.assert_called_once_with(self.original.config)
 
     def test_hf_generate_uses_fresh_greedy_config_and_cache(self):
         prompt = next(iter(self.prompt_ids.values()))

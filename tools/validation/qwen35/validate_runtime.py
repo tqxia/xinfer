@@ -16,28 +16,32 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sh
 from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
 from compiler.common.attention import load_attention_ops
-from tools.common import native_attention_library, run
+from tools.common import native_attention_library, prompt_chunks, run
 from tools.prepare.common import encode_prompt
 from compiler.qwen35.model import configure_text
 from tools.validation.qwen35.common import fixtures
 from tools.validation.common.prompts import chat_prompts
-from tools.validation.common.runner import load_aoti_runtime
-from tools.validation.common.validation import cpu_copy, compare_file
+from tools.validation.common.runner import greedy, load_aoti_runtime, run_stage
+from tools.validation.common.native import run_native
+from tools.validation.common.chain import Policy, compare_traces, new_report
+from tools.validation.common.context import capture_long_state, long_context_cases
+from tools.validation.common.validation import compare_file
 
 
 def reject_invalid(args, env, metadata):
     metadata = copy.deepcopy(metadata)
     directory = args.output / "rejections"
     directory.mkdir()
+    capacity = metadata["decode"]["cache_length"]
     cases = [
-        ("empty", "", "1", "Expected 1..512"),
-        ("oversized", "42 " * 513, "1", "Expected 1..512"),
+        ("empty", "", "1", f"Expected 1..{capacity}"),
+        ("oversized", "42 " * (capacity + 1), "1", f"Expected 1..{capacity}"),
         ("negative_id", "-1", "1", "Token ID out of range"),
         ("large_id", str(metadata["decode"]["vocab_size"]), "1", "Token ID out of range"),
         ("not_integer", "42junk", "1", "Invalid integer"),
         ("zero_budget", "42", "0", "Generation budget"),
         ("negative_budget", "42", "-1", "Generation budget"),
-        ("overflow_budget", "42", "1024", "Generation budget"),
+        ("overflow_budget", "42", str(capacity), "Generation budget"),
         ("malformed_budget", "42", "2junk", "Invalid integer"),
     ]
     passed = []
@@ -45,11 +49,26 @@ def reject_invalid(args, env, metadata):
         prompt, output = directory / f"{name}.ids", directory / f"{name}.out"
         prompt.write_text(text)
         run(
-            [args.cli, args.packages, prompt, output, "--max-new-tokens", limit],
+            [args.cli, args.packages, prompt, output, "--max-output-tokens", limit],
             env,
             directory / f"{name}.log",
             success=False,
             error=error,
+        )
+        assert not output.exists()
+        passed.append(name)
+    for name, flag in (
+        ("retired_prompt_limit", "--max-prompt-length"),
+        ("retired_output_limit", "--max-new-tokens"),
+    ):
+        prompt, output = directory / f"{name}.ids", directory / f"{name}.out"
+        prompt.write_text("42\n")
+        run(
+            [args.cli, args.packages, prompt, output, flag, "1"],
+            env,
+            directory / f"{name}.log",
+            success=False,
+            error="Unknown option",
         )
         assert not output.exists()
         passed.append(name)
@@ -365,19 +384,31 @@ def main():
         )
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
-    cases = fixtures(tokenizer)
+    capacity = metadata["decode"]["cache_length"]
+    cases = [case for case in fixtures(tokenizer) if sum(map(len, case["steps"])) <= capacity]
     seed = cases[1]["steps"][0]
     for length in (2, 63, 65, 96, 97, 98, 129, 511):
         prompt = (seed * (length // len(seed) + 1))[:length]
-        cases.append(dict(name=f"dispatch_{length}", steps=[prompt, [42]]))
-    stream = seed * 16
+        if length + 1 <= capacity:
+            cases.append(dict(name=f"dispatch_{length}", steps=[prompt, [42]]))
+    capacity = metadata["decode"]["cache_length"]
+    maximum = metadata["prefill"]["token_range"][1]
+    stream = (seed * (capacity // len(seed) + 1))[:capacity]
     cases.append(
         dict(
             name="context_end",
-            steps=[stream[:512], stream[512:960], stream[960:1023], stream[1023:]],
+            steps=(
+                [stream[:512], stream[512:960], stream[960:1023], stream[1023:]]
+                if capacity == 1024
+                else prompt_chunks(stream[:-1], maximum) + [stream[-1:]]
+            ),
             check_overflow=True,
+            long_context=capacity > 1024,
         )
     )
+    cases.extend(long_context_cases(seed, capacity, maximum))
+    if capacity >= 8196:
+        cases.append(dict(name="long_prompt_8193_generate", prompt=stream[:8193], limit=3))
     for prompt in chat_prompts("qwen35"):
         cases.append(
             dict(
@@ -390,41 +421,45 @@ def main():
     capital = next(c for c in cases if c["name"] == "capital")
     cases += [dict(capital, name="capital_repeat"), dict(capital, name="limit_one", limit=1)]
     eos = metadata["decode"]["eos_token_ids"]
+    for case in list(cases):
+        if case["name"] in ("long_prompt_513", "long_prompt_8191", "long_prompt_8192"):
+            prompt = [token for chunk in case["steps"][:-2] for token in chunk]
+            cases.append(dict(name=case["name"] + "_generate", prompt=prompt, limit=3))
+        if case["name"] == "capital_repeat":
+            case["same_as"] = "capital"
+        if case["name"] == "repeat":
+            case["same_as"] = "prefill_decode"
+        if case["name"] == "mixed_dispatch_repeat":
+            case["same_as"] = "mixed_dispatch"
+    teacher = [case for case in cases if "steps" in case]
+    chats = [case for case in cases if "prompt" in case]
+
+    def capture(case, step):
+        return capture_long_state(case, step) if case.get("long_context") else True
+
+    keys = {
+        (case["name"], step)
+        for case in teacher
+        for step in range(len(case["steps"]))
+        if capture(case, step)
+    }
     runtime = load_aoti_runtime(
         args.packages, model_type="qwen35", specs=metadata["decode"]["state"]
     )
-    expected = {}
     print("Python AOTI reference", flush=True)
-    for case in cases:
-        runtime.reset()
-        rows, ids = [], []
-        if "prompt" in case:
-            logits = runtime.step(case["prompt"])
-            for i in range(case["limit"]):
-                rows.append(logits.cpu().float())
-                token = logits.argmax(-1).item()
-                ids.append(token)
-                if token in case.get("eos", eos) or i + 1 == case["limit"]:
-                    break
-                logits = runtime.step([token])
-            assert runtime.position == len(case["prompt"]) + len(ids) - 1
-            expected[case["name"]] = dict(
-                ids=ids, rows=rows, state=cpu_copy(runtime.state), position=runtime.position
-            )
-            if case["name"] == "capital":
-                cases.append(dict(capital, name="forced_eos", eos=[ids[0]]))
-        else:
-            for tokens in case["steps"]:
-                rows.append(cpu_copy((runtime.step(tokens), *runtime.state)))
-            assert runtime.position == sum(map(len, case["steps"]))
-            expected[case["name"]] = dict(rows=rows, position=runtime.position)
-        print(case["name"], "position", runtime.position, flush=True)
-    runtime.close()
-    del runtime, logits
-    gc.collect()
-    torch.cuda.empty_cache()
-    manifest = args.output / "cases.json"
-    manifest.write_text(json.dumps(dict(cases=cases), indent=2, ensure_ascii=False) + "\n")
+    try:
+        expected = run_stage(runtime, teacher, chats, metadata["decode"]["state"], capture, eos)
+        capital_result = expected.greedy["capital"]
+        forced = dict(capital, name="forced_eos", eos=[capital_result["ids"][0]])
+        chats.append(forced)
+        expected.greedy["forced_eos"] = greedy(
+            runtime, forced["prompt"], forced["limit"], forced["eos"]
+        )
+    finally:
+        runtime.close()
+        del runtime
+        gc.collect()
+        torch.cuda.empty_cache()
     env = {
         k: v
         for k, v in os.environ.items()
@@ -432,78 +467,41 @@ def main():
     }
     env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
     print("Fresh native process", flush=True)
-    run(
-        [
-            args.binary.resolve(),
-            args.packages.resolve(),
-            manifest.resolve(),
-            (args.output / "native").resolve(),
-        ],
-        env,
-        args.output / "native.log",
+    actual, execution = run_native(
+        args.binary, args.packages, args.output, teacher, chats, metadata, state_keys=keys
     )
-    native = json.loads((args.output / "native/native.json").read_text())
-    assert (
-        native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"]
+    report = new_report("qwen35", metadata)
+    compare_traces(
+        report,
+        "cpp_aoti",
+        "python_aoti",
+        actual,
+        expected,
+        metadata["decode"]["state"],
+        Policy(),
+        exact=True,
+        state_keys=keys,
+        greedy_state_names={case["name"] for case in chats},
     )
-    assert len(native["cases"]) == len(cases)
-    report = dict(
+    # Forced-EOS must stop without feeding the generated token back.
+    forced_actual = actual.greedy["forced_eos"]
+    assert forced_actual["position"] == len(capital["prompt"])
+    report.update(
         comparison="C++ vs Python AOTI",
-        hf_numerical_acceptance="evaluated separately by model and end-to-end validators",
-        delta_backend=metadata["prefill"]["model_specific"]["delta_backend"],
-        runtime_abi_version=metadata["prefill"]["runtime_abi_version"],
-        linear_packing=metadata["prefill"]["model_specific"].get("linear_packing"),
-        shared_weights=metadata["decode"]["shared_weights"],
-        cases=[],
-        teacher_tensors=0,
-        greedy_logit_rows=0,
-        greedy_state_tensors=0,
-        checkpoint=metadata["decode"]["checkpoint"],
-        package_sha256={k: v["package_sha256"] for k, v in metadata.items()},
+        hf_numerical_acceptance="evaluated separately by tools.validation.validate",
+        cases=execution["cases"],
+        native_execution=execution,
+        teacher_tensors=len(expected.logits)
+        + sum(len(state) for state in expected.states.values()),
+        greedy_logit_rows=sum(len(value["rows"]) for value in expected.greedy.values()),
+        greedy_state_tensors=sum(len(value["state"]) for value in expected.greedy.values()),
         attention_library_sha256=sha256(attention_library),
         binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)},
+        state_snapshot_policy="complete functional state and populated KV prefix; future fill checked separately",
     )
-    for case, actual in zip(cases, native["cases"]):
-        name = case["name"]
-        ref = expected[name]
-        assert actual["name"] == name and actual["position"] == ref["position"]
-        lengths = (
-            [len(case["prompt"])] + [1] * (len(ref["ids"]) - 1)
-            if "prompt" in case
-            else list(map(len, case["steps"]))
-        )
-        assert actual["prefill_calls"] == sum(n > 1 for n in lengths)
-        assert actual["decode_calls"] == lengths.count(1)
-        if "prompt" in case:
-            assert actual["ids"] == ref["ids"]
-            compare_file(args.output / "native" / f"{name}.f32", ref["rows"])
-            compare_file(args.output / "native" / f"{name}.states", ref["state"])
-            stop = "eos" if ref["ids"][-1] in case.get("eos", eos) else "limit"
-            assert actual["stop"] == stop
-            report["greedy_logit_rows"] += len(ref["rows"])
-            report["greedy_state_tensors"] += len(ref["state"])
-            actual["text"] = tokenizer.decode(ref["ids"], skip_special_tokens=True)
-        else:
-            compare_file(
-                args.output / "native" / f"{name}.states", (t for row in ref["rows"] for t in row)
-            )
-            assert actual["kv_inputs_updated_in_place"] and actual["non_kv_inputs_unchanged"]
-            assert actual["kv_write_regions_preserved"]
-            report["teacher_tensors"] += sum(len(row) for row in ref["rows"])
-            if case.get("check_overflow"):
-                assert actual["overflow_rejected"]
-        report["cases"].append(dict(actual, bitwise_equal=True))
-    for first, repeat, suffix in (
-        ("prefill_decode", "repeat", "states"),
-        ("capital", "capital_repeat", "f32"),
-        ("capital", "capital_repeat", "states"),
-        ("mixed_dispatch", "mixed_dispatch_repeat", "states"),
-    ):
-        assert sha256(args.output / "native" / f"{first}.{suffix}") == sha256(
-            args.output / "native" / f"{repeat}.{suffix}"
-        )
+    assert not report["failures"], report["failures"]
     prompt_path, ids_path, trace_path = [
-        args.output / n for n in ("prompt.ids", "generated.ids", "cli.f32")
+        args.output / name for name in ("prompt.ids", "generated.ids", "cli.f32")
     ]
     prompt_path.write_text(" ".join(map(str, capital["prompt"])) + "\n")
     run(
@@ -512,7 +510,7 @@ def main():
             args.packages.resolve(),
             prompt_path.resolve(),
             ids_path.resolve(),
-            "--max-new-tokens",
+            "--max-output-tokens",
             capital["limit"],
             "--trace",
             trace_path.resolve(),
@@ -520,8 +518,8 @@ def main():
         env,
         args.output / "cli.log",
     )
-    assert [int(x) for x in ids_path.read_text().split()] == expected["capital"]["ids"]
-    compare_file(trace_path, expected["capital"]["rows"])
+    assert [int(value) for value in ids_path.read_text().split()] == capital_result["ids"]
+    compare_file(trace_path, capital_result["rows"])
     for binary in (args.binary, args.cli):
         linked = subprocess.check_output(["ldd", str(binary.resolve())], env=env, text=True)
         (args.output / f"{binary.name}.ldd").write_text(linked)
@@ -529,6 +527,8 @@ def main():
     print("Input/package rejection checks", flush=True)
     report["rejections"] = reject_invalid(args, env, metadata)
     report.update(
+        passed=True,
+        native_bitwise=True,
         native_runtime_passed=True,
         no_python_library=True,
         repeated_requests_bitwise=True,

@@ -1,11 +1,15 @@
 """CPU checks for validation-stage coverage, policies and request orchestration."""
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import Mock
 import unittest
 
 import torch
 
 from tools.validation.common.chain import Policy, compare_traces, new_report
-from tools.validation.common.runner import Trace, greedy, run_stage, teacher_trace
+from tools.validation.common.runner import Trace, capture_state, greedy, run_stage, teacher_trace
+from tools.validation.common.pipeline import _greedy_anchors
 
 
 CONV = dict(layer=0, kind="conv", shape=[1, 2, 4], dtype="float32", update="replace")
@@ -215,6 +219,25 @@ class CPURuntime:
         return torch.stack((total, total + 1, total - 1)).view(1, 3)
 
 
+class RequestRuntime:
+    """Record graph calls without model work, including state before rejection."""
+
+    def __init__(self):
+        self.capacity, self.max_prefill, self.vocab_size = 16384, 512, 3
+        self.position, self.state, self.calls, self.resets = 17, [], [], []
+
+    def reset(self, fill=0):
+        self.position = 0
+        self.resets.append(fill)
+
+    def step(self, tokens):
+        if not 1 <= len(tokens) <= self.max_prefill:
+            raise ValueError("Invalid compiled call")
+        self.calls.append(tuple(tokens))
+        self.position += len(tokens)
+        return torch.tensor([[0.0, 1.0, 0.0]], dtype=torch.bfloat16)
+
+
 class StageExecution(unittest.TestCase):
     specs = [KEY, CONV]
 
@@ -281,6 +304,73 @@ class StageExecution(unittest.TestCase):
         self.assertEqual(result["ids"], [1])
         self.assertEqual(runtime.calls, [(0, 1)])
         self.assertEqual(result["position"], 2)
+
+    def test_uncapped_requests_above_8k_accept_an_exact_context_budget(self):
+        runtime = RequestRuntime()
+        result = greedy(runtime, [0] * 8193, 8191, [1])
+        self.assertEqual(result["ids"], [1])
+        self.assertEqual(result["position"], 8193)
+        self.assertEqual(list(map(len, runtime.calls)), [512] * 16 + [1])
+
+    def test_requested_budget_rejects_before_mutation_without_clamping(self):
+        runtime = RequestRuntime()
+        with self.assertRaisesRegex(ValueError, "Generation budget exceeds context"):
+            greedy(runtime, [0] * 8193, 8192, [1])
+        self.assertEqual(runtime.position, 17)
+        self.assertEqual(runtime.resets, [])
+        self.assertEqual(runtime.calls, [])
+
+    def test_long_prompt_consumes_every_chunk_before_selecting_a_token(self):
+        runtime = CPURuntime(choices=[2, 2, 1])
+        runtime.max_prefill = 2
+        result = greedy(runtime, [0, 1, 0, 1, 0], 1, [2])
+        self.assertEqual(runtime.calls, [(0, 1), (0, 1), (0,)])
+        self.assertEqual(result["ids"], [1])
+        self.assertEqual(result["position"], 5)
+
+    def test_greedy_anchor_replays_long_prompt_with_matching_partitions(self):
+        runtime = CPURuntime(choices=[0, 0, 1, 2])
+        runtime.max_prefill = 2
+        suite = SimpleNamespace(reference=Mock(return_value=nullcontext(runtime)))
+        hf = Trace(greedy={"chat": dict(ids=[0, 0])})
+        compiled = Trace(
+            greedy={
+                "chat": dict(
+                    ids=[1, 2],
+                    rows=[torch.tensor([[0.0, 1.0, 0.0]]), torch.tensor([[0.0, 0.0, 1.0]])],
+                )
+            }
+        )
+        report = new_report("qwen35")
+        _greedy_anchors(
+            suite,
+            report,
+            hf,
+            compiled,
+            self.specs,
+            Policy(),
+            [dict(name="chat", prompt=[0, 1, 0, 1, 0])],
+        )
+        self.assertEqual(runtime.calls, [(0, 1), (0, 1), (0,), (1,)])
+        self.assertEqual(report["failures"], [])
+        self.assertEqual(len(report["comparisons"]), 2)
+
+    def test_compact_snapshot_checks_future_and_owns_valid_prefix(self):
+        runtime = CPURuntime()
+        runtime.reset()
+        runtime.capacity = 2048
+        runtime.position = 2
+        runtime.state = [torch.zeros(1, 1, 2048, 1), torch.ones(1, 2, 4)]
+        specs = [dict(KEY, shape=[1, 1, 2048, 1]), CONV]
+        runtime.state[0][:, :, :2] = 3
+        saved = capture_state(runtime, specs)
+        self.assertEqual(saved[0].shape, (1, 1, 2, 1))
+        self.assertEqual(saved[1].shape, (1, 2, 4))
+        runtime.state[0][:, :, :2] = 9
+        self.assertTrue(bool((saved[0] == 3).all()))
+        runtime.state[0][:, :, 3] = 1
+        with self.assertRaisesRegex(ValueError, "Future KV overwritten"):
+            capture_state(runtime, specs)
 
     def test_run_stage_keeps_teacher_and_greedy_requests_independent(self):
         runtime = CPURuntime(choices=[1, 2])

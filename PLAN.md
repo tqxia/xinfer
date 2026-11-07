@@ -12,10 +12,12 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
 - Load the original checkpoint read-only; preserve independent HF eager/FP32
   reference execution and offline tokenization/text decoding.
 - Install the existing Flash module adapter before export. Export bounded
-  dynamic prefill (2–512 tokens) and decode (one token) with the same fixed ABI.
-- Use batch-one BF16, caller-owned `[1,8,1024,128]` K/V tensors and an explicit
-  shape-only CPU extent input. Capacity is 1,024 tokens; one-token prompts use
-  decode at position zero.
+  dynamic prefill (2–512 tokens per call) and decode (one token) with the same ABI.
+- Use batch-one BF16, caller-owned `[1,8,C,128]` K/V tensors and an explicit
+  shape-only CPU extent input. Export chooses the context capacity with
+  `--max-context-length`, defaulting to the model config's declared context ceiling.
+  Requests share that capacity between prompt and output. Shared generation splits prompts into calls of at most
+  512 tokens; a single-token chunk uses decode, including at position zero.
 - Keep BF16 cast emulation, TF32 disabled and normal compiler fusion. Record
   runtime compatibility and numerical settings in package metadata; keep full
   build details and diagnostics in export logs.
@@ -87,19 +89,21 @@ It exports paired dynamic prefill (2–512 tokens) and single-token decode
 with packaged Triton DeltaNet kernels and shared native valid-prefix
 FlashAttention. Caller-owned KV buffers update in place; conv/recurrent inputs
 remain unchanged, and returned tensors become the next state. Both entries share
-one weight pool and use metadata schema version 3 with runtime ABI 1, the common
+one weight pool and use metadata schema version 5 with runtime ABI 1, the common
 runner and shared
 native generation, benchmark and validation executables.
 
-Native/Python AOTI parity is validated for 0.8B and the complete 4B model; HF
-numerical acceptance remains open. Keep the existing HF/FP32 comparisons and
+Ordinary L20 exports and C++ execution completed for the new long-context
+profile for 0.8B and the complete 4B model. Native/Python AOTI outputs matched
+bitwise, and full 16,384-slot inference-memory probes completed. HF numerical
+acceptance remains open. Keep the existing HF/FP32 comparisons and
 Q35-NUM-001/Q35-NUM-002 diagnostics.
 The [experiment record](docs/experiments/qwen35.md) preserves earlier block probes,
 fixed-shape packages and export failures as historical evidence. Those results
 do not establish full-model numerical acceptance.
 
-The first scaling milestone generalizes the kernel geometry while retaining
-the current 0.8B full-model profile:
+The completed geometry bring-up generalized the kernels while retaining the
+then-current 1,024-context full-model profile:
 
 - DeltaNet supports `Hk=16`, `Hv=16` or `32`, and `K=V=128`: 6,144 or 8,192
   convolution channels. Both short and chunked paths index gates and recurrent
@@ -137,12 +141,50 @@ completed ordinary export, full FP32 controls, native parity, generation and
 shared-weight memory checks without OOM. Its required HF/adapter/packing
 numerical gates still fail, so the full-model milestone is not yet accepted.
 
-The longer-input target is 8,192 prompt tokens with 16,384 total context capacity.
-Make export, metadata and runtime profile bounds consistent, add common prompt
-chunking, then compare larger per-call prefill bounds with the initial 512-token
-chunks. Validate peak memory and time to first token before choosing a larger
-default. Stream long-context state comparisons and retain selected checkpoints
-to bound validation memory and disk use.
+The current export defaults derive from the selected model's context ceiling
+(40,960 for Qwen3-0.6B; 262,144 for both Qwen3.5 checkpoints).
+`--max-context-length` selects another export capacity within that ceiling.
+Schema 5 records `cache_length` separately from compiled `token_range: [2,512]`.
+There is no separate prompt cap. The full prompt plus the request's
+`--max-output-tokens` budget must fit the compiled context.
+Runtime ABI 1 and the attention
+ABI remain unchanged. Generation and native benchmarks split the complete prompt
+into calls of at most 512 tokens; a final single token uses decode. Converted
+retained packages keep their original 1,024-slot capacity in separate bundle
+directories. Any earlier prompt-admission policy belongs to the calling application.
+
+The recorded 16,384-slot L20 profiles completed export, native execution and
+full inference-memory probes for Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B.
+Native/Python AOTI parity passed for all three. Qwen3 passed that suite's HF
+numerical gates; Qwen3.5 HF acceptance remains open. Fresh default-capacity
+exports and full-capacity native checks also completed for Qwen3-0.6B and
+Qwen3.5-0.8B with bitwise native parity. Their focused HF numerical checks retain
+failures, recorded in [the interface validation follow-up](docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07).
+These profiles still need GB10 re-export and validation.
+
+Keep regression coverage for 1/511/512/513/8191/8192-token prompts, a one-token
+remainder, nonzero offsets, reset/reuse, the selected capacity boundary and
+overflow/budget rejection. Run matched teacher-forced partitions through HF,
+adapted/packed eager, Python AOTI and C++ AOTI, retaining independent BF16/FP32
+controls, strict native parity and existing HF numerical limits. Stream state
+comparisons and retain selected checkpoints to bound CPU memory and disk use.
+
+Use separate idle-target benchmarks for complete-prompt prefill and time to
+first token. Memory probes record allocator peaks and synchronized device-memory
+samples through the complete context; sampled device peaks are not exact peaks
+of transient allocations. The ordinary HF benchmark still processes a whole
+prompt in one call; report that partition difference separately from the
+matched numerical validation. Compare larger per-call prefill profiles using
+this validated native execution baseline and separately collected measurements.
+Wider graphs and GDN workspaces need their own export/kernel checks before a
+larger per-call default is selected.
 
 Keep unsupported-shape checks and existing numerical limits. Preserve tested
 tuning specializations where they still fit the target configuration.
+
+## Environment follow-up
+
+Keep the Nsight library-path correction as a temporary running-container
+workaround; leave the Dockerfile unchanged for now. TODO: revisit the image using
+an NVIDIA official base, retaining the pinned model environments and validating
+AOTI export, C++ execution and profiling from clean shell environments.

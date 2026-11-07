@@ -7,7 +7,7 @@ from pathlib import Path
 
 TEXT_DIR = Path("work/qwen35/0.8b/text")
 ARTIFACT_DIR = Path("artifacts/qwen35/0.8b")
-CACHE_LENGTH = 1024
+MAX_PREFILL = 512
 
 
 def deltanet_state_shapes(config):

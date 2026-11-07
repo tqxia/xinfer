@@ -10,12 +10,15 @@ from transformers import DynamicCache, GenerationConfig, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, require
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import CACHE_LENGTH, load_model
+from compiler.qwen3.model import load_model
+from compiler.common.context import model_context_limit
 from compiler.qwen3.packages import validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
 from tools.prepare.common import encode_prompt, load_tokenizer
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.runner import ExplicitRuntime, Stage, greedy
+from tools.common import prompt_chunks
+from tools.validation.common.context import capture_long_state, long_context_cases
 
 
 def default_model_dir(pair):
@@ -25,11 +28,18 @@ def default_model_dir(pair):
 class HFRuntime:
     """Original HF execution with static or dynamic cache and explicit positions."""
 
-    def __init__(self, model, specs, *, dynamic=False):
+    def __init__(self, model, specs, *, dynamic=False, capacity=None, max_prefill=512):
         self.model = model
         self.specs = specs
         self.dynamic = dynamic
-        self.capacity = CACHE_LENGTH
+        if capacity is None:
+            capacity = next(
+                (spec["shape"][2] for spec in specs if spec["update"] == "inplace"), None
+            )
+            if capacity is None:
+                capacity = model_context_limit(model.config)
+        self.capacity = capacity
+        self.max_prefill = max_prefill
         self.vocab_size = model.config.vocab_size
         self.dtype = model.dtype
         self.cache = None
@@ -125,6 +135,7 @@ class Suite:
         self.capacity = pair["decode"]["cache_length"]
         self.vocab_size = pair["decode"]["vocab_size"]
         self.eos = pair["decode"]["eos_token_ids"]
+        self.max_prefill = pair["prefill"]["token_range"][1]
         torch.set_num_threads(1)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
@@ -133,7 +144,7 @@ class Suite:
             validate_model_metadata(entry)
             require(entry["torch_version"] == torch.__version__, "Package Torch version differs")
             require(entry["checkpoint"]["manifest"] == manifest, "Checkpoint manifest differs")
-            require(entry["cache_length"] == CACHE_LENGTH, "Cache capacity differs")
+
         self.tokenizer = load_tokenizer(self.model_dir)
 
     def fixtures(self, hf_runtime):
@@ -163,6 +174,8 @@ class Suite:
         seed = references["capital"][0]
         order = 4
         for length in (1, 2, 7, 128, 511, 512):
+            if length + 4 > self.capacity:
+                continue
             prompt = (seed * (length // len(seed) + 1))[:length]
             continuation = greedy(hf_runtime, prompt, 4, [])["ids"]
             steps = [prompt] + [[token] for token in continuation[:-1]]
@@ -187,7 +200,8 @@ class Suite:
         teacher.append(
             dict(
                 name="context_end",
-                steps=[full[:512], full[512:1022], full[1022:1023], full[1023:1024]],
+                steps=prompt_chunks(full[:-2], self.max_prefill) + [full[-2:-1], full[-1:]],
+                long_context=self.capacity > 1024,
                 dump_cache=True,
                 check_overflow=True,
                 order=17,
@@ -196,12 +210,25 @@ class Suite:
         sizes = (1, 2, 13, 16, 31, 1, 64, 128, 256, 511, 1)
         steps, offset = [], 0
         for length in sizes:
-            steps.append(full[offset : offset + length])
-            offset += length
-        require(offset == self.capacity, "Prefix boundary fixture must fill the context")
+            chunk = full[offset : offset + length]
+            if chunk:
+                steps.append(chunk)
+                offset += len(chunk)
+        steps.extend(
+            prompt_chunks(full[offset:], self.max_prefill) if offset < self.capacity else []
+        )
+        require(
+            sum(map(len, steps)) == self.capacity, "Prefix boundary fixture must fill the context"
+        )
         teacher.extend(
             (
-                dict(name="prefix_boundaries", steps=steps, check_overflow=True, order=24),
+                dict(
+                    name="prefix_boundaries",
+                    steps=steps,
+                    check_overflow=True,
+                    order=24,
+                    long_context=self.capacity > 1024,
+                ),
                 dict(
                     name="prefix_boundaries_poison",
                     steps=steps,
@@ -209,6 +236,7 @@ class Suite:
                     same_as="prefix_boundaries",
                     check_overflow=True,
                     order=25,
+                    long_context=self.capacity > 1024,
                 ),
             )
         )
@@ -236,6 +264,12 @@ class Suite:
             chat("limit_one", "capital", 22, limit=1),
             chat("limit_three", "capital", 23, limit=3),
         ]
+        long_cases = long_context_cases(seed, self.capacity, self.max_prefill)
+        teacher.extend(long_cases)
+        for case in long_cases:
+            if case["name"] in ("long_prompt_513", "long_prompt_8191", "long_prompt_8192"):
+                prompt = [token for chunk in case["steps"][:-2] for token in chunk]
+                chats.append(dict(name=case["name"] + "_generate", prompt=prompt, limit=3))
         return teacher, chats
 
     def stage_cases(self, name, cases):
@@ -244,15 +278,29 @@ class Suite:
         return cases
 
     def capture_states(self, case, step):
+        if case.get("long_context"):
+            return capture_long_state(case, step)
         return step == len(case["steps"]) - 1 and (
             bool(case.get("fixture")) or case.get("dump_cache", False)
         )
 
     def fp32_cases(self, cases):
-        return [case for case in cases if case.get("fixture") or case.get("dump_cache")]
+        return [
+            case
+            for case in cases
+            if case.get("fixture")
+            or case.get("dump_cache")
+            or case["name"] in ("long_prompt_513", "long_prompt_8192", "long_context_end")
+        ]
 
     def native_state_keys(self, cases):
-        return {(case["name"], len(case["steps"]) - 1) for case in cases if case.get("dump_cache")}
+        return {
+            (case["name"], step)
+            for case in cases
+            for step in range(len(case["steps"]))
+            if self.capture_states(case, step)
+            and (case.get("dump_cache") or case.get("long_context"))
+        }
 
     @staticmethod
     def state_rows(tensor, spec):
@@ -261,12 +309,23 @@ class Suite:
     def stages(self):
         model = load_model(self.model_dir)
         try:
-            runtime = HFRuntime(model, self.specs)
+            runtime = HFRuntime(
+                model,
+                self.specs,
+                capacity=self.capacity,
+                max_prefill=self.max_prefill,
+            )
             try:
                 yield Stage("hf", runtime)
             finally:
                 runtime.close()
-            runtime = HFRuntime(model, self.specs, dynamic=True)
+            runtime = HFRuntime(
+                model,
+                self.specs,
+                dynamic=True,
+                capacity=self.capacity,
+                max_prefill=self.max_prefill,
+            )
             try:
                 yield Stage("hf_dynamic", runtime)
             finally:
@@ -280,6 +339,7 @@ class Suite:
                 logits_only=True,
                 owner=adapter,
                 require_write=True,
+                max_prefill=self.max_prefill,
             )
             try:
                 yield Stage("eager", runtime)
@@ -297,7 +357,12 @@ class Suite:
             model.float()
         else:
             require(dtype == torch.bfloat16, "Unsupported HF reference dtype")
-        runtime = HFRuntime(model, self.specs)
+        runtime = HFRuntime(
+            model,
+            self.specs,
+            capacity=self.capacity,
+            max_prefill=self.max_prefill,
+        )
         try:
             yield runtime
         finally:

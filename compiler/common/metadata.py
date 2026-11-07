@@ -8,7 +8,7 @@ import re
 from compiler.common.artifacts import canonical_json, read_json, require, sha256
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 RUNTIME_ABI_VERSION = 1
 FIELDS = (
     "schema_version",  # Version of this metadata format.
@@ -141,7 +141,7 @@ def _runtime_abi(metadata):
 
 
 def validate_metadata(metadata, model_type=None, entry_point=None):
-    """Validate a complete v3 descriptor without loading Torch, files or CUDA."""
+    """Validate a complete v5 descriptor without loading Torch, files or CUDA."""
     _schema(metadata)
     _runtime_abi(metadata)
     require(
@@ -159,14 +159,16 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and (entry_point is None or m["entry_point"] == entry_point),
         "entry_point",
     )
-    _check(type(m["cache_length"]) is int and m["cache_length"] == 1024, "cache_length")
+    # The shape-only extent input has capacity + 1 elements.
+    _check(_integer(m["cache_length"], 512) and m["cache_length"] < 2**63 - 1, "cache_length")
     _check(_integer(m["vocab_size"], 1), "vocab_size")
     tokens = m["token_range"]
     _check(
         isinstance(tokens, list)
         and len(tokens) == 2
         and all(_integer(n, 1) for n in tokens)
-        and tokens == ([1, 1] if m["entry_point"] == "decode" else [2, 512]),
+        and tokens == ([1, 1] if m["entry_point"] == "decode" else [2, 512])
+        and tokens[1] <= m["cache_length"],
         "token_range",
     )
     _check(isinstance(m["torch_version"], str) and bool(m["torch_version"]), "torch_version")

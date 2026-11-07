@@ -12,12 +12,12 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.qwen35.config import (
-    CACHE_LENGTH,
     TEXT_DIR,
     configure,
     deltanet_state_shapes,
 )
 from compiler.common.metadata import state_spec
+from compiler.common.context import resolve_context_length
 
 
 def _text_config(path):
@@ -44,9 +44,10 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     return model.eval().requires_grad_(False).to("cuda")
 
 
-def state_specs(config):
+def state_specs(config, capacity=None):
+    capacity = resolve_context_length(config, capacity)
     conv_shape, recurrent_shape = deltanet_state_shapes(config)
-    kv_shape = (1, config.num_key_value_heads, CACHE_LENGTH, config.head_dim)
+    kv_shape = (1, config.num_key_value_heads, capacity, config.head_dim)
     specs = []
     for layer, kind in enumerate(config.layer_types):
         if kind == "linear_attention":
@@ -64,10 +65,10 @@ def state_specs(config):
     return specs
 
 
-def zero_state(config):
+def zero_state(config, capacity=None):
     return [
         torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"]))
-        for s in state_specs(config)
+        for s in state_specs(config, capacity)
     ]
 
 

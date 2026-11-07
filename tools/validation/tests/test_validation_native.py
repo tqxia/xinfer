@@ -191,5 +191,86 @@ class NativeTraceContracts(unittest.TestCase):
                         self.fixture(model, change_report=change)
 
 
+class SelectedNativeTrace(unittest.TestCase):
+    def test_selected_prefix_state_and_every_raw_logit_are_parsed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output, packages = root / "output", root / "packages"
+            output.mkdir()
+            packages.mkdir()
+            specs = [
+                dict(
+                    layer=0, kind="key", shape=[1, 1, 2048, 2], dtype="bfloat16", update="inplace"
+                ),
+                dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16", update="replace"),
+            ]
+            metadata = dict(
+                decode=dict(
+                    model_type="qwen35",
+                    state=specs,
+                    vocab_size=2,
+                    eos_token_ids=[0],
+                    cache_length=2048,
+                ),
+                prefill=dict(token_range=[2, 512]),
+            )
+            cases = [dict(name="teacher", steps=[[1, 0], [1]])]
+            logits = torch.tensor([[[1.0, -0.0]], [[0.25, 2.0]]], dtype=torch.bfloat16)
+            key = torch.arange(6).reshape(1, 1, 3, 2).bfloat16()
+            conv = torch.ones(1, 2, 2, dtype=torch.bfloat16)
+
+            def native(command, environment, log):
+                manifest = json.loads(Path(command[2]).read_text())
+                self.assertEqual(manifest["trace_format"], 2)
+                self.assertEqual(manifest["cases"][0]["state_steps"], [1])
+                destination = Path(command[3])
+                destination.mkdir()
+                (destination / "teacher.states").write_bytes(raw(logits))
+                (destination / "teacher.1.states").write_bytes(raw(key) + raw(conv))
+                row = dict(
+                    name="teacher",
+                    rows=2,
+                    position=3,
+                    prefill_calls=1,
+                    decode_calls=1,
+                    stable_kv_storage=True,
+                    write_region_checks=True,
+                    reset_check=True,
+                    kv_write_regions_preserved=True,
+                    non_kv_inputs_unchanged=True,
+                    state_steps=[1],
+                    state_prefix=True,
+                )
+                (destination / "native.json").write_text(
+                    json.dumps(
+                        dict(
+                            loader_pairs=1,
+                            no_python_library=True,
+                            attention_library=True,
+                            cases=[row],
+                        )
+                    )
+                )
+                log.write_text("Selected trace fixture")
+
+            with patch("tools.validation.common.native.run", side_effect=native):
+                trace, _ = run_native(
+                    root / "native",
+                    packages,
+                    output,
+                    cases,
+                    [],
+                    metadata,
+                    state_keys={("teacher", 1)},
+                )
+            self.assertTrue(trace.compact_states)
+            self.assertEqual(set(trace.states), {("teacher", 1)})
+            self.assertEqual(trace.positions, {("teacher", 0): 2, ("teacher", 1): 3})
+            self.assertEqual(set(trace.logits), {("teacher", 0), ("teacher", 1)})
+            self.assertTrue(bits_equal(trace.raw_logits["teacher", 0], logits[0]))
+            self.assertTrue(bits_equal(trace.states["teacher", 1][0], key))
+            self.assertTrue(bits_equal(trace.states["teacher", 1][1], conv))
+
+
 if __name__ == "__main__":
     unittest.main()

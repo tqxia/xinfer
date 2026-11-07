@@ -8,7 +8,7 @@ using Clock = std::chrono::steady_clock;
 int main(int argc, char **argv) {
   try {
     if (argc < 4 || std::string(argv[1]) == "--help") {
-      std::cerr << "Usage: xinfer_aoti PACKAGE_DIR PROMPT_IDS OUTPUT_IDS [--max-new-tokens N] "
+      std::cerr << "Usage: xinfer_aoti PACKAGE_DIR PROMPT_IDS OUTPUT_IDS [--max-output-tokens N] "
                    "[--trace LOGITS_F32]\n";
       return argc == 2 && std::string(argv[1]) == "--help" ? 0 : 1;
     }
@@ -17,7 +17,7 @@ int main(int argc, char **argv) {
     for (int i = 4; i < argc; i += 2) {
       require(i + 1 < argc, "Missing option value");
       const std::string option = argv[i];
-      if (option == "--max-new-tokens")
+      if (option == "--max-output-tokens")
         limit = integer(argv[i + 1]);
       else if (option == "--trace")
         trace_path = argv[i + 1];

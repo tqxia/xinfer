@@ -2084,3 +2084,204 @@ claim is made from this correctness probe.
 
 References: [pinned model](https://huggingface.co/Qwen/Qwen3.5-4B/tree/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a),
 [pinned HF implementation](https://github.com/huggingface/transformers/blob/v5.20.2/src/transformers/models/qwen3_5/modeling_qwen3_5.py).
+
+## Full-model context scaling — 2026-11-06
+
+Ordinary paired exports and standalone C++ execution completed for Qwen3.5-0.8B
+and 4B on L20, using PyTorch 2.13.0+cu126, Triton 3.7.1, Transformers 5.20.2 and
+Python 3.12.13. This record supplements the historical block experiment above;
+it does not change its result or close the full-model numerical issues.
+
+Schema 4 separates three bounds: an 8,192-token request prompt, 16,384 cache
+positions, and 2–512 tokens per compiled prefill call. An 8K prompt uses sixteen
+calls to the same prefill package, carrying KV, convolution and recurrent state
+between calls. A singleton remainder uses decode. Generation begins after the
+whole prompt. The larger state shapes require freshly compiled packages;
+raising a JSON limit cannot enlarge an old artifact. Runtime and attention ABI
+versions remain 1.
+
+The numerical chain exercised HF, adapted eager, Python AOTI and C++ AOTI with
+matched input partitions. It includes prompt boundaries 1, 511, 512, 513, 8,191
+and 8,192; nonzero offsets; filled 16K contexts and unchanged-state overflow
+rejection; poisoned future cache, reset/reuse and independent FP32 controls.
+All model jobs ran sequentially. Native/Python parity and HF numerical
+acceptance remain separate gates:
+
+| Check | 0.8B | 4B |
+| --- | ---: | ---: |
+| Teacher cases / physical steps | 59 / 534 | 59 / 541 |
+| Main-stage state checkpoints | 397 | 404 |
+| Independent FP32 control steps | 271 | 271 |
+| C++ vs Python AOTI bits and state contracts | Pass | Pass |
+| HF numerical acceptance | **Fail, remains open** | **Fail, remains open** |
+| Required comparison failures | 17,763 | 46,493 |
+| Worst AOTI/HF logits: relative L2 / peak-relative | 3.1448% / 1.4938% | 41.49% / 52.26% |
+
+For 0.8B, required failures comprise 17,724 convolution-state comparisons, 34
+recurrent-state comparisons, four top-token comparisons and one greedy
+sequence. No logit-error or KV threshold fails. For 4B, 209 required logit
+comparisons fail across the chain; the remaining failures are state comparisons.
+The 4B long-context AOTI/HF logit maxima alone are 10.62% relative L2 and 8.43%
+peak-relative. Agreement on the six tested 4B greedy fixtures does not establish
+numerical acceptance. Tolerances, references and model arithmetic were not
+changed to hide these failures.
+
+The separate native CLI suites pass 48 teacher cases and 58 rejection checks
+for each model. They compare 6,231 teacher logit/state tensors for 0.8B and 8,231 for
+4B, with exact Python/C++ parity. A rerun of the 4B CLI suite corrects an inherited
+summary flag: `native_bitwise` is now set only after successful exact comparisons.
+The original report is retained alongside the corrected rerun.
+
+A retained 1K schema 3 4B bundle was also exercised through the old runtime and
+the new runtime after conversion into a separate schema 4 bundle. The new
+sidecars retain the old 512-token prompt and 1,024-slot cache bounds. Generated
+IDs and FP32 logit trace bytes match exactly, and the original sidecars,
+compiled packages and shared weight file remain unchanged. This checks metadata
+migration, not larger-context compatibility of an old package.
+
+### Native memory at 16K
+
+Fresh native processes consume all 16,384 positions through 32 prefill calls,
+checking position and finite logits after each call. Each process has one shared
+weight owner and one runtime state; accuracy collectors and Python model copies
+are absent. Values are GiB, not decimal GB:
+
+| Measurement | 0.8B | 4B |
+| --- | ---: | ---: |
+| Allocated after load | 1.612 | 8.413 |
+| Inference peak PyTorch allocated | 1.706 | 8.599 |
+| Inference peak PyTorch reserved | 1.811 | 8.707 |
+| Maximum boundary-sampled total device use | 2.334 | 9.231 |
+
+Allocator peaks cover allocations between samples but exclude allocations
+outside the PyTorch allocator. Total-device use is sampled with `cudaMemGetInfo`
+after synchronized boundaries, includes CUDA context/library memory and can miss
+temporaries released inside a compiled call. It is not an exact global device
+peak. Both full-context probes complete without OOM. The new profile has not
+been tested on GB10.
+
+### Warm benchmark and cold-load cost
+
+Each length has three rotated HF/native rounds, two warmups and five measured
+requests per round (15 measured requests), with 64 teacher-forced decode steps.
+The harness checks idle boundaries on the selected GPU and retains worker,
+environment, order and telemetry records. HF prefill processes the whole prompt
+in one call; native prefill uses chunks of at most 512 tokens. The numbers below
+are medians; warm time to first prediction includes the complete prompt loop and
+host argmax/synchronization, and excludes loading, CUDA initialization and text
+tokenization. Decode is synchronized teacher-forced throughput, not a GPU-only
+kernel measurement or free-generation benchmark.
+
+The HF workers explicitly report the PyTorch DeltaNet fallback because
+Flash Linear Attention is absent. These comparisons use that ordinary HF
+baseline, not an HF installation with optimized FLA kernels or a serving engine.
+
+| Model / prompt | Warm TTFT HF / native (ms) | Decode HF / native (tokens/s) |
+| --- | ---: | ---: |
+| 0.8B / 512 | 41.371 / 20.447 | 54.92 / 357.59 |
+| 0.8B / 8,192 | 424.133 / 336.988 | 55.11 / 329.19 |
+| 4B / 512 | 75.850 / 68.987 | 39.60 / 78.21 |
+| 4B / 8,192 | 1,360.542 / 1,135.861 | 39.23 / 76.72 |
+
+Median load times are HF/native 0.198/6.180 seconds for 0.8B and 1.002/32.329
+seconds for 4B. Native loading includes full SHA256 verification; its individual
+costs were not decomposed. The warm numbers therefore do not describe cold
+request latency. Benchmark prediction agreement also does not replace the
+numerical gate above: 4B differs on one of 65 predictions at length 512.
+
+Generated evidence is retained under `artifacts/scaling/{0.8b,4b}/` in the
+isolated validation workspace: `packages/` (4B uses `packages-clean/`),
+`validation/`, `runtime/`, `benchmark/`, plus the corrected 4B `runtime-r2/`.
+The validation report, native traces, package/native SHA256 identities, separate
+memory-probe reports, raw benchmark workers and idle/telemetry records remain
+outside Git.
+
+The first export attempts exited during loader teardown after writing their
+bundles. A loader-only control reproduces the fault with both the retained 1K
+and fresh 16K packages when a login-shell profile puts a profiler's bundled C++
+standard library before the image's library. Both pass with the image's normal
+environment. All accepted exports were rerun through direct `docker exec` or a
+non-login shell and exit normally. No model cleanup or export workaround was
+added; see the environment guide for the shell requirement.
+
+The environment follow-up removed the exact inherited Nsight library export
+from `/root/.bashrc` in the running test container, retaining a backup and the
+image's Torch/CUDA library selection. Both retained 1K and fresh 16K loaders
+subsequently exited normally under direct execution and login shells, with the
+system `libstdc++` mapped. Native 0.8B generation also matched IDs and FP32 logit
+trace bytes across those shell modes. An actual Nsight 2024.2.3 capture through a
+login shell exited normally and recorded three CUDA kernels and one NVTX range
+while the target continued to load the system C++ runtime. These controls isolate
+the environment exit crash; the separate full-model HF numerical failures above
+remain open.
+
+An experimental Dockerfile variant applied the same guarded startup-file
+correction and selected the installed profiler executable ahead of the CUDA
+SDK's stale wrapper on `PATH`. It built successfully as
+`xinfer/l20:torch2.13-cu126-envfix`; fresh containers passed direct/login library
+and profiler-launcher checks, and login-shell C++ generation matched the
+corrected running container bit-for-bit. This image and its checks are retained
+as experimental evidence, not as the default environment.
+
+On 2026-11-07, the user decided to leave the Dockerfile unchanged and keep the
+temporary workaround. The Dockerfile changes from the image experiment were
+withdrawn. Scripted jobs continue through direct `docker exec` or non-login
+`bash -c`; a required login shell uses a task-specific backup and removes only
+the offending global export in the running container, followed by a fresh
+`docker exec`. Profiling uses the installed Nsight launcher by absolute path,
+preserving the image's Torch/CUDA library paths. The original image tag remains
+the default. A future NVIDIA official base-image evaluation is deferred in
+[the project plan](../../PLAN.md); this record does not select or build a new base.
+
+## Export capacity and optional prompt policy — 2026-11-07
+
+Both model families now select compiled capacity through `--max-context-length`
+(default 16,384), validated before GPU model loading against the checkpoint's
+declared text-config `max_position_embeddings`. Both Qwen3.5 checkpoints declare
+262,144 positions. The current graph profile requires capacity at least 512 and
+keeps prefill calls dynamic over 2–512 tokens; a singleton uses decode.
+
+Schema 5 records compiled `cache_length` and call bounds but removes the former
+`max_prompt_length` package field. Prompt caps are optional deployment policy via
+the native `--max-prompt-length` option or shared runtime API. Without a cap, the
+prompt plus requested output budget must fit context capacity. Budgets that do
+not fit remain explicit errors. A cap can be smaller than 512 and changes
+admission only; cache allocation and graph bounds remain fixed. Runtime ABI 1,
+Flash ABI 1 and shared-weight ownership are unchanged.
+
+On L20 with the previously recorded Torch 2.13 environment, both sizes pass
+native/Python AOTI bitwise checks on separately converted 16K bundles for:
+
+- A 128-token prompt with an explicit 128-token cap and two requested outputs.
+- An uncapped 8,193-token prompt with two requested outputs.
+- An uncapped 16,383-token prompt with one requested output.
+- Five rejection cases per model: cap overflow, zero cap, cap larger than
+  capacity, oversized output budget and a full-context prompt with no output room.
+
+The converted copies preserve the original `.pt2` and weight bytes. Original
+schema 4 sidecars remain unchanged; migration only sets schema 5 and removes
+their prompt-policy field. The earlier 8K policy can be retained explicitly at
+deployment. No fresh 4B export was needed for these metadata/policy checks.
+
+A fresh 0.8B paired export at 2,048 slots completes ordinary compilation, the
+full HF → eager → Python AOTI → C++ chain and independent FP32 controls. Native
+parity and the native CLI suite pass. HF numerical acceptance remains **open**:
+17,566 required failures comprise 17,527 convolution-state comparisons, 34
+recurrent-state comparisons, four top-token comparisons and one greedy sequence.
+These are the same failure types as the earlier 16K run; no logit-error threshold
+fails. Worst AOTI/HF logit relative L2 is 3.14483%, and peak-relative error is
+1.49375%. Neither references nor tolerances were changed.
+
+The common CPU groups cover 176 distinct Python tests; both native builds pass
+generation/state contract checks. Functional benchmark smokes pass with and
+without a deployment cap using the 2K 0.8B package, identical HF/native policies,
+one warmup, one measured request per case and one process round. The uncapped
+workload uses lengths 128/513 and the capped workload length 128. These runs
+verify policy propagation and do not support performance conclusions.
+
+Evidence is retained under `artifacts/context-policy-20261107/` in the isolated
+validation workspace: `retained-{0.8b,4b}/`, `{0.8b,4b}-policy/`,
+`0.8b/{packages-2048,validation,runtime}/`, and `benchmark-{uncapped,capped}/`.
+Full reports, native outputs, workload/idle/telemetry records and artifact/source
+identities remain outside Git. Dockerfile changes remain withdrawn; the temporary
+environment workaround and future official-base evaluation above are unchanged.

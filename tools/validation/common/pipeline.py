@@ -10,6 +10,7 @@ from compiler.common.tests.tensors import bits_equal, cpu_copy
 from tools.validation.common.chain import Policy, compare_traces
 from tools.validation.common.native import run_native
 from tools.validation.common.runner import Trace, load_aoti_runtime, run_stage, teacher_trace
+from tools.common import prompt_chunks
 
 
 def _close(runtime):
@@ -63,12 +64,15 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
             for case in mismatches:
                 name = case["name"]
                 ids = compiled.greedy[name]["ids"]
-                teacher = dict(name=name, steps=[case["prompt"]] + [[token] for token in ids[:-1]])
+                chunks = prompt_chunks(case["prompt"], getattr(runtime, "max_prefill", 512))
+                teacher = dict(name=name, steps=chunks + [[token] for token in ids[:-1]])
                 result = teacher_trace(runtime, [teacher], specs, lambda case, step: False)
-                replay[name] = [result.logits[name, step] for step in range(len(ids))]
+                replay[name] = [
+                    result.logits[name, len(chunks) - 1 + step] for step in range(len(ids))
+                ]
     for case in chats:
         name = case["name"]
-        expected = replay.get(name, hf.greedy[name]["rows"])
+        expected = replay[name] if name in replay else hf.greedy[name]["rows"]
         actual = compiled.greedy[name]["rows"]
         require(len(actual) == len(expected), "Missing greedy teacher logits")
         left = Trace(logits={(name, step): value for step, value in enumerate(actual)})
@@ -97,6 +101,14 @@ def validate_chain(suite, packages, native, output, metadata, report):
     numerical_policy = replace(policy, tokens_required=False)
     report["reference_protocol"] = dict(
         cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
+    )
+    report["state_snapshot_policy"] = dict(
+        kv="populated prefix; unused future fill checked independently on capture"
+        if suite.capacity > 1024
+        else "full cache",
+        functional_states="complete",
+        long_context="completed prompt and final request checkpoints; every logit retained",
+        native_write_and_ownership_checks="every call",
     )
     report["numerical_policy"] = dict(
         limits=dict(relative_l2=policy.limit, peak_relative=policy.limit),
@@ -196,7 +208,9 @@ def validate_chain(suite, packages, native, output, metadata, report):
     report["stages"].append(_stage_summary("python_aoti", compiled))
 
     print("Stage: cpp_aoti", flush=True)
-    native_trace, native_report = run_native(native, packages, output, cases, chats, metadata)
+    native_trace, native_report = run_native(
+        native, packages, output, cases, chats, metadata, state_keys=suite.native_state_keys(cases)
+    )
     require(
         set(native_trace.states) == suite.native_state_keys(cases), "Native state coverage differs"
     )

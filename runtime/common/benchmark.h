@@ -37,7 +37,7 @@ Json measure_request(Runtime &runtime, const std::vector<int64_t> &prompt,
   runtime.reset();
   torch::cuda::synchronize();
   const auto prefill = Clock::now();
-  predictions.push_back(runtime.step(prompt).argmax(-1).template item<int64_t>());
+  predictions.push_back(runtime.prefill(prompt).argmax(-1).template item<int64_t>());
   torch::cuda::synchronize();
   const auto decode = Clock::now();
   // EOS remains data: every profile consumes the identical fixed workload.

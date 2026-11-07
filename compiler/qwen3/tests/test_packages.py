@@ -6,8 +6,8 @@ from compiler.common.metadata import make_metadata, state_spec, validate_metadat
 from compiler.qwen3.packages import validate_model_metadata
 
 
-def metadata():
-    shape = [1, 8, 1024, 128]
+def metadata(*, cache_length=1024):
+    shape = [1, 8, cache_length, 128]
     state = [state_spec(0, kind, shape, "bfloat16", "inplace") for kind in ("key", "value")]
     result = make_metadata(
         model_type="qwen3",
@@ -17,7 +17,7 @@ def metadata():
         torch_version="2.13.0+cu126",
         cxx11_abi=True,
         cuda_compute_capability=[8, 9],
-        cache_length=1024,
+        cache_length=cache_length,
         vocab_size=151936,
         eos_token_ids=[151645],
         state=state,
@@ -43,6 +43,15 @@ class Qwen3PackageContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "^" + message):
             validate_metadata(value, model_type="qwen3")
             validate_model_metadata(value)
+
+    def test_cache_capacity_is_derived_from_metadata(self):
+        for capacity in (512, 1024, 16384):
+            item = metadata(cache_length=capacity)
+            validate_metadata(item, model_type="qwen3")
+            validate_model_metadata(item)
+        item = metadata(cache_length=16384)
+        item["state"][0]["shape"][2] = 1024
+        self.reject(item, "Unsupported package metadata: state")
 
     def test_invalid_geometry_is_rejected(self):
         for shape in ([1, 4, 1024, 128], [1, 8, 1024, 64]):
