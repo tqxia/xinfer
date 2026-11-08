@@ -11,23 +11,37 @@ import torch
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import model_context_limit, resolve_context_length
 from compiler.common.attention import cache_extent, attention_library, attention_c_shims
-from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
+from compiler.common.weights import compile_shared
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import MAX_PREFILL, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL
+from compiler.qwen3.megaqwen import (
+    MegaDecodeStep,
+    load_megaqwen_ops,
+    megaqwen_library,
+    megaqwen_c_shims,
+    validate_geometry,
+)
+from compiler.qwen3.model import MAX_PREFILL, allocate_cache, load_model
+from compiler.qwen3.packages import MEGAQWEN_PROFILE
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, default=Path("artifacts/aoti"))
+    parser.add_argument(
+        "--decode-backend",
+        choices=("aoti", "megaqwen"),
+        default="aoti",
+        help="Implementation compiled into the decode package (default: aoti)",
+    )
     parser.add_argument(
         "--max-context-length",
         type=int,
         help="Compiled KV-cache capacity; defaults to model max_position_embeddings",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.output.is_symlink() or (
         args.output.exists() and (not args.output.is_dir() or any(args.output.iterdir()))
     ):
@@ -36,16 +50,18 @@ def main():
         context_config = read_json(args.model_dir / "config.json")
         capacity = resolve_context_length(context_config, args.max_context_length)
         ceiling = model_context_limit(context_config)
-    except ValueError as error:
+        if args.decode_backend == "megaqwen":
+            validate_geometry(context_config, capacity)
+    except (ValueError, OSError) as error:
         parser.error(str(error))
     print(
         json.dumps(
-            dict(
-                event="context",
-                cache_length=capacity,
-                model_max_position_embeddings=ceiling,
-                max_prefill_tokens=MAX_PREFILL,
-            )
+            {
+                "event": "context",
+                "cache_length": capacity,
+                "model_max_position_embeddings": ceiling,
+                "max_prefill_tokens": MAX_PREFILL,
+            }
         ),
         flush=True,
     )
@@ -55,11 +71,16 @@ def main():
 
     if symbolic_config.backed_size_oblivious:
         raise ValueError("Flash must export with backed_size_oblivious disabled")
+    if args.decode_backend == "megaqwen":
+        load_megaqwen_ops()
     model = load_model(args.model_dir)
-    step = FlashStep(model)
-    manifest = json.loads((args.model_dir / MODEL_MANIFEST_NAME).read_text())
+    prefill_step = FlashStep(model)
+    decode_step = (
+        MegaDecodeStep(model, capacity) if args.decode_backend == "megaqwen" else prefill_step
+    )
+    manifest = read_json(args.model_dir / MODEL_MANIFEST_NAME)
     revision = manifest["revision"]
-    checkpoint = dict(model_id=manifest["repo_id"], revision=revision, manifest=manifest)
+    checkpoint = {"model_id": manifest["repo_id"], "revision": revision, "manifest": manifest}
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
     options = {"emulate_precision_casts": True}
     from torch._inductor.runtime.triton_helpers import get_backend_options
@@ -85,14 +106,30 @@ def main():
             {0: extent},
         )
         start = time.perf_counter()
+        step = decode_step if kind == "decode" else prefill_step
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
         exported.validate()
-        targets = [n.target for n in exported.graph.nodes if n.op == "call_function"]
+        targets = [
+            node.target for node in exported.graph_module.graph.nodes if node.op == "call_function"
+        ]
         sites = targets.count(torch.ops.xinfer.flash_attention.default)
         updates = targets.count(torch.ops.aten.index_copy_.default)
-        assert sites == model.config.num_hidden_layers and updates == 2 * sites
+        if kind == "decode" and args.decode_backend == "megaqwen":
+            assert targets.count(torch.ops.xinfer.megaqwen_decode.default) == 1
+            assert sites == updates == 0
+            adapter_report = {
+                "name": "qwen3_megaqwen_v1",
+                "replacements": 1,
+                "initial_singleton_backend": "megaqwen",
+            }
+        else:
+            assert sites == model.config.num_hidden_layers and updates == 2 * sites
+            adapter_report = {
+                "name": "qwen3_flash_v1",
+                "replacements": sites,
+                "cache_updates": updates,
+            }
         assert torch.ops.aten.scaled_dot_product_attention.default not in targets
-        adapter_report = {"name": "qwen3_flash_v1", "replacements": sites, "cache_updates": updates}
         # Text dumps expose mutation/shape behavior without another copy of the weights.
         (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
         print(f"Exported {kind}; compiling...", flush=True)
@@ -116,18 +153,18 @@ def main():
                 eos_token_ids=model.generation_config.eos_token_id,
                 state=state,
                 triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-                model_specific={},
+                model_specific=dict(MEGAQWEN_PROFILE) if args.decode_backend == "megaqwen" else {},
             )
             print(
                 json.dumps(
-                    dict(
-                        event="export",
-                        model_type="qwen3",
-                        entry_point=kind,
-                        build=dict(
-                            strict_export=False,
-                            torch_cuda_version=torch.version.cuda,
-                            versions={
+                    {
+                        "event": "export",
+                        "model_type": "qwen3",
+                        "entry_point": kind,
+                        "build": {
+                            "strict_export": False,
+                            "torch_cuda_version": torch.version.cuda,
+                            "versions": {
                                 name: importlib.metadata.version(name)
                                 for name in (
                                     "transformers",
@@ -137,13 +174,13 @@ def main():
                                     "huggingface-hub",
                                 )
                             },
-                        ),
-                        diagnostics=dict(
-                            graph_nodes=len(list(exported.graph.nodes)),
-                            export_and_compile_seconds=time.perf_counter() - start,
-                            model_adapter=adapter_report,
-                        ),
-                    )
+                        },
+                        "diagnostics": {
+                            "graph_nodes": len(list(exported.graph.nodes)),
+                            "export_and_compile_seconds": time.perf_counter() - start,
+                            "model_adapter": adapter_report,
+                        },
+                    }
                 ),
                 flush=True,
             )
@@ -152,13 +189,18 @@ def main():
         return exported, metadata_factory
 
     with torch.inference_mode():
+        libraries = [attention_library()]
+        shims = attention_c_shims()
+        if args.decode_backend == "megaqwen":
+            libraries.append(megaqwen_library())
+            shims.update(megaqwen_c_shims())
         compile_shared(
             args.output,
             export_entry,
-            identity=dict(model="qwen3-0.6b", revision=revision),
+            identity={"model": "qwen3-0.6b", "revision": revision},
             inductor_configs=options,
-            native_libraries=[attention_library()],
-            custom_op_shims=attention_c_shims(),
+            native_libraries=libraries,
+            custom_op_shims=shims,
         )
     print(f"Saved prefill/decode bundle to {args.output}", flush=True)
 

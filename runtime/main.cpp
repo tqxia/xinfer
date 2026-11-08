@@ -67,6 +67,8 @@ int main(int argc, char **argv) {
                 << " consumed_positions=" << runtime->position()
                 << " stop=" << (eos ? "eos" : "limit") << " load_ms=" << ms(load_start, run_start)
                 << " generation_ms=" << ms(run_start, run_end) << " trace=" << !trace_path.empty()
+                << " decode_backend=aoti"
+                << " compiled_decode_backend=" << (spec.compiled_megaqwen ? "megaqwen" : "aoti")
                 << '\n';
       return 0;
     });

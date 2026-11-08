@@ -9,7 +9,8 @@ from unittest.mock import patch
 import torch
 
 from compiler.common.tests.tensors import bits_equal
-from tools.validation.common.native import run_native
+from tools.validation.common.native import _check_replays, run_native
+from tools.validation.common.runner import Trace
 
 
 def raw(tensor):
@@ -17,7 +18,7 @@ def raw(tensor):
 
 
 class NativeTraceContracts(unittest.TestCase):
-    def fixture(self, model, *, damage=None, change_report=None):
+    def fixture(self, model, *, damage=None, change_report=None, compiled=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         root = Path(temporary.name)
@@ -48,6 +49,9 @@ class NativeTraceContracts(unittest.TestCase):
         ]
         chats = [dict(name="chat", prompt=[1, 0], limit=3, order=0)]
         metadata = dict(decode=dict(model_type=model, state=specs, vocab_size=2, eos_token_ids=[0]))
+        if compiled:
+            metadata["decode"]["model_specific"] = dict(decode_backend="megaqwen")
+            cases[0]["steps"] = [[1], [1]]
         # The first value contains FP32 bits that a BF16 round trip would discard.
         logits = torch.tensor([[[1 + 2**-23, 0.25]], [[-0.0, 2.5]]], dtype=torch.float32)
         chat_logits = torch.tensor([[[0.0, 2.0]], [[3.0, 0.0]]], dtype=torch.float32)
@@ -63,6 +67,7 @@ class NativeTraceContracts(unittest.TestCase):
             return tuple(values)
 
         def native(command, environment, log):
+            self.assertEqual(len(command), 4)
             destination = Path(command[3])
             destination.mkdir()
             rows = {}
@@ -116,6 +121,8 @@ class NativeTraceContracts(unittest.TestCase):
                 attention_library=True,
                 cases=[rows[case["name"]] for case in order],
             )
+            if compiled:
+                report["backend_info"] = dict(backend="aoti", compiled_decode_backend="megaqwen")
             if change_report:
                 change_report(report)
             (destination / "native.json").write_text(json.dumps(report))
@@ -127,7 +134,12 @@ class NativeTraceContracts(unittest.TestCase):
 
         with patch("tools.validation.common.native.run", side_effect=native) as run:
             trace, report = run_native(
-                root / "xinfer_validate", packages, output, cases, chats, metadata
+                root / "xinfer_validate",
+                packages,
+                output,
+                cases,
+                chats,
+                metadata,
             )
         run.assert_called_once()
         return trace, report, logits, chat_logits, states
@@ -189,6 +201,70 @@ class NativeTraceContracts(unittest.TestCase):
                 with self.subTest(model=model, mutation=name):
                     with self.assertRaisesRegex(ValueError, "Native case coverage differs"):
                         self.fixture(model, change_report=change)
+
+    def test_compiled_profile_metadata_and_generic_dispatch_counts_are_checked(self):
+        _, report, *_ = self.fixture("qwen3", compiled=True)
+        self.assertEqual([row["decode_calls"] for row in report["cases"]], [1, 2, 0])
+        changes = (
+            lambda report: report["backend_info"].update(compiled_decode_backend="aoti"),
+            lambda report: report["cases"][1].update(decode_calls=1),
+        )
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.fixture("qwen3", compiled=True, change_report=change)
+
+
+class NativeReplayContracts(unittest.TestCase):
+    def fixture(self, *, compact=False):
+        spec = dict(layer=0, kind="key", shape=[1, 1, 4, 2], dtype="bfloat16", update="inplace")
+        clean = torch.arange(8).reshape(1, 1, 4, 2).bfloat16()
+        poison = clean.clone()
+        poison[:, :, 3:] = 7
+        if compact:
+            clean, poison = clean[:, :, :3].clone(), poison[:, :, :3].clone()
+        values = torch.tensor([[0.0, 1.0]])
+        trace = Trace(
+            logits={(name, 0): values.clone() for name in ("clean", "poison")},
+            states={("clean", 0): (clean,), ("poison", 0): (poison,)},
+            positions={(name, 0): 3 for name in ("clean", "poison")},
+            compact_states=compact,
+        )
+        cases = [
+            dict(name="clean", steps=[[0, 1, 0]]),
+            dict(name="poison", steps=[[0, 1, 0]], same_as="clean", poison_kv=7),
+        ]
+        return trace, cases, spec
+
+    def test_poison_and_reset_replays_require_bitwise_logits_and_valid_state(self):
+        for compact in (False, True):
+            with self.subTest(compact=compact):
+                trace, cases, spec = self.fixture(compact=compact)
+                _check_replays(trace, cases, [], [spec])
+                trace.logits["poison", 0][0, 0] = -0.0
+                with self.assertRaisesRegex(ValueError, "poison changed logits"):
+                    _check_replays(trace, cases, [], [spec])
+                trace.logits["poison", 0][0, 0] = 0.0
+                trace.states["poison", 0][0][:, :, 1] += 1
+                with self.assertRaisesRegex(ValueError, "changed valid state"):
+                    _check_replays(trace, cases, [], [spec])
+
+    def test_generation_reuse_checks_ids_rows_and_positions(self):
+        row = torch.tensor([[0.0, 1.0]])
+        trace = Trace(
+            greedy={
+                name: dict(ids=[1], rows=[row.clone()], position=513, state=())
+                for name in ("clean", "repeat")
+            }
+        )
+        cases = [dict(name="repeat", same_as="clean")]
+        _check_replays(trace, [], cases, [])
+        trace.greedy["repeat"]["rows"][0][0, 0] = -0.0
+        with self.assertRaisesRegex(ValueError, "changed generation logits"):
+            _check_replays(trace, [], cases, [])
+        trace.greedy["repeat"]["rows"][0][0, 0] = 0.0
+        trace.greedy["repeat"]["position"] += 1
+        with self.assertRaisesRegex(ValueError, "changed generation"):
+            _check_replays(trace, [], cases, [])
 
 
 class SelectedNativeTrace(unittest.TestCase):

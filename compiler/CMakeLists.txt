@@ -1,1 +1,6 @@
+option(XINFER_ENABLE_MEGAQWEN "Build optional cooperative Qwen3-0.6B compiler kernels" OFF)
+set(XINFER_COMPILER_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 add_subdirectory(common/kernels)
+if(XINFER_ENABLE_MEGAQWEN)
+  add_subdirectory(qwen3/kernels/megaqwen)
+endif()

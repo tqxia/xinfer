@@ -9,6 +9,7 @@ from unittest.mock import call, patch, sentinel
 
 from compiler.common import attention
 from compiler.common.metadata import make_metadata, state_spec
+from compiler.qwen3 import megaqwen
 from tools.validation.common import runner
 
 
@@ -120,6 +121,33 @@ class AOTIRuntimeLoading(unittest.TestCase):
                 weights.return_value.load.call_args_list, [call("prefill"), call("decode")]
             )
             self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], override)
+            runtime.close()
+
+    def test_compiled_megaqwen_factory_needs_no_native_library_selection(self):
+        pair = self.metadata("qwen3")
+        for kind, entry in pair.items():
+            entry["model_specific"] = {"decode_backend": "megaqwen"}
+            entry["vocab_size"] = 151936
+            entry["state"] = [
+                state_spec(layer, role, [1, 8, 1024, 128], "bfloat16", "inplace")
+                for layer in range(28)
+                for role in ("key", "value")
+            ]
+            (self.root / f"{kind}.json").write_text(json.dumps(entry))
+        with (
+            patch.object(runner, "validate_shared_weights"),
+            patch.object(runner, "SharedWeights") as weights,
+            patch.object(megaqwen, "load_megaqwen_ops") as load,
+            patch.dict(os.environ, XINFER_MEGAQWEN_LIBRARY="/absent/build/mega.so"),
+        ):
+            runtime = runner.load_aoti_runtime(
+                self.root, model_type="qwen3", specs=pair["decode"]["state"]
+            )
+            load.assert_not_called()
+            self.assertEqual(
+                weights.return_value.load.call_args_list, [call("prefill"), call("decode")]
+            )
+            self.assertEqual(os.environ["XINFER_MEGAQWEN_LIBRARY"], "/absent/build/mega.so")
             runtime.close()
 
 

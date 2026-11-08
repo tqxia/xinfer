@@ -31,14 +31,14 @@ repository root to format tracked source files:
 
 ```bash
 git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format
-git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format -i
+git ls-files -z '*.cpp' '*.h' '*.cu' '*.cuh' | xargs -0 work/format-venv/bin/clang-format -i
 ```
 
 Check formatting without changing files:
 
 ```bash
 git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
-git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
+git ls-files -z '*.cpp' '*.h' '*.cu' '*.cuh' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
 ```
 
 ## CPU unit tests
@@ -63,7 +63,10 @@ CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   tools.validation.tests.test_validation_chain \
   tools.validation.tests.test_validation_runtime \
   tools.validation.tests.test_validation_native \
-  tools.validation.tests.test_validation_modes tools.validation.tests.test_context
+  tools.validation.tests.test_validation_modes tools.validation.tests.test_context \
+  compiler.qwen3.tests.test_megaqwen tools.validation.tests.test_megaqwen \
+  tools.validation.tests.test_megaqwen_op \
+  tools.validation.tests.test_megaqwen_package
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
   tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
@@ -274,6 +277,20 @@ bitwise. Structural cache/write, poisoning, reset/reuse and overflow checks are
 required independently of numerical differences. Historical reports retain
 their original layouts and labels.
 
+Optional MegaQwen correctness checks use the same `tools.validation.validate`
+BF16 HF → eager → Python AOTI → C++ AOTI chain and numerical limits. The eager
+stage selects attention from `prefill.pt2` and MegaQwen from `decode.pt2` for that
+profile. The production-package contract checks shared weights/KV, AOTI prefill
+and decode handoffs, positions, reset/reuse, streams and retained outputs through
+ordinary AOTI loading. The explicit-input custom-op probe separately compares
+Python/C++ direct-op and AOTI execution. Enable `XINFER_ENABLE_MEGAQWEN` to build
+`xinfer_megaqwen_ops` for export, and `XINFER_BUILD_VALIDATION` for the focused
+contract drivers. `qwen_attention_contract` checks the device attention helper
+against an independent dense reference. Runtime targets consume packaged kernels
+independently of the compiler build flag. These synchronized correctness checks
+are not benchmarks. See
+[current build and validation commands](../compiler/qwen3/README.md#optional-megaqwen-decode).
+
 Model validation modules require Python assertions. They refuse `-O`, `-OO` and
 `PYTHONOPTIMIZE` before loading models or creating reports, because their graph,
 state and runtime checks use assertions. Shared numerical/file comparisons and
@@ -397,8 +414,14 @@ use are recorded separately from steady-state latency.
 
 Both pairs require compatible checkpoint, toolchain, tensor contracts and
 numerical compilation settings, as well as matching logical weight identities
-and source mappings. General compiler tuning options remain in export logs.
-Labels name the measurements and default to `baseline` and `candidate`.
+and source mappings. Qwen3 comparison also accepts the default `{}` and
+`{decode_backend: megaqwen}` profiles in either order. Those pairs use the same
+selected checkpoint and canonical model weights; only MegaQwen's derived
+`megaqwen_cos` and `megaqwen_sin` buffers may differ in the source mapping.
+The MegaQwen implementation currently supports Qwen3-0.6B only and is not tied to
+an exact Hugging Face repository or revision. General compiler tuning options
+remain in export logs. Labels name the measurements and default to `baseline`
+and `candidate`.
 
 Results include request timings, latency distributions, prediction agreement,
 memory samples, GPU telemetry and package/binary/workload hashes. Numerical

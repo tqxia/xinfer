@@ -40,6 +40,13 @@ def main():
             validate_model(entry)
         validate_shared_weights(args.packages, pair["prefill"], pair["decode"])
         load_packaged_attention_ops(args.packages)
+        if (
+            model_type == "qwen3"
+            and pair["decode"]["model_specific"].get("decode_backend") == "megaqwen"
+        ):
+            from tools.validation.common.megaqwen import load_packaged_megaqwen_ops
+
+            load_packaged_megaqwen_ops(args.packages)
         module = importlib.import_module(f"tools.validation.{model_type}.model")
         suite = module.Suite(args.model_dir or module.default_model_dir(pair), pair)
         report = new_report(model_type, pair)

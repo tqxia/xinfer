@@ -1,4 +1,4 @@
-"""Benchmark HF/native execution or compare two compiled package bundles."""
+"""Benchmark HF/native execution and compare compiled package bundles."""
 
 import argparse
 from importlib import import_module
@@ -101,7 +101,7 @@ def main(argv=None):
         runner.add_argument("--decode-steps", type=int, default=64)
         runner.add_argument("--warmup", type=int, default=2)
         runner.add_argument("--repeats", type=int, default=5)
-        runner.add_argument("--rounds", type=int, default=4 if name == "compare" else 3)
+        runner.add_argument("--rounds", type=int, default=3 if name == "run" else 4)
         runner.add_argument(
             "--allow-busy",
             action="store_true",

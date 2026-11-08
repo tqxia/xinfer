@@ -152,6 +152,18 @@ the shared native FlashAttention operator. Both exporters embed
 `libxinfer_attention_ops.so` in each `.pt2`. The native executables load it through those packages and do not
 link or install a separate copy. Qwen3.5 also packages its GDN kernels.
 
+The current MegaQwen implementation supports Qwen3-0.6B only; its backend is
+independent of the selected Hugging Face repository and revision. The preparer's
+checkpoint pin records the default download. Optional MegaQwen export uses
+`XINFER_ENABLE_MEGAQWEN=ON` and the compiler's
+`xinfer_megaqwen_ops` target to build `libxinfer_megaqwen.so` from
+`compiler/qwen3/kernels/megaqwen/`. The exporter embeds it through the same shared
+C-shim packaging helper. `XINFER_MEGAQWEN_LIBRARY` selects a different build for
+export or standalone operator checks; ordinary AOTI loading uses the packaged
+implementation. The build flag controls compiler kernels; runtime targets build
+independently and load either compiled decode profile through AOTI. See the
+[Qwen3 build and validation commands](../compiler/qwen3/README.md#optional-megaqwen-decode).
+
 For L20, the two CMake runtime variables select CUDA 12.6 from the model
 installation for both Torch and CUDA discovery. This also supports a host
 compiler with an older compatible CUDA minor version; linking Torch 2.13 to an
@@ -224,10 +236,12 @@ native stack/GPU; keep all existing runtime compatibility checks enabled.
 Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
 files, and one shared `weights.pt`. Deploy all five files together. Both `.pt2`
 files carry the same native attention library, loaded automatically by the
-standard AOTI loaders. Its bytes are covered by the package checksums. Re-export
-retained external-library packages; JSON conversion alone cannot add the
-implementation. LibTorch/CUDA remain external dependencies. The weight archive
-embeds the exact constant mappings and tensor views in `extra/weights.json`;
+standard AOTI loaders. The optional Qwen3 MegaQwen profile additionally carries
+`libxinfer_megaqwen.so` in both packages. All bundled library bytes are covered by
+the package checksums. Re-export retained external-library packages, including
+MegaQwen profiles; JSON conversion alone cannot add their implementations.
+LibTorch/CUDA remain external dependencies. The weight archive embeds the exact
+constant mappings and tensor views in `extra/weights.json`;
 there is no separate weight manifest. Both entry metadata files hold the archive
 size and SHA-256 checksum. Each export writes the archive once, records its
 checksum in both metadata files, and publishes the complete directory after
@@ -271,8 +285,10 @@ the example below installs from `build/qwen3/`.
 GNUInstallDirs selects the executable directory, typically `bin/`.
 `xinfer_aoti` is always included; `xinfer_benchmark` and `xinfer_validate` are
 included when their build options are enabled. The focused
-`qwen_runtime_contract` helper remains a build-only target. The attention library
-is carried by each model package and is not installed in this prefix.
+`qwen_runtime_contract` helper remains a build-only target. Attention and optional
+MegaQwen shared libraries are carried by the model packages and are not installed
+in this prefix. Runtime executables use the same packaged AOTI path for both
+decode implementations.
 `CMAKE_INSTALL_BINDIR` can customize the executable layout and must be relative.
 The following commands use the default `bin/` directory.
 

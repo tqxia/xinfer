@@ -38,13 +38,29 @@ if(XINFER_BUILD_VALIDATION)
   add_executable(qwen_runtime_contract common/tests/runtime_contract.cpp)
   add_executable(xinfer_state_contract common/tests/state.cpp)
   add_executable(xinfer_generation_contract common/tests/generation.cpp)
-  list(APPEND XINFER_TARGETS xinfer_validate qwen_runtime_contract xinfer_state_contract xinfer_generation_contract)
+  add_executable(qwen_megaqwen_package_contract qwen3/tests/megaqwen_package.cpp)
+  list(APPEND XINFER_TARGETS xinfer_validate qwen_runtime_contract xinfer_state_contract xinfer_generation_contract qwen_megaqwen_package_contract)
   list(APPEND XINFER_INSTALL_TARGETS xinfer_validate)
+  if(XINFER_ENABLE_MEGAQWEN)
+    add_executable(qwen_attention_contract qwen3/tests/attention.cpp qwen3/tests/attention.cu)
+    add_executable(qwen_megaqwen_op_contract qwen3/tests/megaqwen_op.cpp)
+    set_target_properties(qwen_attention_contract PROPERTIES
+      CUDA_ARCHITECTURES "${XINFER_MEGAQWEN_CUDA_ARCHITECTURES}"
+      CUDA_STANDARD ${XINFER_CXX_STANDARD}
+      CUDA_STANDARD_REQUIRED ON
+      CUDA_RUNTIME_LIBRARY None)
+    target_compile_options(qwen_attention_contract PRIVATE
+      "$<$<COMPILE_LANGUAGE:CUDA>:-O3;--fmad=false>")
+    target_link_libraries(qwen_attention_contract PRIVATE xinfer_megaqwen_core)
+    # The prototype package supplies the op test's dispatcher registration.
+    add_dependencies(qwen_megaqwen_op_contract xinfer_megaqwen_ops)
+    list(APPEND XINFER_TARGETS qwen_attention_contract qwen_megaqwen_op_contract)
+  endif()
 endif()
 foreach(target IN LISTS XINFER_TARGETS)
   target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(${target} PRIVATE cxx_std_${XINFER_CXX_STANDARD})
-  target_compile_options(${target} PRIVATE ${TORCH_FLAGS} -Wall -Wextra)
+  target_compile_options(${target} PRIVATE ${TORCH_FLAGS} "$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra>")
   target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES} nlohmann_json::nlohmann_json)
   set_target_properties(${target} PROPERTIES BUILD_RPATH_USE_ORIGIN TRUE)
 endforeach()

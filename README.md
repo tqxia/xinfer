@@ -3,6 +3,7 @@
 PyTorch AOTInductor compilation with Python-free C++ inference.
 
 - [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
+- [Optional MegaQwen decode](compiler/qwen3/README.md#optional-megaqwen-decode): AOTI prefill with shared-weight/cache CUDA decode and independent HF validation.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
 - [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
@@ -50,7 +51,7 @@ sidecars need conversion or re-export before use with the current runtime.
 
 Both exporters accept `--max-context-length`. When omitted, capacity is derived
 from the selected model's text-config `max_position_embeddings`: 40,960 for the
-pinned Qwen3-0.6B and 262,144 for both Qwen3.5 checkpoints. An explicit capacity
+default Qwen3-0.6B checkpoint and 262,144 for both Qwen3.5 checkpoints. An explicit capacity
 must be in 512..that ceiling. The selected capacity determines actual KV allocation.
 Compiled prefill remains dynamic over 2–512 tokens per call; shared generation
 splits a longer prompt automatically, using decode for a one-token remainder.
@@ -67,6 +68,24 @@ Their focused HF numerical comparisons retain failures; see the
 [default-capacity validation record](docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07).
 These expanded profiles have not been validated on GB10.
 
+The optional MegaQwen backend currently implements Qwen3-0.6B only. It is not
+bound to a particular Hugging Face repository or revision. It shares Qwen3's
+schema 5 package, weights and KV storage with AOTI and accepts the package's
+selected capacity in 512–40,960;
+complete prompts use the same prefill chunking and context budget. AOTI remains
+the default. MegaQwen numerical acceptance is evaluated separately; historical
+results do not qualify a rebuilt backend or a larger-capacity package. See the
+[current MegaQwen usage](compiler/qwen3/README.md#optional-megaqwen-decode) and
+[historical experiment record](docs/experiments/qwen3-megaqwen.md).
+
+Qwen3's exporter also accepts `--decode-backend megaqwen` to put the shared C++
+operator into `decode.pt2`. This optional profile keeps AOTI prefill and shared
+weights/KV while using the same decode implementation from Python and C++ AOTI.
+Single-token calls, including position zero, use MegaQwen. The default export
+remains AOTI Flash. Both profiles use the same five-file deployment format.
+The optional profile carries `libxinfer_megaqwen.so` in its `.pt2` files; standard
+Python and C++ AOTI loaders load the compiled decode dependency automatically.
+
 Run Python tools from the repository root as modules, for example:
 
 ```bash
@@ -78,22 +97,29 @@ Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your
 ```
 
 Create each model's independent environment with its target setup script, following
-the [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
-compilation profile. Both exporters embed the native attention library in each
-`.pt2`; the standard Python and C++ AOTI loaders load it with the compiled wrapper.
-Build the compiler's `xinfer_attention_ops` target from the repository root
-before export. The default CMake build includes compiler kernels and runtime
-executables; explicit runtime targets build independently. Each model retains
-its own compiler environment and numerical policy. Python export and standalone
-operator tests select the attention library from `build/qwen3/` or `build/qwen35/`;
+the [environment guide](environments/README.md). Qwen3 uses fused FlashAttention
+prefill with default AOTI or optional MegaQwen decode. Both exporters embed the
+native attention library in each `.pt2`; the standard Python and C++ AOTI loaders
+load it with compiled wrappers that use Flash attention. Build the compiler's
+`xinfer_attention_ops` target from the repository root before export. The default
+CMake build includes compiler kernels and runtime executables; explicit runtime
+targets build independently. Each model retains its own compiler environment
+and numerical policy. Python export and standalone operator tests select the
+attention library from `build/qwen3/` or `build/qwen35/`;
 `XINFER_ATTENTION_OPS_LIBRARY` can select another build. Package inference and
-validation use the bundled implementation. Existing executable-path options
-select another native runtime.
+validation use the bundled attention implementation. For optional MegaQwen
+export, enable `XINFER_ENABLE_MEGAQWEN` and build the compiler's
+`xinfer_megaqwen_ops` target from `compiler/qwen3/kernels/megaqwen/`.
+The exporter packages that library through the same shared C-shim mechanism.
+The build flag selects compiler kernels; runtime executables consume either
+compiled profile through AOTI. Decode selection belongs to the exporter and is
+recorded in the packages. Existing executable-path options select another native
+runtime.
 The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
 shows how to install and move the native executables. Deploy the complete
 five-file model bundle with matching LibTorch/CUDA. Re-export packages that
-previously required a separate attention library; sidecar conversion alone does
-not add that implementation.
+previously required separate attention or MegaQwen libraries; sidecar conversion
+alone does not add their implementations.
 
 Numerical validation follows HF → eager → Python AOTI → C++ AOTI. The eager
 stage includes adapters and any linear packing selected by package metadata.

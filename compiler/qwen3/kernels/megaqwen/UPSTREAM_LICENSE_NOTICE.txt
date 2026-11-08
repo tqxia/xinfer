@@ -1,0 +1,8 @@
+Source: https://github.com/Infatoshi/MegaQwen/blob/0bc1fdedb82744481373000c5c7d3c58795c7a3a/README.md
+The upstream README declares:
+
+## License
+
+MIT
+
+No standalone license file or copyright-holder notice was present in the supplied snapshot.

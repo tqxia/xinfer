@@ -36,7 +36,8 @@ public:
     // Prefix length comes from CPU shape metadata, never CUDA tensor data.
     inputs.push_back(extent_.narrow(0, 0, position_ + length + 1));
     auto outputs = (length == 1 ? decode_ : prefill_).run(inputs);
-    require(!outputs.empty() && outputs[0].sizes() == at::IntArrayRef({1, spec_.vocab}) &&
+    require(!outputs.empty() && outputs[0].defined() &&
+                outputs[0].sizes() == at::IntArrayRef({1, spec_.vocab}) &&
                 outputs[0].scalar_type() == at::kBFloat16 && outputs[0].device() == device_,
             "Unexpected compiled output");
     state_.accept(outputs);
@@ -65,6 +66,10 @@ public:
   int64_t position() const { return position_; }
   int64_t prefill_calls() const { return prefill_calls_; }
   int64_t decode_calls() const { return decode_calls_; }
+  Json decode_info() const {
+    return Json{{"backend", "aoti"},
+                {"compiled_decode_backend", spec_.compiled_megaqwen ? "megaqwen" : "aoti"}};
+  }
 
 private:
   Runner(const Spec &spec, ValidatedBundle bundle)

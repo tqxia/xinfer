@@ -183,6 +183,52 @@ class LiveHFReferences(unittest.TestCase):
         ):
             self.suite.fixtures(self.runtime)
 
+    def test_compiled_megaqwen_extends_the_same_live_hf_fixtures(self):
+        original_cases, original_chats = self.suite.fixtures(self.runtime)
+        self.suite.megaqwen = True
+        cases, chats = self.suite.fixtures(self.runtime)
+        self.assertEqual(cases[: len(original_cases)], original_cases)
+        self.assertEqual(chats, original_chats)
+        self.assertEqual(len(cases), len(original_cases) + 7)
+        by_name = {case["name"]: case for case in cases}
+        for boundary in (128, 256):
+            case = by_name[f"hybrid_split_{boundary}"]
+            self.assertEqual(list(map(len, case["steps"])), [boundary - 1, 1, 1, 2, 1])
+            self.assertIn((case["name"], 4), self.suite.native_state_keys(cases))
+
+    def test_eager_profile_changes_only_after_both_unchanged_hf_stages(self):
+        for enabled in (False, True):
+            with self.subTest(megaqwen=enabled):
+                self.suite.megaqwen = enabled
+                flash = SimpleNamespace(model=self.original)
+                with (
+                    patch.object(model, "load_model", return_value=self.original) as load,
+                    patch.object(model, "HFRuntime") as hf,
+                    patch.object(model, "FlashStep", return_value=flash) as adapter,
+                    patch("compiler.qwen3.megaqwen.MegaDecodeStep", create=True) as mega,
+                    patch.object(model, "ExplicitRuntime") as explicit,
+                    patch.object(model.torch.cuda, "empty_cache"),
+                ):
+                    stages = self.suite.stages()
+                    self.assertEqual(next(stages).name, "hf")
+                    self.assertEqual(next(stages).name, "hf_dynamic")
+                    adapter.assert_not_called()
+                    mega.assert_not_called()
+                    self.assertEqual(next(stages).name, "eager")
+                    load.assert_called_once_with(self.root)
+                    self.assertEqual(hf.call_count, 2)
+                    self.assertIs(hf.call_args_list[0].args[0], self.original)
+                    self.assertIs(hf.call_args_list[1].args[0], self.original)
+                    functions = explicit.call_args.args[0]
+                    self.assertIs(functions["prefill"], flash)
+                    if enabled:
+                        mega.assert_called_once_with(self.original, self.suite.capacity)
+                        self.assertIs(functions["decode"], mega.return_value)
+                    else:
+                        mega.assert_not_called()
+                        self.assertIs(functions["decode"], flash)
+                    stages.close()
+
 
 if __name__ == "__main__":
     unittest.main()

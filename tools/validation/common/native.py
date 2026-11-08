@@ -6,9 +6,73 @@ import os
 import torch
 
 from compiler.common.artifacts import read_json, require, write_json
+from compiler.common.tests.tensors import bits_equal
 from tools.common import prompt_chunks, run
 from tools.validation.common.context import state_shape
 from tools.validation.common.runner import Trace
+
+
+def native_environment():
+    """Preserve device selection while keeping workers independent of Python."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
+    }
+    env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
+    return env
+
+
+def _check_replays(trace, cases, chats, specs):
+    """Poison/reset invariance is strict even for numerically bounded backends."""
+    for case in cases:
+        if "same_as" not in case:
+            continue
+        for step in range(len(case["steps"])):
+            key, original = (case["name"], step), (case["same_as"], step)
+            require(original in trace.logits, "Missing native replay control")
+            require(
+                trace.positions[key] == trace.positions[original],
+                "Native replay positions differ",
+            )
+            require(
+                bits_equal(trace.logits[key], trace.logits[original]),
+                "Native reset/future poison changed logits",
+            )
+            if key in trace.states:
+                require(original in trace.states, "Missing native replay state control")
+                require(
+                    len(trace.states[key]) == len(trace.states[original]) == len(specs),
+                    "Native replay state count differs",
+                )
+                position = trace.positions[key]
+                for actual, expected, spec in zip(trace.states[key], trace.states[original], specs):
+                    if spec["update"] == "inplace":
+                        actual = actual[:, :, :position]
+                        expected = expected[:, :, :position]
+                    require(bits_equal(actual, expected), "Native replay changed valid state")
+    for case in chats:
+        if "same_as" not in case:
+            continue
+        require(case["same_as"] in trace.greedy, "Missing native generation replay control")
+        actual, expected = trace.greedy[case["name"]], trace.greedy[case["same_as"]]
+        require(
+            actual["ids"] == expected["ids"] and actual["position"] == expected["position"],
+            "Native reset/reuse changed generation",
+        )
+        require(
+            len(actual["rows"]) == len(expected["rows"])
+            and all(bits_equal(a, b) for a, b in zip(actual["rows"], expected["rows"])),
+            "Native reset/reuse changed generation logits",
+        )
+        require(
+            len(actual["state"]) == len(expected["state"]),
+            "Native reset/reuse changed generation state count",
+        )
+        for a, b, spec in zip(actual["state"], expected["state"], specs):
+            if spec["update"] == "inplace":
+                a, b = a[:, :, : actual["position"]], b[:, :, : expected["position"]]
+            require(bits_equal(a, b), "Native reset/reuse changed generation state")
 
 
 def _map(path, dtype, count):
@@ -39,6 +103,11 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
     specs = metadata["decode"]["state"]
     vocab = metadata["decode"]["vocab_size"]
     eos = metadata["decode"]["eos_token_ids"]
+    maximum = metadata.get("prefill", {}).get("token_range", [2, 512])[1]
+    compiled = (
+        model == "qwen3"
+        and metadata["decode"].get("model_specific", {}).get("decode_backend") == "megaqwen"
+    )
     manifest = sorted([*cases, *chats], key=lambda case: case.get("order", 1_000_000))
     require(len({case["name"] for case in manifest}) == len(manifest), "Duplicate native case")
     selected_states = state_keys is not None
@@ -58,23 +127,14 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
     write_json(
         output / "cases.json", dict(cases=manifest, trace_format=2 if selected_states else 1)
     )
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
-    }
-    env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
     destination = output / "native"
-    run(
-        [
-            binary.resolve(),
-            packages.resolve(),
-            (output / "cases.json").resolve(),
-            destination.resolve(),
-        ],
-        env,
-        output / "native.log",
-    )
+    command = [
+        binary.resolve(),
+        packages.resolve(),
+        (output / "cases.json").resolve(),
+        destination.resolve(),
+    ]
+    run(command, native_environment(), output / "native.log")
     native = read_json(destination / "native.json")
     require(
         native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"],
@@ -85,6 +145,12 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
         "Native case coverage differs",
     )
     rows = {row["name"]: row for row in native["cases"]}
+    if compiled:
+        require(
+            native.get("backend_info", {}).get("backend") == "aoti"
+            and native["backend_info"].get("compiled_decode_backend") == "megaqwen",
+            "Wrong native compiled decode profile",
+        )
     trace = Trace(compact_states=compact)
     for case in cases:
         name = case["name"]
@@ -187,7 +253,6 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
         require(
             row["position"] == len(case["prompt"]) + len(ids) - 1, "Invalid generation position"
         )
-        maximum = metadata.get("prefill", {}).get("token_range", [2, 512])[1]
         lengths = list(map(len, prompt_chunks(case["prompt"], maximum))) + [1] * (len(ids) - 1)
         require(
             row["prefill_calls"] == sum(length > 1 for length in lengths)
@@ -205,4 +270,5 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
             if model == "qwen35"
             else (),
         )
+    _check_replays(trace, cases, chats, specs)
     return trace, native

@@ -278,6 +278,7 @@ struct SpecBase {
   }
 
   ModelType model_type;
+  bool compiled_megaqwen = false;
   int64_t capacity = 0, max_prefill = 0, vocab = 0;
   std::vector<int64_t> eos, compute_capability;
   Json prefill_metadata, metadata, shared_weights;

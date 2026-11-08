@@ -1,4 +1,4 @@
-"""Validate the native Flash CLI, deployment contract and exact Python AOTI parity."""
+"""Validate the native Qwen3 CLI, deployment contract and exact Python AOTI parity."""
 
 import argparse
 import json

@@ -16,7 +16,12 @@ struct Spec : xinfer::SpecBase {
 
   explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen3, "Unsupported model type");
-    xinfer::metadata_check(metadata.at("model_specific").empty(), "model_specific");
+    const auto &extra = metadata.at("model_specific");
+    compiled_megaqwen =
+        extra.contains("decode_backend") && extra.at("decode_backend") == "megaqwen";
+    xinfer::metadata_check(
+        extra.empty() || (compiled_megaqwen && xinfer::metadata_keys(extra, {"decode_backend"})),
+        "model_specific");
     xinfer::metadata_check(!state.empty() && state.size() % 2 == 0, "state");
     const std::vector<int64_t> shape{1, 8, capacity, 128};
     for (size_t i = 0; i < state.size(); ++i) {
@@ -26,6 +31,11 @@ struct Spec : xinfer::SpecBase {
                                  item.dtype == at::kBFloat16 && item.inplace,
                              "state");
       require(item.shape == shape, "Unsupported Flash cache shape");
+    }
+    if (compiled_megaqwen) {
+      require(state.size() == 56 && vocab == 151936,
+              "MegaQwen decode requires Qwen3-0.6B geometry");
+      require(capacity <= 40960, "MegaQwen context capacity exceeds 40960");
     }
   }
 };

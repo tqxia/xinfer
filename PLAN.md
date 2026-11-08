@@ -1,7 +1,7 @@
 # Qwen3 implementation and deferred work
 
-Current Qwen3-0.6B scope: one fused BF16 AOTInductor compilation profile using
-valid-prefix FlashAttention/native GQA, explicit caller-owned cache state and a
+Current Qwen3-0.6B scope: fused BF16 AOTInductor prefill with default Flash decode
+or optional compiled MegaQwen decode, explicit caller-owned cache state and a
 Python-free C++ generation loop. The eager-numerics profile and efficient
 compiled backend are retired. Authoritative commands and contracts are in the
 [Qwen3 guide](compiler/qwen3/README.md); historical numerical investigations are
@@ -13,6 +13,16 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
   reference execution and offline tokenization/text decoding.
 - Install the existing Flash module adapter before export. Export bounded
   dynamic prefill (2–512 tokens per call) and decode (one token) with the same ABI.
+- The optional MegaQwen profile implements Qwen3-0.6B decode without binding it
+  to an exact Hugging Face repository or revision. It exports the shared native
+  operator while retaining AOTI prefill, one canonical weight archive and
+  caller-owned KV.
+  Its compiler-owned implementation and C shim live in
+  `compiler/qwen3/kernels/megaqwen/`; the exporter embeds `libxinfer_megaqwen.so`
+  through the shared packaging helper. Standard Python and C++ AOTI loaders use
+  the same compiled decode graph. The exporter selects the decode implementation;
+  the shared runtime executes the packaged graph. Numerical acceptance remains a
+  separate BF16 HF gate; native parity alone does not establish it.
 - Use batch-one BF16, caller-owned `[1,8,C,128]` K/V tensors and an explicit
   shape-only CPU extent input. Export chooses the context capacity with
   `--max-context-length`, defaulting to the model config's declared context ceiling.

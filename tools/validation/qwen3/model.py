@@ -19,6 +19,7 @@ from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.runner import ExplicitRuntime, Stage, greedy
 from tools.common import prompt_chunks
 from tools.validation.common.context import capture_long_state, long_context_cases
+from tools.validation.qwen3.cases import extra_cases
 
 
 def default_model_dir(pair):
@@ -136,6 +137,7 @@ class Suite:
         self.vocab_size = pair["decode"]["vocab_size"]
         self.eos = pair["decode"]["eos_token_ids"]
         self.max_prefill = pair["prefill"]["token_range"][1]
+        self.megaqwen = pair["decode"]["model_specific"].get("decode_backend") == "megaqwen"
         torch.set_num_threads(1)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
@@ -270,6 +272,8 @@ class Suite:
             if case["name"] in ("long_prompt_513", "long_prompt_8191", "long_prompt_8192"):
                 prompt = [token for chunk in case["steps"][:-2] for token in chunk]
                 chats.append(dict(name=case["name"] + "_generate", prompt=prompt, limit=3))
+        if self.megaqwen:
+            teacher = extra_cases(teacher, seed)
         return teacher, chats
 
     def stage_cases(self, name, cases):
@@ -322,13 +326,18 @@ class Suite:
             finally:
                 runtime.close()
             adapter = FlashStep(model)
+            decode = adapter
+            if self.megaqwen:
+                from compiler.qwen3.megaqwen import MegaDecodeStep
+
+                decode = MegaDecodeStep(adapter.model, self.capacity)
             runtime = ExplicitRuntime(
-                dict(prefill=adapter, decode=adapter),
+                dict(prefill=adapter, decode=decode),
                 self.specs,
                 self.vocab_size,
                 self.capacity,
                 logits_only=True,
-                owner=adapter,
+                owner=(adapter, decode) if self.megaqwen else adapter,
                 require_write=True,
                 max_prefill=self.max_prefill,
             )
@@ -336,7 +345,7 @@ class Suite:
                 yield Stage("eager", runtime)
             finally:
                 runtime.close()
-            del adapter, runtime
+            del adapter, decode, runtime
         finally:
             del model
             torch.cuda.empty_cache()

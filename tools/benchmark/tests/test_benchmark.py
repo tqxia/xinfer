@@ -354,6 +354,31 @@ class SharedWeightComparison(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Incomparable shared weights: sources"):
             benchmark.validate_comparison(baseline, candidate, before, after)
 
+    def test_compiled_qwen3_backends_allow_only_derived_rope_differences(self):
+        baseline, candidate, before, after = self.profiles()
+        for entry in candidate.values():
+            entry["metadata"]["model_specific"] = {"decode_backend": "megaqwen"}
+        after["sources"].update(megaqwen_cos="cos-view", megaqwen_sin="sin-view")
+        benchmark.validate_comparison(baseline, candidate, before, after)
+        benchmark.validate_comparison(candidate, baseline, after, before)
+        after["sources"]["model.model.embed_tokens.weight"] = "changed-model-weight"
+        with self.assertRaisesRegex(ValueError, "Incomparable shared weights: sources"):
+            benchmark.validate_comparison(baseline, candidate, before, after)
+
+    def test_same_backend_still_compares_rope_and_other_model_policies(self):
+        baseline, candidate, before, after = self.profiles()
+        for profile in (baseline, candidate):
+            for entry in profile.values():
+                entry["metadata"]["model_specific"] = {"decode_backend": "megaqwen"}
+        before["sources"]["megaqwen_cos"] = "first-rope-table"
+        after["sources"]["megaqwen_cos"] = "different-rope-table"
+        with self.assertRaisesRegex(ValueError, "Incomparable shared weights: sources"):
+            benchmark.validate_comparison(baseline, candidate, before, after)
+        for entry in candidate.values():
+            entry["metadata"]["model_specific"] = {"decode_backend": "unknown"}
+        with self.assertRaisesRegex(ValueError, "Incomparable packages: prefill/model_specific"):
+            benchmark.validate_comparison(baseline, candidate, before, after)
+
     def test_changed_numerical_settings_are_rejected(self):
         baseline, candidate, before, after = self.profiles()
         for entry in candidate.values():
@@ -575,14 +600,15 @@ class ControllerContract(unittest.TestCase):
         )
         return args, library
 
-    def run_controller(self, args, library, model_type, fail=False):
+    def run_controller(self, args, library, model_type, fail=False, mutate_report=None):
         gpu = GpuSelection.GPU
         workers, gpu_records = [], []
 
         def query(command, **options):
             if command[0] == "ldd":
                 self.assertEqual(options["env"]["PYTHONHOME"], "/nonexistent-python-home")
-                return "libtorch_cpu.so => /fixture/libtorch_cpu.so\n"
+                linked = "libtorch_cpu.so => /fixture/libtorch_cpu.so\n"
+                return linked
             self.assertEqual(command[:3], ["nvidia-smi", "-i", gpu])
             gpu_records.append(command)
             return f"name, uuid\nGPU 2, {gpu}\n"
@@ -592,7 +618,14 @@ class ControllerContract(unittest.TestCase):
             if fail and len(workers) == 2:
                 raise RuntimeError("worker failed")
             workload = json.loads((args.output / "workload.json").read_text())
-            write_json(Path(command[-1]), worker_report(workload))
+            report = worker_report(workload)
+            if command[0] == sys.executable:
+                output = Path(command[command.index("--output") + 1])
+            else:
+                output = Path(command[3])
+            if mutate_report is not None:
+                mutate_report(report, command)
+            write_json(output, report)
             return 10
 
         weights = dict(identity_sha256="1" * 64, sources={})
@@ -603,6 +636,7 @@ class ControllerContract(unittest.TestCase):
             patch.object(benchmark, "wait_idle", return_value=[]) as idle,
             patch.object(benchmark, "run_worker", side_effect=worker),
             patch.object(benchmark.platform, "platform", return_value="test-platform"),
+            patch.object(benchmark.os, "sched_getaffinity", return_value={0}, create=True),
             patch.object(benchmark.subprocess, "check_output", side_effect=query),
             patch("compiler.common.weights.validate_shared_weights", return_value=weights),
             patch.object(hooks, "prepare_tokens", return_value=([7, 8], [9])) as prepare,

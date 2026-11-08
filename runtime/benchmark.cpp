@@ -34,6 +34,8 @@ int main(int argc, char **argv) {
       auto runtime = make_runtime();
       torch::cuda::synchronize();
       Json report = {{"profile", "cpp_aoti"},
+                     {"decode_backend", "aoti"},
+                     {"backend_info", runtime->decode_info()},
                      {"torch", TORCH_VERSION},
                      {"cpu_threads", at::get_num_threads()},
                      {"cuda_init_ms", init_ms},

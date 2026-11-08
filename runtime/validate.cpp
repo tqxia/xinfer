@@ -132,7 +132,8 @@ void check_native_libraries(Json &report) {
                 line.find("libtorch_python") == std::string::npos,
             "Python library loaded");
     const bool expected = line.find("libxinfer_attention_ops.so") != std::string::npos;
-    require(line.find("libxinfer_") == std::string::npos || expected,
+    const bool megaqwen = line.find("libxinfer_megaqwen.so") != std::string::npos;
+    require(line.find("libxinfer_") == std::string::npos || expected || megaqwen,
             "Unexpected custom-op library loaded");
     attention = attention || expected;
   }
@@ -168,6 +169,8 @@ int main(int argc, char **argv) {
       };
       Json report = {
           {"cases", Json::array()}, {"loader_pairs", 1}, {"state_tensors", spec.state.size()}};
+      report["decode_backend"] = "aoti";
+      report["backend_info"] = runtime->decode_info();
       if (qwen3)
         report["cache_buffers"] = persistent.size();
       for (const auto &c : cases) {

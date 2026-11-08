@@ -15,7 +15,7 @@ both models.
 | `cache_length`, `state` | Compiled context capacity and contiguous state shapes/types/ownership |
 | `export_options`, `tf32`, `triton_enable_fp_fusion`, `inductor_configs` | Export and numerical contract |
 | `package_bytes`, `package_sha256`, `shared_weights` | Package and archive integrity |
-| `model_specific` | DeltaNet numerical policy and minimal packing settings; empty for Qwen3 |
+| `model_specific` | DeltaNet numerical policy/packing settings, or the optional Qwen3 decode profile |
 
 `cache_length` is chosen at export with `--max-context-length`. Its default is
 the selected model's declared text-model context ceiling, not a fixed 16K value.
@@ -64,8 +64,11 @@ fills them with the requested value, and initializes replacement state to zero.
 - KV state uses full-capacity buffers. The adapter updates appended K/V positions
   in place. Conv/recurrent inputs remain unchanged and their returned tensors
   replace the previous state.
-- Attention uses the read-only valid-prefix Flash operator bundled in both
-  `.pt2` files.
+- Prefill and default compiled decode use the read-only valid-prefix Flash
+  operator bundled in both `.pt2` files. The optional Qwen3 MegaQwen decode
+  profile performs prefix attention inside its own bundled operator. This
+  internal kernel choice does not change the model entry's calling convention
+  or state ownership.
 - Qwen3 returns last-token logits only. Qwen3.5 returns last-token logits followed
   by every state tensor in descriptor order; returned K/V tensors alias their
   caller-owned input buffers. Logits have shape `[1, vocab_size]`.
@@ -84,6 +87,27 @@ do not change the calling convention.
 Numerical settings, toolchain compatibility and artifact checksums remain
 explicit metadata fields.
 
+Qwen3's default Flash profile retains `model_specific: {}`. The optional compiled
+MegaQwen decode profile uses exactly
+`{"decode_backend":"megaqwen"}` in both sidecars. The current implementation
+supports Qwen3-0.6B only and capacity at most 40,960. It does not require a
+particular Hugging Face repository or revision; the checkpoint fields record the
+selected weights and must agree between paired entries. The profile retains
+schema 5, runtime ABI 1 and the five-file bundle: model weights and immutable RoPE
+tables are shared external constants, KV remains caller-owned, and compiled graph
+temporaries hold decode scratch. Prefill uses AOTI Flash; every single-token call
+uses MegaQwen, including position zero. Both packages carry
+`libxinfer_megaqwen.so`, and the decode wrapper calls its C shim directly.
+Python and C++ validate the profile and model contract before graph loading;
+standard AOTI loading supplies the operator implementation. There is no separate
+MegaQwen operator version field or availability query. The exporter selects the
+decode implementation; runtime execution follows the packaged AOTI graph.
+
+Re-export retained MegaQwen packages that relied on a separate library or
+serialized `megaqwen_ops_abi_version`; current readers reject that retired key.
+Changing sidecars cannot supply the missing bundled implementation or turn a
+Flash decode graph into MegaQwen. Export a new complete bundle.
+
 Both entries must agree on all stable fields, including `model_specific`.
 Entry point, token range and package size/hash may differ. Unknown or missing
 versions, legacy aliases, invalid tensor contracts and mixed pairs are rejected
@@ -98,14 +122,15 @@ work needed to select independent implementations. Checkpoint
 manifests remain available to verify that eager references use the same checkpoint.
 
 Bundling preserves schema 5 and runtime ABI 1. The exporter selects the shared
-attention C shim through Torch's
-`aot_inductor.custom_ops_to_c_shims` and links the library through
+attention and optional MegaQwen C shims through Torch's
+`aot_inductor.custom_ops_to_c_shims` and links their libraries through
 `aot_inductor.custom_op_libs`. The Linux GCC linker creates the wrapper's native
 dependency and `$ORIGIN` search path during compilation. Torch's `package_aoti`
-includes the library with the compiler outputs. Standard Python and C++ AOTI
-loaders extract the library with the wrapper; native executables do not link it
-directly. LibTorch/CUDA remain environment dependencies. Retained
-external-library packages require re-export of both entries. Editing sidecars
+includes the libraries with the compiler outputs. Standard Python and C++ AOTI
+loaders extract them with the wrapper. Native executables do not link or install
+these shared libraries. Both decode profiles use the same AOTI runtime path.
+LibTorch/CUDA remain environment dependencies. Retained external-library packages
+require re-export of both entries. Editing sidecars
 or copying a library beside the package does not meet the bundled contract.
 
 `inductor_configs` records the effective contract flags

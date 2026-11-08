@@ -7,7 +7,13 @@ import subprocess
 import sys
 import time
 
-from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require, sha256, write_json
+from compiler.common.artifacts import (
+    MODEL_MANIFEST_NAME,
+    read_json,
+    require,
+    sha256,
+    write_json,
+)
 from compiler.common.metadata import (
     COMPARISON_EXCLUDED_FIELDS,
     FIELDS as METADATA_FIELDS,
@@ -395,14 +401,38 @@ def summarize(records, workload, reference):
 
 def validate_comparison(baseline, candidate, baseline_weights, candidate_weights):
     """Compare model inputs/numerical settings while allowing different compiled artifacts."""
+    decode_profiles = (
+        baseline["decode"]["metadata"]["model_specific"],
+        candidate["decode"]["metadata"]["model_specific"],
+    )
+    qwen3_backend_change = baseline["decode"]["metadata"]["model_type"] == candidate["decode"][
+        "metadata"
+    ]["model_type"] == "qwen3" and decode_profiles in (
+        ({}, {"decode_backend": "megaqwen"}),
+        ({"decode_backend": "megaqwen"}, {}),
+    )
     for kind in ("prefill", "decode"):
         before, after = (profile[kind]["metadata"] for profile in (baseline, candidate))
         for key in COMPARISON_FIELDS:
+            if key == "model_specific" and qwen3_backend_change:
+                require(
+                    (before[key], after[key]) == decode_profiles,
+                    "Incomparable packages: prefill/decode profiles differ",
+                )
+                continue
             require(before[key] == after[key], f"Incomparable packages: {kind}/{key}")
-    for key in ("identity_sha256", "sources"):
-        require(
-            baseline_weights[key] == candidate_weights[key], f"Incomparable shared weights: {key}"
-        )
+    require(
+        baseline_weights["identity_sha256"] == candidate_weights["identity_sha256"],
+        "Incomparable shared weights: identity_sha256",
+    )
+    # MegaQwen materializes immutable RoPE tables from the same checkpoint.
+    # Compare every canonical model tensor while permitting these derived buffers.
+    derived = {"megaqwen_cos", "megaqwen_sin"} if qwen3_backend_change else set()
+    before, after = (
+        {name: tensor for name, tensor in weights["sources"].items() if name not in derived}
+        for weights in (baseline_weights, candidate_weights)
+    )
+    require(before == after, "Incomparable shared weights: sources")
 
 
 def worker_environment(gpu, native=False):
@@ -461,7 +491,13 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         ],
         text=True,
     )
+    bundles = {}
     for label, directory in packages.items():
+        if directory in bundles:
+            entries, weights = bundles[directory]
+            environment["packages"][label] = entries
+            environment["shared_weights"][label] = weights
+            continue
         metadata = read_package_metadata(directory, model_type=model_type)
         entries = {}
         for kind, meta in metadata.items():
@@ -484,6 +520,7 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         environment["shared_weights"][label] = validate_shared_weights(
             directory, metadata["prefill"], metadata["decode"]
         )
+        bundles[directory] = entries, environment["shared_weights"][label]
     return environment
 
 

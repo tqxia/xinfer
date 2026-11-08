@@ -3,7 +3,11 @@
 import unittest
 
 from compiler.common.metadata import make_metadata, state_spec, validate_metadata
-from compiler.qwen3.packages import validate_model_metadata
+from compiler.qwen3.packages import (
+    MEGAQWEN_PROFILE,
+    decode_backend,
+    validate_model_metadata,
+)
 
 
 def metadata(*, cache_length=1024):
@@ -95,6 +99,67 @@ class Qwen3PackageContract(unittest.TestCase):
         item = metadata()
         item["output_order"] = ["last_logits"]
         self.reject(item, "Unsupported package metadata: output_order")
+
+
+def megaqwen_metadata():
+    result = metadata()
+    result["model_specific"] = dict(MEGAQWEN_PROFILE)
+    result["state"] = [
+        state_spec(layer, kind, [1, 8, 1024, 128], "bfloat16", "inplace")
+        for layer in range(28)
+        for kind in ("key", "value")
+    ]
+    return result
+
+
+class MegaQwenPackageContract(unittest.TestCase):
+    def test_default_and_optional_profiles_are_explicit(self):
+        self.assertEqual(decode_backend(metadata()), "aoti")
+        item = megaqwen_metadata()
+        validate_metadata(item)
+        validate_model_metadata(item)
+        self.assertEqual(decode_backend(item), "megaqwen")
+
+    def test_checkpoint_provenance_is_retained_without_an_exact_pin(self):
+        item = megaqwen_metadata()
+        provenance = {
+            "model_id": "example/compatible-qwen3",
+            "revision": "local-revision",
+            "manifest": {"repo_id": "example/compatible-qwen3", "revision": "local-revision"},
+        }
+        item["checkpoint"] = provenance.copy()
+        validate_metadata(item)
+        validate_model_metadata(item)
+        self.assertEqual(item["checkpoint"], provenance)
+
+    def test_unknown_or_malformed_profile_is_rejected(self):
+        for profile in (
+            {"decode_backend": "aoti"},
+            {"decode_backend": "unknown"},
+            {"decode_backend": True},
+            {**MEGAQWEN_PROFILE, "unexpected": 1},
+        ):
+            with self.subTest(profile=profile):
+                item = megaqwen_metadata()
+                item["model_specific"] = profile
+                with self.assertRaisesRegex(ValueError, "Unsupported package metadata"):
+                    validate_model_metadata(item)
+
+    def test_geometry_and_capacity_restrictions(self):
+        for change, message in (
+            (lambda m: m.update(vocab_size=100), "geometry"),
+            (lambda m: m.update(state=m["state"][:2]), "geometry"),
+        ):
+            item = megaqwen_metadata()
+            change(item)
+            with self.assertRaisesRegex(ValueError, message):
+                validate_model_metadata(item)
+        item = megaqwen_metadata()
+        item["cache_length"] = 40961
+        for state in item["state"]:
+            state["shape"][2] = 40961
+        with self.assertRaisesRegex(ValueError, "capacity exceeds"):
+            validate_model_metadata(item)
 
 
 if __name__ == "__main__":
