@@ -9,7 +9,7 @@ import subprocess
 import numpy as np
 import torch
 
-from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.attention import cache_extent
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import (
     MODEL_MANIFEST_NAME,
@@ -26,7 +26,7 @@ from compiler.common.metadata import (
 )
 from compiler.qwen3.packages import validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
-from tools.common import native_attention_library, prompt_chunks
+from tools.common import prompt_chunks
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.validation import read_ids as ids_from
@@ -58,13 +58,6 @@ for entry in metadata.values():
     validate_model_metadata(entry)
 spec = metadata["decode"]
 validate_shared_weights(packages, metadata["prefill"], spec)
-attention_library = native_attention_library(binary)
-require(
-    attention_library is not None,
-    "Qwen3 runtime is missing its required native attention library; rebuild the runtime",
-)
-os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
-load_attention_ops(attention_library, model="qwen3")
 torch.backends.cuda.matmul.allow_tf32 = False
 torch.backends.cudnn.allow_tf32 = False
 native_traces = []

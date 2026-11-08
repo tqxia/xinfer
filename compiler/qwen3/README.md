@@ -94,31 +94,47 @@ adapter is installed.
 
 ## Build before export
 
-The Qwen3 build always produces and links `libxinfer_attention_ops.so`; there is
-no attention build switch. Both Python export and native inference require this
-library and matching LibTorch/CUDA. The first CMake configuration fetches the
-pinned nlohmann/json headers; later builds reuse the cached dependency.
+The compiler's `xinfer_attention_ops` target builds
+`compiler/common/kernels/attention.cpp` and its C shim into
+`libxinfer_attention_ops.so`. Build that target before export or standalone
+operator tests. The default root build includes the library and runtime
+executables; explicit runtime targets build independently. The exporter embeds
+the library in both `.pt2` files. Native executables load it through those
+packages and require matching LibTorch/CUDA. The first CMake configuration
+fetches the pinned nlohmann/json headers; later builds reuse the cached
+dependency. Export links the shared
+attention C shim through the selected Linux GCC toolchain.
 
-Follow the target guide's native build command, including its CUDA runtime
-selection on L20. Python tools default to the native executables and attention
-library in the repository's `build/qwen3/`. Existing `--native` options select
-another executable. To override the Python attention library:
+Follow the target guide's build command, including `xinfer_attention_ops` and
+its CUDA runtime selection on L20. Python tools default to the native
+executables and attention library in the repository's `build/qwen3/`. Existing
+`--native` options select
+another executable. To select the attention library for export or standalone
+operator tests:
 
 ```bash
 export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 ```
 
 The library override is optional; the default is
-`build/qwen3/libxinfer_attention_ops.so`. Native binaries link the library directly
-and must be deployed with it and their matching LibTorch/CUDA libraries. A `.pt2`
-package does not bundle this external operator. Native linkage must remain free
-of `libpython` and `libtorch_python`.
+`build/qwen3/libxinfer_attention_ops.so`. Package inference and validation use
+the bundled implementation, independently of this build-time selection. Native
+binaries do not link or install a separate attention library and must remain
+free of `libpython` and `libtorch_python`.
 The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)
-covers installing and moving the native prefix, and selecting the installed
-attention library for Python.
+covers installing and moving the native executables with matching LibTorch/CUDA.
 
 Both models use `compiler/common/attention.py` for operator loading and export
-shape registration. Qwen3-specific package checks live in `packages.py`.
+shape registration, and `compiler/common/package.py` for bundling native
+dependencies through Torch's packager. Torch's `custom_ops_to_c_shims` and
+`custom_op_libs` settings generate direct C calls and normal library linkage.
+Scoped `LIBRARY_PATH` and `LD_RUN_PATH='$ORIGIN'` set link-time lookup and the
+wrapper's relative runtime search path. `package_aoti` explicitly embeds the
+library; the standard AOTI loaders handle extraction and model loading. See
+[attention packaging](../../docs/flash-attention.md#build-and-deployment) for
+ownership and export-process details. Qwen3-specific package checks live in
+`packages.py`. Re-export retained external-library packages; a metadata-only
+conversion cannot add their missing implementation.
 
 ## Export the canonical package pair
 
@@ -157,8 +173,8 @@ shape, dtype and update policy; readers derive contiguous strides and names.
 logits shape, valid-prefix Flash attention and the shape-only CPU extent input.
 Qwen3 needs no additional `model_specific` fields because its geometry is
 available in the state descriptors. The runtime ABI replaces the former fixed
-batch/dtype/attention/cache fields. Readers validate the actual attention-library
-ABI, state contract, checkpoint, Torch version, GPU architecture, C++ ABI and
+batch/dtype/attention/cache fields. Readers validate the state contract,
+checkpoint, Torch version, GPU architecture, C++ ABI and
 numerical settings. See the [ABI definition](../../docs/package-metadata.md#runtime-abi-1).
 
 Export logs contain JSON events with dependency versions, Torch's CUDA version,
@@ -176,8 +192,9 @@ archive identity and every constant's shape/dtype; missing or mixed weights are
 errors. Export stages both packages and graph dumps, writes the archive
 once, and publishes the completed directory after both entries succeed. Both
 metadata files contain the same final archive checksum. Deploy the five required
-files (two `.pt2`, two `.json` and `weights.pt`) together with the native attention
-library. Copying only the two `.pt2` files is insufficient.
+files (two `.pt2`, two `.json` and `weights.pt`). Each `.pt2` contains the same
+attention library; its bytes are covered by the package checksum. LibTorch/CUDA
+remain environment dependencies. Copying only the two `.pt2` files is insufficient.
 
 ### Package contract
 
@@ -217,8 +234,9 @@ capability before loading GPU weights. The common metadata reader validates
 the schema version, model identity and all shared contracts. Native file
 preflight verifies package and archive sizes and checksums before GPU weight
 allocation. Missing or unsupported schema versions are rejected. Schema 1,
-schema 2, schema 3, schema 4 and unversioned sidecars must be converted or the bundle re-exported; there are no
-legacy field aliases. `model_type="qwen3"` selects the Qwen3 state policy after
+schema 2, schema 3, schema 4 and unversioned sidecars need migration or re-export;
+external-library bundles always require re-export. There are no legacy field
+aliases. `model_type="qwen3"` selects the Qwen3 state policy after
 common parsing.
 This is an inference-only, unpadded, batch-one Qwen3-0.6B contract; arbitrary
 masks, training and attention-weight requests are unsupported.
@@ -230,9 +248,10 @@ metadata. Qwen3 hooks live in `tools/validation/qwen3/model.py`; the shipping-CL
 contract tool remains in that directory. The HF stage generates reference tokens
 and logits during validation, before adapters or compilation are applied.
 Model loading and tensor cache support remain in `compiler/qwen3/model.py`.
-The runtime validator checks package metadata, resolves the attention library
-linked by the selected native executable, and calls the shared `load_attention_ops`
-loader directly. `compiler/qwen3/packages.py` retains the package ABI checks.
+The runtime validator checks package metadata and shared-weight integrity,
+then loads the bundled attention implementation for eager execution and shape
+registration. Python AOTI and C++ load the dependency through their compiled
+wrappers. `compiler/qwen3/packages.py` retains the package ABI checks.
 Preparation and shared validation/benchmark tooling tests live under
 `tools/<area>/tests/`; see the shared
 [CPU unit-test commands](../../docs/development-tools.md#cpu-unit-tests).

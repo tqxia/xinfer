@@ -10,7 +10,8 @@ historical evidence; their commands and results may describe retired code.
 ## Code ownership
 
 - `compiler/<model>/` owns model loading, adapters, kernels and export.
-  `compiler/common/` owns shared compilation, metadata and weight helpers.
+  `compiler/common/` owns shared compilation, metadata and weight helpers;
+  `compiler/common/kernels/` owns shared native kernels and their C shims.
 - `runtime/common/` owns shared native loading, state, generation and measurement.
   Model-specific runtime headers validate their model's ABI.
 - `tools/` owns preparation, numerical validation, benchmarking and diagnostics.
@@ -31,8 +32,10 @@ existing environments and use `--venv` to choose another destination.
 
 Run Python tools as modules from the repository root with the matching model
 interpreter. Build native code against that interpreter's LibTorch in
-`build/<model>/`. Build the native attention library before model export.
-Use environment checking to verify the selected stack and configured build.
+`build/<model>/`. Build the compiler's `xinfer_attention_ops` target before
+model export or standalone attention tests. Runtime targets build independently
+and consume the kernels carried by compiled packages. Use environment checking
+to verify the selected stack and configured build.
 
 ## Correctness contracts
 

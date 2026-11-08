@@ -6,10 +6,13 @@ use fresh output directories.
 Select `Q3_PY`, `Q35_PY` and `CMAKE` with the
 [target environment guide](../environments/README.md), and set
 `BUILD="$PWD/build/qwen3"` for the Qwen3 commands below. Each model's Python
-tools default to executables and the attention library in `build/<model>/`;
-existing path options and `XINFER_ATTENTION_OPS_LIBRARY` override those defaults.
-Shared logged subprocess execution and native-library discovery live in
-`tools/common.py`.
+tools default to executables in `build/<model>/`; existing native-path options
+override those defaults. Export and standalone operator tests select the
+attention library from that build or `XINFER_ATTENTION_OPS_LIBRARY`. Build the
+compiler-owned `xinfer_attention_ops` target first; its implementation and C shim
+live in `compiler/common/kernels/`. Runtime targets build independently. Package
+inference and validation use the embedded implementation. Shared logged
+subprocess execution and prompt partitioning live in `tools/common.py`.
 
 ## Formatting
 
@@ -165,7 +168,9 @@ CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_generation_contract
 performs fresh file preflight: it hashes prefill and decode once each against the
 sidecars and embedded weight manifest, hashes the weight archive once, and
 parses its manifest once. All integrity checks complete before GPU weight
-allocation. These checks repeat for every runtime construction.
+allocation. These checks repeat for every runtime construction. File preflight
+treats `.pt2` files as whole artifacts, including their bundled dependencies;
+it does not inspect or compare attention-library payloads.
 
 Native `load_ms` includes file preflight, weight loading and loader setup.
 Earlier reports excluded the file checks performed during `Spec` construction.
@@ -218,10 +223,16 @@ runtime, including package preflight and ownership of shared weights.
 `qwen3/validate_runtime.py` and `qwen35/validate_runtime.py` retain separate
 CLI/deployment contract checks and tokenize their prompts from the local
 checkpoint. These replace the former separate Python-AOTI,
-model and end-to-end numerical entry points. Validation uses the shared
-`compiler.common.attention.load_attention_ops` loader after checking package
-metadata and resolving the attention library linked by the selected native
-executable. A missing linked library is rejected before operator loading.
+model and end-to-end numerical entry points. The HF → eager → AOTI chain uses the shared
+`tools.validation.common.attention.load_packaged_attention_ops` helper for eager
+execution and shape registration after checking metadata and shared-weight
+integrity. This helper selects the prefill package's operator for eager execution,
+or reuses an already registered eager operator. It does not compare attention
+payloads between entries. The generic weight loaders retain package and archive
+integrity checks without inspecting the attention payload.
+The two runtime validators use standard Python and C++ package loaders, whose
+wrappers load the embedded native dependency, without an eager operator preload.
+Native executables do not link it directly.
 Validation tooling tests live in
 `tools/validation/tests/`; compiler/model/operator tests remain under
 `compiler/*/tests/`. DeltaNet numerical and behavior checks live in
@@ -334,8 +345,10 @@ within a model and target.
 and native executable default from package identity; `--model-dir` and `--native`
 select another local checkpoint path or build. The native defaults are
 `build/qwen3/xinfer_benchmark` and `build/qwen35/xinfer_benchmark`.
-Deploy the shared attention library with the native executable and matching
-LibTorch, following the runtime installation guide.
+Deploy the complete five-file model bundle with the native executable and
+matching LibTorch/CUDA, following the runtime installation guide. Both `.pt2`
+files carry attention; benchmark environment reports record whole-package
+checksums for each profile and entry.
 
 Defaults are prompt lengths 25, 128 and 512, 64 fixed decode steps, two warmups,
 five measured requests per case and three process rounds. `compare` defaults to

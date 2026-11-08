@@ -6,7 +6,10 @@ from pathlib import Path
 from compiler.common.artifacts import default_build_dir, require
 
 
-ATTENTION_OPS_ABI_VERSION = 1
+ATTENTION_LIBRARY = "libxinfer_attention_ops.so"
+ATTENTION_C_SHIM = """AOTITorchError aoti_torch_cuda_flash_attention(
+    AtenTensorHandle q, AtenTensorHandle k, AtenTensorHandle v,
+    AtenTensorHandle extent, double scale, AtenTensorHandle* output)"""
 _loaded = None
 
 
@@ -19,13 +22,13 @@ def cache_extent(valid_length):
 
 def load_attention_ops(library=None, *, model=None):
     global _loaded
-    selected = library or os.environ.get("XINFER_ATTENTION_OPS_LIBRARY")
-    if not selected and _loaded is not None:
+    if library is None and _loaded is not None:
         return
+    selected = library or os.environ.get("XINFER_ATTENTION_OPS_LIBRARY")
     if not selected:
         if model is None:
             raise ValueError("Select a model to locate its default native attention library")
-        selected = default_build_dir(model) / "libxinfer_attention_ops.so"
+        selected = default_build_dir(model) / ATTENTION_LIBRARY
     library = Path(selected).resolve()
     if _loaded is not None:
         if _loaded != library:
@@ -36,14 +39,6 @@ def load_attention_ops(library=None, *, model=None):
     import torch
 
     torch.ops.load_library(str(library))
-    try:
-        version = torch.ops.xinfer.attention_ops_abi_version()
-    except (AttributeError, RuntimeError) as error:
-        raise ValueError("Native attention ABI query is missing; rebuild the runtime") from error
-    require(
-        type(version) is int and version == ATTENTION_OPS_ABI_VERSION,
-        "Unsupported native attention ABI",
-    )
 
     @torch.library.register_fake("xinfer::flash_attention")
     def fake(q, k, v, kv_extent, scale):
@@ -68,3 +63,16 @@ def load_attention_ops(library=None, *, model=None):
         return q.new_empty(q.shape)
 
     _loaded = library
+
+
+def attention_library():
+    """Return the implementation selected by the eager/export adapter."""
+    require(_loaded is not None, "Load the native attention library before export")
+    return _loaded
+
+
+def attention_c_shims():
+    """Return Inductor's call declarations for the registered attention operator."""
+    import torch
+
+    return {torch.ops.xinfer.flash_attention.default: [ATTENTION_C_SHIM]}

@@ -40,29 +40,71 @@ module paths by adding an `original` component.
 
 ## Build and deployment
 
-Qwen3 always builds and links `libxinfer_attention_ops.so`. Build before export,
-using matching LibTorch/CUDA and the toolchain commands in the
-[Qwen3 guide](../compiler/qwen3/README.md#build-before-export). Python resolves
-`build/qwen3/libxinfer_attention_ops.so` for Qwen3 and
-`build/qwen35/libxinfer_attention_ops.so` for Qwen3.5 by default;
-`XINFER_ATTENTION_OPS_LIBRARY` optionally selects another build or installed
-library. Native targets link it directly; `.pt2` does not bundle it.
-Deploy the library alongside the binaries and their matching dependencies.
+The compiler owns the native implementation, header and C shim in
+`compiler/common/kernels/`. Its `xinfer_attention_ops` CMake target produces
+`libxinfer_attention_ops.so` for export and standalone operator tests. Runtime
+executables build independently and load the packaged implementation.
+Build that compiler target before export, using matching LibTorch/CUDA and the
+toolchain commands in the
+[Qwen3 guide](../compiler/qwen3/README.md#build-before-export). Python export and
+standalone operator tests resolve `build/qwen3/libxinfer_attention_ops.so` for
+Qwen3 and `build/qwen35/libxinfer_attention_ops.so` for Qwen3.5 by default;
+`XINFER_ATTENTION_OPS_LIBRARY` can select another build.
+
+Both exporters compile attention calls through a shared C shim in that library.
+`compiler/common/attention.py` supplies the declaration and operator mapping;
+the exporters pass them through the shared-weight compiler to the generic
+packaging helper.
+`aot_inductor.custom_ops_to_c_shims` selects the direct C entry point, and
+`aot_inductor.custom_op_libs` adds the native library to the ordinary link.
+The shim borrows input tensor handles, calls the same native attention
+implementation and transfers the output handle to AOTI. Torch's error bridge
+propagates native exceptions. Eager execution and export retain the operator
+schema and fake implementation.
+
+On the Linux GCC export toolchain, `compiler/common/package.py` temporarily sets
+`LIBRARY_PATH` to find the build library and `LD_RUN_PATH='$ORIGIN'` to make the
+linker record lookup beside the wrapper. Both variables are restored after
+compilation. Each export CLI runs compilation sequentially; independent
+concurrent exports must use separate processes because these variables are
+process-wide. Torch's `package_aoti` explicitly includes the library in each
+`.pt2` alongside the compiler outputs. The wrapper's dependency and relative
+search path are produced during its original link.
+
+The standard Python and C++ AOTI loaders extract the library beside the wrapper;
+the system linker loads it and registers the operator. Compiled attention calls
+use the C shim directly. Current exporters select one attention library for both
+entries. Export, loading and tooling do not compare attention-library hashes or
+bytes. Generic Python and C++ weight loaders verify whole-package and
+shared-archive checksums, which cover the embedded library.
+
+Independent prefill/decode implementations are deferred until a concrete use case.
+The current library shares a SONAME, C-shim symbol and process-wide Torch operator
+registration. Distinct implementations would need separate linkage identities or
+dispatch within one library; removing the equality guard does not implement that
+selection. Shared C-shim packaging has not yet been validated on GB10; that
+validation is deferred.
+
+Native executables do not link or install a separate attention library. Deploy
+the two `.pt2`, two metadata JSON files and `weights.pt` with matching
+LibTorch/CUDA. Eager validation selects the prefill package's implementation
+before installing adapters, or reuses an already registered eager operator.
+Re-export external-library packages with the
+current exporter; changing their JSON sidecars does not supply the library.
 
 `runtime_abi_version: 1` defines batch-one BF16 prefix Flash attention,
 full-capacity caller-owned caches and the shape-only CPU extent input. The
 former fixed backend/cache fields are replaced by this versioned contract.
-Python and C++ query the loaded attention library's actual ABI 1 and retain
-state, checkpoint/toolchain/architecture and numerical checks. See the
+Python and C++ retain state, checkpoint/toolchain/architecture and numerical
+checks. See the
 [ABI definition](package-metadata.md#runtime-abi-1).
 Old efficient packages and legacy eager-numerics packages require re-export.
-Compatible ordinary Flash packages retain the same compiled ABI, but their JSON
-sidecars must use the [schema 5 metadata contract](package-metadata.md). Verified
-schema 1 through schema 4 and unversioned sidecars can be converted in a
-separate bundle directory without changing compatible compiled graphs or
-weights. A conversion retains the compiled `cache_length`, sets schema 5 and
-removes any former `max_prompt_length` field. Calling applications own any
-additional input policy; conversion does not expand the graph.
+Bundling preserves the compiled ABI and the
+[schema 5 metadata contract](package-metadata.md). Metadata-only conversion of
+older sidecars is sufficient only when the compiled packages already include
+the required attention library. Retained packages that depend on a separate
+library need re-export. Calling applications own any additional input policy;
+sidecar conversion does not expand the graph.
 Re-export for a chosen larger capacity and rebuild the attention library for
 generalized capacity support. The previously recorded 16,384-slot Qwen3 profile
 completed ordinary export and C++ execution on L20, with bitwise native/Python

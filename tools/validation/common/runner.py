@@ -6,7 +6,7 @@ from importlib import import_module
 import torch
 
 from compiler.common.artifacts import require
-from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.attention import cache_extent
 from compiler.common.metadata import read_package_metadata
 from compiler.common.tests.tensors import bits_equal, cpu_copy
 from compiler.common.weights import SharedWeights, validate_shared_weights
@@ -142,7 +142,6 @@ def load_aoti_runtime(packages, *, model_type, specs):
     decode = pair["decode"]
     validate_shared_weights(packages, pair["prefill"], decode)
     require(specs == decode["state"], "Runtime state descriptors differ from package")
-    load_attention_ops(model=model_type)
     weights = SharedWeights(packages, decode["shared_weights"])
     return ExplicitRuntime(
         {kind: weights.load(kind) for kind in ("prefill", "decode")},

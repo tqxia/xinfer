@@ -10,6 +10,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest.mock import Mock, patch
 
 from tools.benchmark import common as benchmark
@@ -543,7 +544,11 @@ class ControllerContract(unittest.TestCase):
             pair = metadata_pair(model_type)
             for kind, metadata in pair.items():
                 package = directory / f"{kind}.pt2"
-                package.write_bytes(b"compiled package fixture")
+                with zipfile.ZipFile(package, "w") as archive:
+                    archive.writestr(
+                        "fixture/data/aotinductor/model/libxinfer_attention_ops.so",
+                        library.read_bytes() + label.encode(),
+                    )
                 metadata["checkpoint"]["manifest"] = manifest
                 metadata.update(
                     package_bytes=package.stat().st_size, package_sha256=sha256(package)
@@ -599,7 +604,6 @@ class ControllerContract(unittest.TestCase):
             patch.object(benchmark, "run_worker", side_effect=worker),
             patch.object(benchmark.platform, "platform", return_value="test-platform"),
             patch.object(benchmark.subprocess, "check_output", side_effect=query),
-            patch("tools.common.native_attention_library", return_value=library),
             patch("compiler.common.weights.validate_shared_weights", return_value=weights),
             patch.object(hooks, "prepare_tokens", return_value=([7, 8], [9])) as prepare,
         ):
@@ -657,9 +661,13 @@ class ControllerContract(unittest.TestCase):
                                 )
                         environment = json.loads((args.output / "environment.json").read_text())
                         self.assertEqual(environment["gpu_uuid"], GpuSelection.GPU)
-                        self.assertEqual(
-                            environment["attention_library"]["sha256"], sha256(library)
-                        )
+                        self.assertNotIn("attention_library", environment)
+                        for entries in environment["packages"].values():
+                            for entry in entries.values():
+                                self.assertNotIn("attention_library_sha256", entry)
+                                self.assertEqual(
+                                    entry["sha256"], entry["metadata"]["package_sha256"]
+                                )
                         self.assertEqual(environment["binary_sha256"], sha256(args.native))
                         self.assertEqual(
                             environment["workload_sha256"], sha256(args.output / "workload.json")
@@ -681,6 +689,38 @@ class ControllerContract(unittest.TestCase):
                         self.assertFalse((args.output / "correctness.json").exists())
                         self.assertFalse(hasattr(args, "validation"))
                         self.assertFalse(hasattr(args, "reference"))
+
+    def test_environment_does_not_compare_attention_payloads(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args, _ = self.fixtures(Path(temporary), "qwen3")
+            package = args.packages / "decode.pt2"
+            with zipfile.ZipFile(package, "w") as archive:
+                archive.writestr(
+                    "fixture/data/aotinductor/model/libxinfer_attention_ops.so",
+                    b"different attention implementation",
+                )
+            sidecar = args.packages / "decode.json"
+            metadata = json.loads(sidecar.read_text())
+            metadata.update(package_bytes=package.stat().st_size, package_sha256=sha256(package))
+            write_json(sidecar, metadata)
+            args.output.mkdir()
+            write_json(args.output / "workload.json", {})
+            with (
+                patch.object(benchmark.subprocess, "check_output", return_value="fixture"),
+                patch("compiler.common.weights.validate_shared_weights"),
+            ):
+                environment = benchmark.capture_environment(
+                    args,
+                    args.output,
+                    GpuSelection.GPU,
+                    "qwen3",
+                    {"cpp_aoti": args.packages},
+                    qwen3_benchmark.validate_model_metadata,
+                )
+            entries = environment["packages"]["cpp_aoti"]
+            self.assertNotEqual(entries["prefill"]["sha256"], entries["decode"]["sha256"])
+            self.assertEqual(entries["decode"]["sha256"], sha256(package))
+            self.assertNotIn("attention_library_sha256", entries["decode"])
 
     def test_worker_failure_persists_completed_runs_and_failure_report_for_both_models(self):
         for model_type in ("qwen3", "qwen35"):

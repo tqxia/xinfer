@@ -26,10 +26,7 @@ class NativeLibrarySelection(unittest.TestCase):
         self.default = self.root / "build/qwen3/libxinfer_attention_ops.so"
         self.enterContext(patch("compiler.common.artifacts.ROOT", self.root))
         self.torch = SimpleNamespace(
-            ops=SimpleNamespace(
-                load_library=Mock(),
-                xinfer=SimpleNamespace(attention_ops_abi_version=Mock(return_value=1)),
-            ),
+            ops=SimpleNamespace(load_library=Mock()),
             library=SimpleNamespace(register_fake=Mock(return_value=lambda function: function)),
         )
 
@@ -114,26 +111,6 @@ class NativeLibrarySelection(unittest.TestCase):
             attention.load_attention_ops(self.library)
         self.torch.ops.load_library.assert_called_once_with(str(self.library))
         self.torch.library.register_fake.assert_called_once_with("xinfer::flash_attention")
-
-    def test_incompatible_library_is_rejected_before_shape_registration(self):
-        self.torch.ops.xinfer.attention_ops_abi_version.return_value = 2
-        with (
-            patch.dict("sys.modules", {"torch": self.torch}),
-            self.assertRaisesRegex(ValueError, "Unsupported native attention ABI"),
-        ):
-            attention.load_attention_ops(self.library)
-        self.torch.library.register_fake.assert_not_called()
-        self.assertIsNone(attention._loaded)
-
-    def test_missing_native_abi_query_requires_a_rebuild(self):
-        del self.torch.ops.xinfer.attention_ops_abi_version
-        with (
-            patch.dict("sys.modules", {"torch": self.torch}),
-            self.assertRaisesRegex(ValueError, "Native attention ABI query is missing"),
-        ):
-            attention.load_attention_ops(self.library)
-        self.torch.library.register_fake.assert_not_called()
-        self.assertIsNone(attention._loaded)
 
     def test_conflicting_library_is_rejected(self):
         with patch.dict("sys.modules", {"torch": self.torch}):

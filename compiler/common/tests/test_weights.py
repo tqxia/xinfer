@@ -14,7 +14,8 @@ import zipfile
 import torch
 import torch.nn.functional as F
 
-from compiler.common.artifacts import sha256
+from compiler.common.artifacts import json_sha256, sha256
+from compiler.common.package import compile_package
 from compiler.common.weights import (
     SHARED_WEIGHT_OPTIONS,
     SharedWeights,
@@ -99,13 +100,17 @@ class SharedWeightBundle(unittest.TestCase):
         return destination
 
     def rewrite_archive(
-        self, directory, mutate=None, *, update_checksums=True, include_mapping=True
+        self, directory, mutate=None, *, update_checksums=True, include_mapping=True, identity=None
     ):
         payload = mapping(directory)
+        if identity is not None:
+            payload.update(identity=identity, identity_sha256=json_sha256(identity))
         if mutate:
             mutate(payload)
         path = directory / "weights.pt"
         archive = torch.jit.load(str(path), map_location="cpu")
+        if identity is not None:
+            archive.identity = payload["identity_sha256"]
         rewritten = directory / "rewritten.pt"
         extra = {"weights.json": json.dumps(payload)} if include_mapping else {}
         torch.jit.save(archive, str(rewritten), _extra_files=extra)
@@ -113,6 +118,8 @@ class SharedWeightBundle(unittest.TestCase):
         contract = dict(
             metadata(directory)["shared_weights"], bytes=path.stat().st_size, sha256=sha256(path)
         )
+        if identity is not None:
+            contract["identity"] = payload["identity_sha256"]
         if update_checksums:
             for kind in ("prefill", "decode"):
                 package = metadata(directory, kind)
@@ -169,6 +176,25 @@ class SharedWeightBundle(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
             validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
 
+    def test_model_identity_does_not_select_operator_payload_checks(self):
+        for model in ("qwen3-0.6b", "qwen3.5"):
+            with self.subTest(model=model):
+                directory = self.copy_bundle()
+                contract = self.rewrite_archive(
+                    directory, identity=dict(model=model, revision="cpu-fixture")
+                )
+                manifest = validate_shared_weights(
+                    directory, metadata(directory, "prefill"), metadata(directory, "decode")
+                )
+                self.assertEqual(manifest["identity"]["model"], model)
+                pool = SharedWeights(directory, contract)
+                with torch.inference_mode():
+                    for kind, rows in (("decode", 1), ("prefill", 3)):
+                        compiled = pool.load(kind)
+                        torch.testing.assert_close(
+                            compiled(inputs(rows)), self.model(inputs(rows)), rtol=0, atol=0
+                        )
+
     def test_real_cpu_packages_share_tied_strided_storage(self):
         manifest = validate_shared_weights(self.bundle, self.metadata, self.metadata)
         pool = SharedWeights(self.bundle, self.contract)
@@ -193,9 +219,30 @@ class SharedWeightBundle(unittest.TestCase):
                 )
 
     def test_compile_options_have_one_owner_and_do_not_mutate_the_caller(self):
+        from torch._inductor import config
+
         directory = self.root / "compile-options"
         requested = {"emulate_precision_casts": True, "aot_inductor.package_constants_in_so": True}
         original = dict(requested)
+        # An unused operator exercises shim forwarding without needing a native DSO.
+        # OpOverload keys also catch accidental inclusion in JSON metadata/options.
+        operator = torch.ops.aten.sin.default
+        shims = {
+            operator: [
+                "AOTITorchError aoti_torch_cpu_sin("
+                "AtenTensorHandle input, AtenTensorHandle* output)"
+            ]
+        }
+        original_shims = {operator: list(shims[operator])}
+        previous_shims = dict(config.aot_inductor.custom_ops_to_c_shims)
+        real_compile = torch._inductor.aot_compile
+
+        def compile_with_shims(*args, **kwargs):
+            self.assertEqual(
+                config.aot_inductor.custom_ops_to_c_shims,
+                {**previous_shims, **shims},
+            )
+            return real_compile(*args, **kwargs)
 
         def prepare(kind, stage):
             exported, factory = export_entry(self.model, kind, stage)
@@ -206,16 +253,27 @@ class SharedWeightBundle(unittest.TestCase):
         with (
             torch.inference_mode(),
             patch(
-                "torch._inductor.aoti_compile_and_package",
-                wraps=torch._inductor.aoti_compile_and_package,
+                "compiler.common.weights.compile_package",
+                wraps=compile_package,
             ) as compile_graph,
+            patch("torch._inductor.aot_compile", side_effect=compile_with_shims) as compile_native,
         ):
-            compile_shared(directory, prepare, identity=self.identity, inductor_configs=requested)
+            compile_shared(
+                directory,
+                prepare,
+                identity=self.identity,
+                inductor_configs=requested,
+                custom_op_shims=shims,
+            )
         self.assertEqual(requested, original)
+        self.assertEqual(shims, original_shims)
+        self.assertEqual(config.aot_inductor.custom_ops_to_c_shims, previous_shims)
         self.assertEqual(compile_graph.call_count, 2)
+        self.assertEqual(compile_native.call_count, 2)
         first, second = (call.kwargs["inductor_configs"] for call in compile_graph.call_args_list)
         self.assertIsNot(first, second)
         for kind, call in zip(("prefill", "decode"), compile_graph.call_args_list):
+            self.assertIs(call.kwargs["custom_op_shims"], shims)
             recorded = metadata(directory, kind)["inductor_configs"]
             self.assertEqual(recorded, call.kwargs["inductor_configs"])
             for key, value in {**requested, **SHARED_WEIGHT_OPTIONS}.items():

@@ -18,6 +18,7 @@ from compiler.common.artifacts import (
     sha256,
 )
 from compiler.common.metadata import finalize_metadata, validate_metadata, validate_metadata_pair
+from compiler.common.package import compile_package
 
 
 SHARED_WEIGHT_OPTIONS = {
@@ -271,7 +272,16 @@ def _register(tensor, data, storages, cache):
     return view_name
 
 
-def _compile_entry(kind, directory, export_entry, data, storages, inductor_configs):
+def _compile_entry(
+    kind,
+    directory,
+    export_entry,
+    data,
+    storages,
+    inductor_configs,
+    native_libraries,
+    custom_op_shims,
+):
     """Finish one graph before exporting the next, retaining only CPU tensors."""
     exported, metadata_factory = export_entry(kind, directory)
     compiled_path = directory / f"{kind}.pt2"
@@ -281,8 +291,12 @@ def _compile_entry(kind, directory, export_entry, data, storages, inductor_confi
         flush=True,
     )
     with _capture_constants() as captured:
-        torch._inductor.aoti_compile_and_package(
-            exported, package_path=str(compiled_path), inductor_configs=options
+        compile_package(
+            exported,
+            compiled_path,
+            inductor_configs=options,
+            native_libraries=native_libraries,
+            custom_op_shims=custom_op_shims,
         )
     compiled = torch._inductor.aoti_load_package(str(compiled_path))
     names = compiled.get_constant_fqns()
@@ -317,7 +331,15 @@ def _compile_entry(kind, directory, export_entry, data, storages, inductor_confi
     return dict(metadata, inductor_configs=options)
 
 
-def compile_shared(directory, export_entry, *, identity, inductor_configs):
+def compile_shared(
+    directory,
+    export_entry,
+    *,
+    identity,
+    inductor_configs,
+    native_libraries=(),
+    custom_op_shims=None,
+):
     """Compile both entries and publish one complete shared-weight bundle.
 
     export_entry(kind, staging_directory) returns an ExportedProgram and an
@@ -355,7 +377,16 @@ def compile_shared(directory, export_entry, *, identity, inductor_configs):
         staging = Path(temporary) / "bundle"
         staging.mkdir()
         metadata = {
-            kind: _compile_entry(kind, staging, export_entry, data, storages, inductor_configs)
+            kind: _compile_entry(
+                kind,
+                staging,
+                export_entry,
+                data,
+                storages,
+                inductor_configs,
+                native_libraries,
+                custom_op_shims,
+            )
             for kind in ("prefill", "decode")
         }
         needed_views = {

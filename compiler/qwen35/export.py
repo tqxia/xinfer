@@ -13,7 +13,12 @@ from compiler.common.context import model_context_limit, resolve_context_length
 from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.weights import compile_shared
-from compiler.common.attention import cache_extent
+from compiler.common.attention import (
+    cache_extent,
+    attention_library,
+    attention_c_shims,
+    load_attention_ops,
+)
 from compiler.common.metadata import make_metadata
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
@@ -248,11 +253,14 @@ def main():
         return exported, metadata_factory
 
     with torch.inference_mode():
+        load_attention_ops(model="qwen35")
         compile_shared(
             args.output,
             export_entry,
             identity=dict(model="qwen3.5", checkpoint=checkpoint),
             inductor_configs=options,
+            native_libraries=[attention_library()],
+            custom_op_shims=attention_c_shims(),
         )
     print(f"Saved prefill/decode bundle to {args.output}", flush=True)
 

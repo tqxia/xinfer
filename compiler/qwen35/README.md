@@ -177,10 +177,10 @@ retains C++ coverage.
 `torch.cond` retains both GDN branches in the exported graph. Each branch uses
 `torch.library.triton_op` and `wrap_triton` so AOTInductor can compile the kernels and
 include their cubins in each `.pt2` package. The C++ loader needs the two packages,
-their JSON metadata, `weights.pt`, `libxinfer_attention_ops.so` and matching
-LibTorch/CUDA dependencies. It needs no Python or Triton installation at
-inference time. GDN kernels remain inside the packages; the shared native
-library supplies FlashAttention.
+their JSON metadata, `weights.pt` and matching LibTorch/CUDA dependencies.
+It needs no Python or Triton installation at inference time. Each `.pt2`
+contains its GDN kernels and `libxinfer_attention_ops.so`; the standard AOTI
+loader extracts the attention library and loads it with the compiled wrapper.
 
 The separate cubin builder, CUDA-driver launcher and ATen chunk implementation
 have been removed. Export has no backend or dynamic-prefill switch. Older fixed
@@ -269,20 +269,30 @@ Run from the repository root. One export invocation compiles both entry points
 sequentially. Choose a new or empty `--output` directory for each experiment;
 export refuses to replace a populated directory.
 
-Build the native targets first using the target environment guide. Qwen3.5
-Python tools default to native executables and the FlashAttention library in
-the repository's `build/qwen35/`. To select another library for Python:
+Build the compiler's `xinfer_attention_ops` target before export or standalone
+attention tests, using the target environment guide. Its native attention
+implementation and C shim live in `compiler/common/kernels/`. The default root
+build includes compiler kernels and runtime executables; explicit runtime targets
+build independently. Qwen3.5 tools use the library and native executables in the
+repository's `build/qwen35/`. To select another build-time library:
 
 ```bash
 export XINFER_ATTENTION_OPS_LIBRARY="$BUILD/libxinfer_attention_ops.so"
 ```
 
 The override is optional; the default is `build/qwen35/libxinfer_attention_ops.so`.
-Native full-model targets link the library directly. Deploy it with the native
-executable and matching LibTorch/CUDA; it is not embedded in the `.pt2` files.
-The [installation guide](../../environments/README.md#install-and-relocate-the-runtime)
-covers the installed native runtime, prefix relocation and selecting its
-attention library for Python export or validation.
+Export selects the shared C shim through `aot_inductor.custom_ops_to_c_shims`,
+links it through `aot_inductor.custom_op_libs`, and embeds the library in both
+`.pt2` files through `package_aoti`. Scoped `LIBRARY_PATH` and
+`LD_RUN_PATH='$ORIGIN'` let the Linux GCC linker create the wrapper's dependency
+and relative runtime search path. See
+[attention packaging](../../docs/flash-attention.md#build-and-deployment) for
+ownership and export-process details. Native executables do not link or install
+a separate attention library. Package inference and eager validation
+use the bundled implementation. The
+[installation guide](../../environments/README.md#install-and-relocate-the-runtime)
+covers the installed native executables, prefix relocation and external
+LibTorch/CUDA requirements.
 
 ```bash
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -335,7 +345,7 @@ order from the supported model ABI. `checkpoint` contains the model ID, revision
 and source manifest. The [runtime ABI](../../docs/package-metadata.md#runtime-abi-1)
 defines batch-one BF16 execution, the Flash operator, shape-only extent input and
 KV-only mutation policy; the former fixed descriptions are no longer separate
-metadata fields. Readers query the loaded attention library's actual ABI.
+metadata fields.
 
 `model_specific` contains the DeltaNet backend, short/long operators and
 algorithms, threshold/chunk/tile/precision settings and a minimal packing
@@ -346,11 +356,11 @@ Full resolved Inductor tuning options are logged; metadata retains the
 precision-cast and two weightless-package options. Build diagnostics are not
 required deployment fields.
 
-Runtimes require schema 5 and runtime ABI 1. Retained compatible Flash/shared-weight
-bundles can migrate through a separate copy of their two JSON sidecars while
-keeping the compiled graphs and weight archive unchanged. Conversion sets schema
-5, removes any former `max_prompt_length` field and preserves the original capacity;
-it does not expand those graphs to a chosen larger capacity. See
+Runtimes require schema 5, runtime ABI 1 and the attention library embedded in
+both `.pt2` files. Re-export retained external-library bundles. Sidecar conversion
+alone cannot add the implementation. Metadata-only conversion applies only to
+otherwise compatible packages that already carry it; conversion preserves the
+original capacity and cannot expand those graphs. See
 [package metadata](../../docs/package-metadata.md) for the conversion contract.
 Earlier prompt-admission caps are no longer runtime settings; calling
 applications own such policy. Schema 1 through schema 4 and unversioned sidecars are not read through legacy
@@ -360,7 +370,8 @@ The archive embeds its mappings in
 metadata files contain the same final archive size and checksum. The exporter
 stages both entries, writes the archive once, and publishes the completed
 directory only after both succeed. Keep all five required files
-(two `.pt2`, two `.json` and `weights.pt`) together. The runtime rejects incompatible pairs and
+(two `.pt2`, two `.json` and `weights.pt`) together. The runtime requires identical
+attention-library bytes in both entries and rejects incompatible pairs and
 missing or mismatched weights; old embedded-weight bundles need re-export.
 
 Export runs linear packing before extracting constants, so the archive contains
@@ -488,8 +499,8 @@ Runtime and unified numerical reports include package and native binary checksum
 The AOTI unit tests check core output and both carried states for BF16/FP32
 prefill/decode, dynamic lengths and mixed continuations. Broader numerical,
 partitioning and gate-extreme checks live in `test_kernels`. These describe test
-coverage, not full-model acceptance. Full-model native processes require the
-shared attention library while remaining free of Python libraries. Full-model
+coverage, not full-model acceptance. Full-model native processes load attention
+from their packages and remain free of Python libraries. Full-model
 checks retain all state tensors, BF16 HF comparisons, dispatch counts, stable KV storage, appended-write
 regions, future-prefix isolation and CLI rejection cases. Numerical validators exit
 nonzero for acceptance failures and retain the reports.

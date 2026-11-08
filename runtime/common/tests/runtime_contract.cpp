@@ -89,6 +89,59 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
   report["generated_ids"] = expected_ids;
 }
 
+template <class Spec>
+void check_package_payloads(const std::filesystem::path &fixture, const Spec &validated,
+                            const Json &manifest, Json &report) {
+  namespace fs = std::filesystem;
+  // File verification treats operator payloads as opaque. These archives are
+  // checked only against their recorded digests, never loaded as models.
+  fs::remove(fixture / "weights.pt"); // Remove the fixture symlink, not its target.
+  for (const std::string variant :
+       {"matching", "missing_prefill", "missing_decode", "different", "duplicate", "empty"}) {
+    Spec descriptor(validated);
+    Json data = manifest;
+    for (const auto *kind : {"prefill", "decode"}) {
+      const auto path = fixture / (std::string(kind) + ".pt2");
+      {
+        caffe2::serialize::PyTorchStreamWriter writer(path.string());
+        if (variant != std::string("missing_") + kind) {
+          const auto payload = variant == "empty" ? std::string()
+                               : variant == "different" && std::string(kind) == "decode"
+                                   ? std::string("attention-B")
+                                   : std::string("attention-A");
+          writer.writeRecord("data/aotinductor/model/libxinfer_attention_ops.so", payload.data(),
+                             payload.size());
+          if (variant == "duplicate" && std::string(kind) == "decode")
+            writer.writeRecord("data/aotinductor/other/libxinfer_attention_ops.so", payload.data(),
+                               payload.size());
+        }
+        writer.writeEndOfFile();
+      }
+      const auto digest = xinfer::sha256_file(path);
+      auto &metadata =
+          std::string(kind) == "prefill" ? descriptor.prefill_metadata : descriptor.metadata;
+      metadata["package_bytes"] = fs::file_size(path);
+      metadata["package_sha256"] = digest;
+      data["entries"][kind]["package_sha256"] = digest;
+    }
+    const auto weights = fixture / "weights.pt";
+    {
+      caffe2::serialize::PyTorchStreamWriter writer(weights.string());
+      const auto payload = data.dump();
+      writer.writeRecord("extra/weights.json", payload.data(), payload.size());
+      writer.writeEndOfFile();
+    }
+    auto contract = validated.shared_weights;
+    contract["bytes"] = fs::file_size(weights);
+    contract["sha256"] = xinfer::sha256_file(weights);
+    descriptor.shared_weights = descriptor.prefill_metadata["shared_weights"] =
+        descriptor.metadata["shared_weights"] = contract;
+    auto verified = descriptor.validate_files(fixture);
+    (void)verified;
+    report["cases"].push_back({{"name", "opaque_package_" + variant}, {"passed", true}});
+  }
+}
+
 // File checks are fresh for every load, even when a caller reuses a Spec.
 template <class Spec, class Runtime>
 void check_file_preflight(const std::filesystem::path &packages, const Spec &validated,
@@ -109,9 +162,10 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
   // The large archive is immutable; only the copied packages are modified.
   fs::create_symlink(fs::absolute(packages / "weights.pt"), fixture / "weights.pt");
   const Spec reused(fixture);
+  Json manifest;
   {
     auto verified = reused.validate_files(fixture);
-    (void)verified;
+    manifest = verified.manifest();
   }
   auto corrupt = [&](const char *kind) {
     std::fstream file(fixture / (std::string(kind) + ".pt2"),
@@ -143,6 +197,7 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
                 fs::copy_options::overwrite_existing);
   corrupt("decode");
   reject(reused, "decode", "reused_spec_after_verification");
+  check_package_payloads(fixture, validated, manifest, report);
 }
 
 void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec &validated) {

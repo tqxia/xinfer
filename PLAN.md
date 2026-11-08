@@ -21,8 +21,12 @@ in [Qwen3 numerical history](docs/experiments/qwen3-numerics.md).
 - Keep BF16 cast emulation, TF32 disabled and normal compiler fusion. Record
   runtime compatibility and numerical settings in package metadata; keep full
   build details and diagnostics in export logs.
-- Build/link the native attention operator for all Qwen3 targets. Deploy it with
-  matching LibTorch/CUDA; reject old efficient packages with re-export guidance.
+- Build the compiler-owned native attention target before export and embed it
+  in both `.pt2` files. Shared native kernels and C shims live in
+  `compiler/common/kernels/`; runtime targets build independently. Standard AOTI
+  loaders load the bundled dependency; native executables need matching
+  LibTorch/CUDA. Re-export external-library and old efficient
+  packages for the current runtime.
 - Run C++ prefill/decode, cache management, greedy selection and EOS stopping
   without loading Python. No serving API, native tokenizer or concurrency is
   introduced by this cleanup.
@@ -148,8 +152,8 @@ The current export defaults derive from the selected model's context ceiling
 Schema 5 records `cache_length` separately from compiled `token_range: [2,512]`.
 There is no separate prompt cap. The full prompt plus the request's
 `--max-output-tokens` budget must fit the compiled context.
-Runtime ABI 1 and the attention
-ABI remain unchanged. Generation and native benchmarks split the complete prompt
+Runtime ABI 1 and the attention calling convention remain unchanged. Generation
+and native benchmarks split the complete prompt
 into calls of at most 512 tokens; a final single token uses decode. Converted
 retained packages keep their original 1,024-slot capacity in separate bundle
 directories. Any earlier prompt-admission policy belongs to the calling application.

@@ -1,5 +1,4 @@
 #pragma once
-#include "../common/attention.h"
 #include "../common/runner.h"
 
 namespace qwen35 {

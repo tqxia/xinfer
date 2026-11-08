@@ -1,4 +1,4 @@
-"""CPU checks for the Qwen3 runtime validator's attention-library preflight."""
+"""CPU checks for the Qwen3 runtime validator's metadata and weight preflight."""
 
 import copy
 import os
@@ -22,7 +22,6 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.native = self.root / "xinfer_aoti"
-        self.library = self.root / "libxinfer_attention_ops.so"
         self.packages = self.root / "packages"
         self.pair = {kind: metadata() for kind in ("prefill", "decode")}
         self.pair["prefill"].update(entry_point="prefill", token_range=[2, 512])
@@ -33,11 +32,14 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
             patch("compiler.common.metadata.read_package_metadata", return_value=self.pair)
         )
         self.weights = self.enterContext(patch("compiler.common.weights.validate_shared_weights"))
-        self.resolve = self.enterContext(
-            patch("tools.common.native_attention_library", return_value=self.library)
-        )
         self.load = self.enterContext(
-            patch("compiler.common.attention.load_attention_ops", side_effect=StopBeforeRuntime)
+            patch(
+                "tools.validation.common.attention.load_packaged_attention_ops",
+                side_effect=AssertionError("AOTI loads its bundled attention dependency"),
+            )
+        )
+        self.manifest = self.enterContext(
+            patch("compiler.common.artifacts.read_json", side_effect=StopBeforeRuntime)
         )
         self.enterContext(
             patch("subprocess.check_output", return_value="libtorch.so => /native/libtorch.so\n")
@@ -56,16 +58,16 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         with patch.object(sys, "argv", arguments):
             runpy.run_module("tools.validation.qwen3.validate_runtime", run_name="__main__")
 
-    def test_valid_tensor_abi_loads_the_native_dependency(self):
+    def test_valid_tensor_abi_needs_no_eager_operator_preload(self):
         with self.assertRaises(StopBeforeRuntime):
             self.run_validator()
         self.read.assert_called_once_with(self.packages, model_type="qwen3")
         self.weights.assert_called_once_with(
             self.packages, self.pair["prefill"], self.pair["decode"]
         )
-        self.resolve.assert_called_once_with(self.native)
-        self.load.assert_called_once_with(self.library, model="qwen3")
-        self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], str(self.library))
+        self.manifest.assert_called_once()
+        self.load.assert_not_called()
+        self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], "unrelated-attention.so")
 
     def test_geometry_validation_precedes_loading(self):
         for kind in ("prefill", "decode"):
@@ -77,17 +79,15 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
                     self.read.return_value = value
                     with self.assertRaisesRegex(ValueError, "^Unsupported Flash cache shape"):
                         self.run_validator(f"{kind}-{index}")
-                    self.resolve.assert_not_called()
                     self.load.assert_not_called()
+                    self.manifest.assert_not_called()
 
-    def test_missing_native_dependency_does_not_fall_back(self):
-        self.resolve.return_value = None
-        with self.assertRaisesRegex(
-            ValueError, "^Qwen3 runtime is missing its required native attention library"
-        ):
+    def test_invalid_weights_fail_before_checkpoint_loading(self):
+        self.weights.side_effect = ValueError("Shared weights archive checksum mismatch")
+        with self.assertRaisesRegex(ValueError, "Shared weights archive checksum mismatch"):
             self.run_validator()
-        self.resolve.assert_called_once_with(self.native)
         self.load.assert_not_called()
+        self.manifest.assert_not_called()
 
 
 if __name__ == "__main__":

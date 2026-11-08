@@ -64,8 +64,8 @@ fills them with the requested value, and initializes replacement state to zero.
 - KV state uses full-capacity buffers. The adapter updates appended K/V positions
   in place. Conv/recurrent inputs remain unchanged and their returned tensors
   replace the previous state.
-- Attention uses the read-only valid-prefix Flash operator with attention-library
-  ABI 1. Python and C++ query the loaded library's actual ABI before use.
+- Attention uses the read-only valid-prefix Flash operator bundled in both
+  `.pt2` files.
 - Qwen3 returns last-token logits only. Qwen3.5 returns last-token logits followed
   by every state tensor in descriptor order; returned K/V tensors alias their
   caller-owned input buffers. Logits have shape `[1, vocab_size]`.
@@ -78,9 +78,9 @@ longer serialized, and schema 5 rejects them as unknown fields.
 
 The metadata schema describes representation; the runtime ABI describes calls
 between the compiled graph and the runner. They evolve independently of
-`shared_weights.format: 2` and attention-library ABI 1. Changing extent
-representation, input/output order or mutation semantics requires a new runtime
-ABI. New weights or compiler tuning do not change the calling convention.
+`shared_weights.format: 2`. Changing extent representation, input/output order
+or mutation semantics requires a new runtime ABI. New weights or compiler tuning
+do not change the calling convention.
 Numerical settings, toolchain compatibility and artifact checksums remain
 explicit metadata fields.
 
@@ -88,8 +88,25 @@ Both entries must agree on all stable fields, including `model_specific`.
 Entry point, token range and package size/hash may differ. Unknown or missing
 versions, legacy aliases, invalid tensor contracts and mixed pairs are rejected
 before device allocation. File sizes and SHA-256 checks bind each descriptor to
-its compiled package and shared archive. Checkpoint manifests remain available
-to verify that eager references use the same checkpoint.
+its compiled package and shared archive. Each package embeds
+`libxinfer_attention_ops.so`. There is no attention-library hash or byte-equality
+requirement between entries. The existing package checksum covers the library;
+no extra metadata field or version is added. Generic weight readers do not
+inspect the payload. Current exports still select one attention library; see
+the [attention guide](flash-attention.md#build-and-deployment) for the deferred
+work needed to select independent implementations. Checkpoint
+manifests remain available to verify that eager references use the same checkpoint.
+
+Bundling preserves schema 5 and runtime ABI 1. The exporter selects the shared
+attention C shim through Torch's
+`aot_inductor.custom_ops_to_c_shims` and links the library through
+`aot_inductor.custom_op_libs`. The Linux GCC linker creates the wrapper's native
+dependency and `$ORIGIN` search path during compilation. Torch's `package_aoti`
+includes the library with the compiler outputs. Standard Python and C++ AOTI
+loaders extract the library with the wrapper; native executables do not link it
+directly. LibTorch/CUDA remain environment dependencies. Retained
+external-library packages require re-export of both entries. Editing sidecars
+or copying a library beside the package does not meet the bundled contract.
 
 `inductor_configs` records the effective contract flags
 `emulate_precision_casts=True`, `aot_inductor.package_constants_in_so=False` and
@@ -103,16 +120,16 @@ export log when investigating a build.
 
 Metadata schema version 5 is independent of the runtime ABI and embedded
 weight-archive format. Schema 1 through schema 4 and unversioned sidecars are not read
-by current runtimes. Re-export with the current exporter, or convert verified
-retained sidecars into a new directory using the canonical schema. This
-metadata-only conversion can keep compatible `.pt2` files and `weights.pt` byte
-for byte; the archive binds package hashes, not JSON sidecar hashes. Keep the
-original bundle and binary when retaining historical evidence. Runtime readers
-contain no legacy-field translation paths.
+by current runtimes. Re-export with the current exporter. Metadata-only
+conversion is sufficient only for otherwise compatible packages that already
+embed attention. Such a conversion can keep `.pt2` files and `weights.pt` byte
+for byte; the archive binds package hashes, not JSON sidecar hashes. Preserve
+external-library bundles with their original binaries for historical evidence.
+Runtime readers contain no legacy-field translation paths.
 
-For a verified schema 3 or schema 4 bundle, preserve the original directory and
-create a separate copy for conversion. Set `schema_version` to 5 in **both**
-sidecars and remove `max_prompt_length` if present. Retain the original capacity
+For a verified schema 3 or schema 4 bundle that also meets the bundled-library
+contract, preserve the original directory and create a separate copy for
+conversion. Set `schema_version` to 5 in **both** sidecars and remove `max_prompt_length` if present. Retain the original capacity
 (`cache_length: 1024` for the older profile), the
 compiled token ranges, state shapes, runtime ABI and every numerical/integrity
 field unchanged. The converted bundle can reuse its immutable `.pt2` files and
@@ -123,17 +140,17 @@ not promote the cache to a larger profile.
 
 Removing the request-policy field changes metadata representation only. Larger KV buffers
 and prompt chunking preserve the input/output order, extent representation,
-state ownership and attention semantics of runtime ABI 1 and attention-library
-ABI 1. Rebuild the native attention library and runner for generalized capacity
-support before using newly exported long-context packages.
+state ownership and attention semantics of runtime ABI 1. Rebuild the native
+attention library and runner for generalized capacity support before using
+newly exported long-context packages.
 
 Verified schema 2 L20 bundles are converted under
 `artifacts/l20/runtime-abi-20261104/migrated/{qwen3,qwen35}`. Conversion checks the
 previous fixed descriptions before assigning runtime ABI 1; it retains all
 numerical, checkpoint and integrity fields. The original bundles are preserved,
 and the converted copies reuse their compiled graphs and weights. Those retained
-sidecars predate schema 5; make a separate schema 5 copy before using them with
-the current reader.
+sidecars predate schema 5 and bundled attention. Preserve them with their
+matching runtime, or re-export before using the current runtime.
 
 ## Historical schema 1 validation: 2026-11-03
 

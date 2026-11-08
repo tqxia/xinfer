@@ -15,8 +15,8 @@ from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
 from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
 from compiler.qwen35.packages import validate_model_metadata
-from compiler.common.attention import load_attention_ops
-from tools.common import native_attention_library, prompt_chunks, run
+from compiler.common.weights import validate_shared_weights
+from tools.common import prompt_chunks, run
 from tools.prepare.common import encode_prompt
 from compiler.qwen35.model import configure_text
 from tools.validation.qwen35.common import fixtures
@@ -369,13 +369,7 @@ def main():
     metadata = read_package_metadata(args.packages, model_type="qwen35")
     for entry in metadata.values():
         validate_model_metadata(entry)
-    attention_library = native_attention_library(args.binary)
-    if attention_library is None:
-        raise ValueError(
-            "Qwen3.5 runtime is missing its required native attention library; rebuild the runtime"
-        )
-    os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = str(attention_library)
-    load_attention_ops(attention_library)
+    validate_shared_weights(args.packages, metadata["prefill"], metadata["decode"])
     configure_text()
     for kind, meta in metadata.items():
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
@@ -495,7 +489,6 @@ def main():
         + sum(len(state) for state in expected.states.values()),
         greedy_logit_rows=sum(len(value["rows"]) for value in expected.greedy.values()),
         greedy_state_tensors=sum(len(value["state"]) for value in expected.greedy.values()),
-        attention_library_sha256=sha256(attention_library),
         binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)},
         state_snapshot_policy="complete functional state and populated KV prefix; future fill checked separately",
     )

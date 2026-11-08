@@ -1,5 +1,4 @@
 #pragma once
-#include "attention.h"
 #include "io.h"
 #include "settings.h"
 #include "weights.h"
@@ -259,7 +258,6 @@ struct SpecBase {
     const auto version = metadata.at("torch_version").get<std::string>();
     require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
-    require(attention_ops_abi_version() == 1, "Unsupported native attention ABI");
     for (const auto &item : metadata.at("state")) {
       const auto kind = item.at("kind").get<std::string>();
       const auto layer = item.at("layer").get<int64_t>();

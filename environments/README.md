@@ -24,8 +24,8 @@ setup does not regenerate the Docker locks.
 Both setup and environment checking read the selected model/device file:
 `environments/<target>/<model>_requirements.txt`. Each file is self-contained:
 it specifies the official PyTorch package index and all Torch, Triton,
-CMake, Ninja and HF pins. The Torch version can vary independently for each
-model/device. All package requirements live under `environments/`.
+CMake, Ninja and HF pins. The Torch version can vary
+independently for each model/device. All package requirements live under `environments/`.
 Qwen3 and Qwen3.5 use separate venvs because they require Transformers 4.51.3 and
 5.20.2 respectively. The JSON profiles contain only operating system, CPU
 architecture and GPU capability. Python 3.12 is the setup prerequisite and
@@ -40,8 +40,11 @@ record `eager_baseline: hf_dynamic_cache`.
 
 The host needs Python 3.12, Linux with glibc 2.28 or newer, a C++ compiler, a
 compatible CUDA toolkit and NVIDIA driver. Setup installs Torch, Triton, model
-dependencies, CMake 4.3.4 and Ninja 1.13.2 into a fresh venv. It does not require
-a visible GPU. GPU and build compatibility are checked separately.
+dependencies, CMake 4.3.4 and Ninja 1.13.2 into a fresh venv. Export uses the
+Linux GCC linker to resolve the shared attention C shim and record its relative
+runtime search path; see [attention packaging](../docs/flash-attention.md#build-and-deployment).
+Setup does not require a visible GPU. GPU and build compatibility are checked
+separately. Shared C-shim packaging validation on GB10 is deferred.
 
 ```bash
 TARGET=l20                         # or gb10
@@ -86,7 +89,7 @@ versions come from that file's Torch pin. Reports include the `requirements`
 map separately from the hardware profile. Failures exit nonzero and are still
 written to the requested JSON report. Keep the recorded build provenance as well.
 
-## Build native runtimes for each model
+## Build compiler kernels and native runtimes for each model
 
 Each model's native build uses LibTorch from that model's Python environment.
 Build directories are `build/qwen3/` and `build/qwen35/`. CMake derives the C++
@@ -119,27 +122,35 @@ for MODEL in qwen3 qwen35; do
     -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
     -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
   PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" --build "$BUILD" --target \
-    xinfer_aoti xinfer_validate xinfer_benchmark qwen_runtime_contract \
-    xinfer_state_contract xinfer_generation_contract -j2
+    xinfer_attention_ops xinfer_aoti xinfer_validate xinfer_benchmark \
+    qwen_runtime_contract xinfer_state_contract xinfer_generation_contract -j2
   bash environments/check.sh --python "$MODEL_PY" \
     --target "$TARGET" --model "$MODEL" --build "$BUILD" \
     --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
 done
 ```
 
-The build produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for both
-model families. Model selection comes from the package metadata; there is no
-separate full-model build switch. Kernel export/AOTI checks run through
-`compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel runner.
-Each model's Python tools default to executables and the attention library in
-its `build/<model>/` directory. Existing native-path options and
-`XINFER_ATTENTION_OPS_LIBRARY` optionally select another build or installed runtime.
+The compiler owns the `xinfer_attention_ops` target and its native sources in
+`compiler/common/kernels/`. It writes `libxinfer_attention_ops.so` into the same
+`build/<model>/` directory used by export and standalone operator tests.
+The runtime produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for
+both model families. The default root build includes compiler kernels and
+runtime executables. Selecting an explicit runtime target builds it
+independently; build `xinfer_attention_ops` separately before export or
+standalone attention tests. Model selection comes from package metadata;
+there is no separate full-model build switch. Kernel export/AOTI checks run
+through `compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel
+runner.
+Each model's Python tools default to executables in its `build/<model>/`
+directory; existing native-path options select another runtime. Export and
+standalone operator tests select the attention library from that build or
+`XINFER_ATTENTION_OPS_LIBRARY`.
 
 `--build` verifies that CMake selected the active environment's LibTorch. Build
-before either full-model export so Python can register the shared native
-FlashAttention operator. Deploy `libxinfer_attention_ops.so` with the shared
-full-model executables. Qwen3.5 packages its GDN kernels and needs no separate
-GDN custom-op library.
+`xinfer_attention_ops` before either full-model export so Python can register
+the shared native FlashAttention operator. Both exporters embed
+`libxinfer_attention_ops.so` in each `.pt2`. The native executables load it through those packages and do not
+link or install a separate copy. Qwen3.5 also packages its GDN kernels.
 
 For L20, the two CMake runtime variables select CUDA 12.6 from the model
 installation for both Torch and CUDA discovery. This also supports a host
@@ -211,7 +222,11 @@ workflow leaves optional Inductor tuning off. Package pairs must have matching
 metadata, numerical settings and checkpoint identity. Re-export and rebuild for each
 native stack/GPU; keep all existing runtime compatibility checks enabled.
 Both model exporters write `prefill.pt2`, `decode.pt2`, their two metadata JSON
-files, and one shared `weights.pt`. Deploy all five files together. The archive
+files, and one shared `weights.pt`. Deploy all five files together. Both `.pt2`
+files carry the same native attention library, loaded automatically by the
+standard AOTI loaders. Its bytes are covered by the package checksums. Re-export
+retained external-library packages; JSON conversion alone cannot add the
+implementation. LibTorch/CUDA remain external dependencies. The weight archive
 embeds the exact constant mappings and tensor views in `extra/weights.json`;
 there is no separate weight manifest. Both entry metadata files hold the archive
 size and SHA-256 checksum. Each export writes the archive once, records its
@@ -237,9 +252,11 @@ Their compiled prefill calls remain bounded to 2–512 tokens, with one-token
 decode. The shared runner chunks long prompts automatically and validates the
 complete prompt plus generation budget before execution. Schema 5 records
 per-call `token_range` and `cache_length`; no separate prompt-cap option exists.
-The native request uses `--max-output-tokens`. Existing 1,024-slot bundles require a separate
-schema 5 sidecar conversion, retaining compiled bounds, or a fresh export for
-larger capacity. Any additional input policy belongs to the calling application. See the
+The native request uses `--max-output-tokens`. Retained external-library bundles,
+including the older 1,024-slot profiles, require re-export for bundled attention.
+Metadata-only migration applies only to otherwise compatible packages that
+already carry the library; changing capacity also requires re-export.
+Any additional input policy belongs to the calling application. See the
 [metadata migration contract](../docs/package-metadata.md). Ordinary long-context
 exports, C++ execution and full 16,384-slot inference-memory probes completed on
 L20 for Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B. Native/Python AOTI parity
@@ -251,19 +268,18 @@ acceptance remains open. The new profile has not been validated on GB10.
 After building, install the project's runtime component into a fresh prefix.
 Either model's build contains the shared executables supporting both models;
 the example below installs from `build/qwen3/`.
-GNUInstallDirs selects executable and library directories, typically `bin/`
-and `lib/` or `lib64/`. `xinfer_aoti` is always included;
-`xinfer_benchmark` and `xinfer_validate` are included when their build options
-are enabled. The focused `qwen_runtime_contract` helper remains a build-only
-target. `CMAKE_INSTALL_BINDIR` and `CMAKE_INSTALL_LIBDIR` can customize
-the layout and must be relative paths. The following commands read the configured
-library directory from the build cache and use the default `bin/` directory.
+GNUInstallDirs selects the executable directory, typically `bin/`.
+`xinfer_aoti` is always included; `xinfer_benchmark` and `xinfer_validate` are
+included when their build options are enabled. The focused
+`qwen_runtime_contract` helper remains a build-only target. The attention library
+is carried by each model package and is not installed in this prefix.
+`CMAKE_INSTALL_BINDIR` can customize the executable layout and must be relative.
+The following commands use the default `bin/` directory.
 
 ```bash
 BUILD="$Q3_BUILD"
 PREFIX="$PWD/work/$TARGET/runtime-install"
 MOVED_PREFIX="$PWD/work/$TARGET/runtime-relocated"
-INSTALL_LIBDIR=$(sed -n 's/^CMAKE_INSTALL_LIBDIR:[^=]*=//p' "$BUILD/CMakeCache.txt")
 "$CMAKE" --install "$BUILD" --prefix "$PREFIX" --component Runtime
 mv "$PREFIX" "$MOVED_PREFIX"
 "$MOVED_PREFIX/bin/xinfer_aoti" --help
@@ -272,16 +288,15 @@ mv "$PREFIX" "$MOVED_PREFIX"
   --prompt "What is the capital of France?" --output "$Q3_ROOT/install-prompt.ids"
 "$MOVED_PREFIX/bin/xinfer_aoti" "$Q3_PACKAGES" \
   "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-output-tokens 8
-
-# Python export/validation can use the installed attention library too.
-export XINFER_ATTENTION_OPS_LIBRARY="$MOVED_PREFIX/$INSTALL_LIBDIR/libxinfer_attention_ops.so"
 ```
 
-Installed executables find the attention library relative to `$ORIGIN`, so the
-prefix can move on the same compatible native stack. The selected LibTorch and
-CUDA libraries remain external; the installed RPATH retains their configured
-runtime paths. `XINFER_INSTALL_RUNTIME_DIRS` can override these paths at configure
-time with a semicolon-separated list; its defaults are the selected Torch library
+The executable prefix and complete model bundle can move on the same
+compatible native stack. When an AOTI loader extracts a package, the wrapper
+finds its bundled attention dependency relative to `$ORIGIN`. No attention
+library path or Python preload is required for package inference. The selected
+LibTorch and CUDA libraries remain external; the installed RPATH retains their
+configured runtime paths. `XINFER_INSTALL_RUNTIME_DIRS` can override these paths
+at configure time with a semicolon-separated list; its defaults are the selected Torch library
 and CUDA runtime directories. CMake also retains external linked-library
 directories. A different host must provide a compatible GPU/package contract and
 the matching native stack at those library paths; relocating that external

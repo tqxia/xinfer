@@ -10,7 +10,7 @@ import torch
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import model_context_limit, resolve_context_length
-from compiler.common.attention import cache_extent
+from compiler.common.attention import cache_extent, attention_library, attention_c_shims
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
@@ -157,6 +157,8 @@ def main():
             export_entry,
             identity=dict(model="qwen3-0.6b", revision=revision),
             inductor_configs=options,
+            native_libraries=[attention_library()],
+            custom_op_shims=attention_c_shims(),
         )
     print(f"Saved prefill/decode bundle to {args.output}", flush=True)
 

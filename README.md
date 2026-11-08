@@ -8,14 +8,15 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
 - [Plan and deferred work](PLAN.md).
 
-`compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
-`runtime/<model>/` owns model-specific package ABI checks. Shared compiler
+`compiler/<model>/` owns HF loading, tensor/state adapters, kernels and export settings.
+Shared native kernels and C shims live in `compiler/common/kernels/`, including
+attention. `runtime/<model>/` owns model-specific package ABI checks. Shared compiler
 artifact, metadata and weight helpers live in `compiler/common/`. Numerical validation
 and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
 and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
 offline tokenization use the shared `tools/prepare/` command.
-`tools/common.py` supplies logged subprocess execution and native-library
-discovery; focused numerical diagnostics live under `tools/diagnostics/`.
+`tools/common.py` supplies logged subprocess execution and prompt partitioning;
+focused numerical diagnostics live under `tools/diagnostics/`.
 `environments/` owns project setup, self-contained requirements files for each
 model/device, native-stack checks and hardware profiles. Its Bash entry points
 are `environments/l20/setup.sh`,
@@ -78,16 +79,21 @@ Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your
 
 Create each model's independent environment with its target setup script, following
 the [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
-compilation profile and always links its native attention library. Existing efficient Qwen3 packages must be re-exported;
-see its guide for the fixed package contract. Build from the repository root
-with CMake. Each model retains its own compiler environment and numerical policy.
+compilation profile. Both exporters embed the native attention library in each
+`.pt2`; the standard Python and C++ AOTI loaders load it with the compiled wrapper.
+Build the compiler's `xinfer_attention_ops` target from the repository root
+before export. The default CMake build includes compiler kernels and runtime
+executables; explicit runtime targets build independently. Each model retains
+its own compiler environment and numerical policy. Python export and standalone
+operator tests select the attention library from `build/qwen3/` or `build/qwen35/`;
+`XINFER_ATTENTION_OPS_LIBRARY` can select another build. Package inference and
+validation use the bundled implementation. Existing executable-path options
+select another native runtime.
 The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
-shows how to install and move the native runtime prefix with its attention library.
-Python tools default to native executables and the attention library in the
-repository's `build/qwen3/` or `build/qwen35/` directory for their model.
-Existing executable-path options and
-`XINFER_ATTENTION_OPS_LIBRARY` remain optional overrides for another build or an
-installed runtime.
+shows how to install and move the native executables. Deploy the complete
+five-file model bundle with matching LibTorch/CUDA. Re-export packages that
+previously required a separate attention library; sidecar conversion alone does
+not add that implementation.
 
 Numerical validation follows HF → eager → Python AOTI → C++ AOTI. The eager
 stage includes adapters and any linear packing selected by package metadata.
@@ -104,8 +110,10 @@ CPU compatibility. Use a compatible CPU or re-export on the destination host.
 
 Both exporters now produce weightless prefill/decode packages and one shared
 `weights.pt` archive containing the constant mappings. Both package metadata
-files record its checksum. Deploy the complete five-file package directory. The Python and C++ runtimes retain one weight pool and lend its
-storage to both loaders with `user_managed`; rebuild with Torch 2.13 or newer
+files record its checksum. Each `.pt2` also contains the same attention library,
+covered by its package checksum. Deploy the complete five-file package directory.
+The Python and C++ runtimes retain one weight pool and lend its storage to both
+loaders with `user_managed`; rebuild with Torch 2.13 or newer
 and re-export existing embedded-weight packages before using the current runtime.
 
 `python -m tools.benchmark` selects the model from package metadata. Both models

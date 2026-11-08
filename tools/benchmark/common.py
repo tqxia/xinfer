@@ -425,7 +425,6 @@ def worker_environment(gpu, native=False):
 
 
 def capture_environment(args, out, gpu, model_type, packages, validate_model):
-    from tools.common import native_attention_library
     from compiler.common.weights import validate_shared_weights
 
     binary = args.native.resolve()
@@ -438,11 +437,6 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         "Native benchmark links Python",
     )
     (out / "native.ldd").write_text(linked)
-    library = native_attention_library(binary)
-    require(
-        library is not None,
-        "Native benchmark is missing libxinfer_attention_ops.so; rebuild the runtime",
-    )
     manifest = read_json(args.model_dir / MODEL_MANIFEST_NAME)
     environment = dict(
         platform=platform.platform(),
@@ -456,7 +450,6 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
         gpu_uuid=gpu,
         packages={},
         shared_weights={},
-        attention_library=dict(path=str(library), sha256=sha256(library)),
     )
     environment["gpu"] = subprocess.check_output(
         [
@@ -482,7 +475,11 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
             require(
                 meta["checkpoint"]["manifest"] == manifest, "Package checkpoint manifest differs"
             )
-            entries[kind] = dict(metadata=meta, bytes=size, sha256=digest)
+            entries[kind] = dict(
+                metadata=meta,
+                bytes=size,
+                sha256=digest,
+            )
         environment["packages"][label] = entries
         environment["shared_weights"][label] = validate_shared_weights(
             directory, metadata["prefill"], metadata["decode"]

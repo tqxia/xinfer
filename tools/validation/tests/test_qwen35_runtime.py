@@ -73,13 +73,11 @@ class AOTIRuntimeContract(unittest.TestCase):
         self.write_metadata(metadata)
         with (
             patch("tools.validation.common.runner.validate_shared_weights") as validate,
-            patch("tools.validation.common.runner.load_attention_ops") as load,
             patch("tools.validation.common.runner.SharedWeights") as weights,
         ):
             with self.assertRaisesRegex(ValueError, "^" + re.escape(error)):
                 load_aoti_runtime(self.directory, model_type="qwen35", specs=[])
             validate.assert_not_called()
-            load.assert_not_called()
             weights.assert_not_called()
 
     def test_missing_contract_fields_are_rejected_before_loading(self):
@@ -250,7 +248,6 @@ class AOTIRuntimeContract(unittest.TestCase):
                 "tools.validation.common.runner.validate_shared_weights",
                 side_effect=ReachedArchiveValidation,
             ) as validate,
-            patch("tools.validation.common.runner.load_attention_ops") as load,
             patch("tools.validation.common.runner.SharedWeights") as weights,
         ):
             with self.assertRaises(ReachedArchiveValidation):
@@ -258,7 +255,6 @@ class AOTIRuntimeContract(unittest.TestCase):
             validate.assert_called_once_with(
                 self.directory, metadata["prefill"], metadata["decode"]
             )
-            load.assert_not_called()
             weights.assert_not_called()
 
 

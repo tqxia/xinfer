@@ -4,9 +4,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, call, patch, sentinel
+from unittest.mock import call, patch, sentinel
 
 from compiler.common import attention
 from compiler.common.metadata import make_metadata, state_spec
@@ -69,7 +68,6 @@ class AOTIRuntimeLoading(unittest.TestCase):
                 pair = self.metadata(model_type)
                 with (
                     patch.object(runner, "validate_shared_weights") as validate,
-                    patch.object(runner, "load_attention_ops") as load,
                     patch.object(runner, "SharedWeights") as weights,
                 ):
                     owner = weights.return_value
@@ -78,7 +76,6 @@ class AOTIRuntimeLoading(unittest.TestCase):
                         self.root, model_type=model_type, specs=pair["decode"]["state"]
                     )
                     validate.assert_called_once_with(self.root, pair["prefill"], pair["decode"])
-                    load.assert_called_once_with(model=model_type)
                     weights.assert_called_once_with(self.root, pair["decode"]["shared_weights"])
                     self.assertEqual(owner.load.call_args_list, [call("prefill"), call("decode")])
                     self.assertIs(runtime.owner, owner)
@@ -99,40 +96,30 @@ class AOTIRuntimeLoading(unittest.TestCase):
         pair = self.metadata("qwen35")
         with (
             patch.object(runner, "validate_shared_weights") as validate,
-            patch.object(runner, "load_attention_ops") as load,
             patch.object(runner, "SharedWeights") as weights,
         ):
             with self.assertRaisesRegex(ValueError, "Runtime state descriptors differ"):
                 runner.load_aoti_runtime(self.root, model_type="qwen35", specs=[])
             validate.assert_called_once_with(self.root, pair["prefill"], pair["decode"])
-            load.assert_not_called()
             weights.assert_not_called()
 
-    def test_factory_preserves_the_native_selected_attention_library(self):
+    def test_factory_leaves_operator_loading_to_the_compiled_packages(self):
         pair = self.metadata("qwen35")
-        library = (self.root / "native/libxinfer_attention_ops.so").resolve()
-        library.parent.mkdir()
-        library.touch()
-        torch = SimpleNamespace(
-            ops=SimpleNamespace(
-                load_library=Mock(),
-                xinfer=SimpleNamespace(attention_ops_abi_version=Mock(return_value=1)),
-            ),
-            library=SimpleNamespace(register_fake=Mock(return_value=lambda function: function)),
-        )
+        override = str(self.root / "unrelated-attention.so")
         with (
             patch.object(runner, "validate_shared_weights"),
-            patch.object(runner, "SharedWeights"),
-            patch.object(attention, "_loaded", None),
-            patch.dict(os.environ, XINFER_ATTENTION_OPS_LIBRARY=str(library)),
-            patch.dict("sys.modules", {"torch": torch}),
+            patch.object(runner, "SharedWeights") as weights,
+            patch.object(attention, "load_attention_ops") as load,
+            patch.dict(os.environ, XINFER_ATTENTION_OPS_LIBRARY=override),
         ):
             runtime = runner.load_aoti_runtime(
                 self.root, model_type="qwen35", specs=pair["decode"]["state"]
             )
-            torch.ops.load_library.assert_called_once_with(str(library))
-            self.assertEqual(attention._loaded, library)
-            self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], str(library))
+            load.assert_not_called()
+            self.assertEqual(
+                weights.return_value.load.call_args_list, [call("prefill"), call("decode")]
+            )
+            self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], override)
             runtime.close()
 
 
