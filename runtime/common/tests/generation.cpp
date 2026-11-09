@@ -165,6 +165,55 @@ int main() {
       report["cases"].push_back({{"name", name}, {"passed", true}});
     };
 
+    check("qwen36_returns_all_hybrid_state_outputs", [&] {
+      Bundle fixture(1024);
+      for (const auto *kind : {"prefill", "decode"}) {
+        const auto path = fixture.directory / (std::string(kind) + ".json");
+        auto metadata = xinfer::read_json(path);
+        metadata["model_type"] = "qwen36";
+        metadata["checkpoint"] = {{"model_id", "Qwen/Qwen3.6-35B-A3B-FP8"},
+                                  {"revision", "c653bba46dfa06e9658dcc0b0dc87fe4685f14a2"},
+                                  {"manifest", Json::object()}};
+        metadata["vocab_size"] = 248320;
+        metadata["eos_token_ids"] = {248046, 248044};
+        metadata["model_specific"] = {{"delta_backend", "triton_op"},
+                                      {"attention_backend", "flash_attention"},
+                                      {"fp8_backend", "triton_op"},
+                                      {"fp8_format", "e4m3fn"},
+                                      {"fp8_block_size", {128, 128}},
+                                      {"fp8_scale_dtype", "bfloat16"},
+                                      {"fp8_kernel",
+                                       {{"repo", "kernels-community/finegrained-fp8"},
+                                        {"revision", "03ae31933313f38fae2b050dbe2731024386c369"}}},
+                                      {"linear_packing", {{"enabled", false}}}};
+        metadata["state"] = Json::array();
+        for (int64_t layer = 0; layer < 40; ++layer) {
+          const bool attention = layer % 4 == 3;
+          for (int index = 0; index < 2; ++index) {
+            const auto name =
+                attention ? (index ? "value" : "key") : (index ? "recurrent" : "conv");
+            const Json shape = attention ? Json::array({1, 2, 1024, 256})
+                               : index   ? Json::array({1, 32, 128, 128})
+                                         : Json::array({1, 8192, 4});
+            metadata["state"].push_back({{"layer", layer},
+                                         {"kind", name},
+                                         {"shape", shape},
+                                         {"dtype", !attention && index ? "float32" : "bfloat16"},
+                                         {"update", attention ? "inplace" : "replace"}});
+          }
+        }
+        xinfer::output_file(path) << metadata.dump();
+      }
+      const qwen36::Spec spec(fixture.directory);
+      require(spec.state.size() == 80 &&
+                  xinfer::model_name(spec.model_type) == std::string("qwen36"),
+              "Qwen3.6 model dispatch or state count differs");
+      for (size_t i = 0; i < spec.state.size(); ++i)
+        require(spec.state[i].output_index == i + 1, "Qwen3.6 returned-state output is missing");
+      require(xinfer::model_from_identity(Json{{"model", "qwen3.6"}}) == spec.model_type,
+              "Qwen3.6 archive identity differs");
+    });
+
     check("schema5_context_contract_rejects_retired_prompt_field", [&] {
       require(spec.capacity == 16384 && spec.max_prefill == 512,
               "Compiled context and per-call bounds differ from the metadata");

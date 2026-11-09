@@ -74,7 +74,7 @@ def metadata_pair(model_type="qwen3", *, cache_length=1024):
 
 class PackageMetadata(unittest.TestCase):
     def test_one_format_handles_both_output_state_abis(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen36"):
             with self.subTest(model_type=model_type):
                 pair = metadata_pair(model_type)
                 validate_metadata_pair(pair["prefill"], pair["decode"], model_type)
@@ -88,7 +88,7 @@ class PackageMetadata(unittest.TestCase):
                 self.assertEqual(pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSION)
 
     def test_capacity_is_separate_from_compiled_call_bounds_and_prompt_policy(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen36"):
             for capacity in (512, 1024, 16384):
                 with self.subTest(model=model_type, capacity=capacity):
                     pair = metadata_pair(model_type, cache_length=capacity)

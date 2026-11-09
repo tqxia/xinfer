@@ -124,6 +124,32 @@ class StageComparisons(unittest.TestCase):
                     self.assertEqual(len(exact["failures"]), 1)
                     self.assertTrue(exact["failures"][0]["required"])
 
+    def test_fp8_policy_preserves_required_state_and_token_checks(self):
+        expected = self.trace(
+            logits={CASE_KEY: torch.tensor([[1.01, 1.0]])},
+            states={CASE_KEY: (torch.ones(CONV["shape"]),)},
+            generated={"chat": dict(ids=[0], rows=[torch.ones(1, 2)])},
+        )
+        actual = self.trace(
+            logits={CASE_KEY: torch.tensor([[1.0, 1.01]])},
+            states={CASE_KEY: (torch.full(CONV["shape"], 1.2),)},
+            generated={"chat": dict(ids=[1], rows=[torch.ones(1, 2)])},
+        )
+        default = self.compare(actual, expected, specs=[CONV])
+        self.assertEqual(default["failures"], [])
+        strict = self.compare(
+            actual,
+            expected,
+            specs=[CONV],
+            model_type="qwen36",
+            policy=Policy(state_required=True, tokens_required=True),
+        )
+        self.assertEqual(
+            {row["tensor"] for row in strict["failures"]},
+            {"layer_0.conv", "tokens", "greedy_tokens"},
+        )
+        self.assertEqual(len(strict["greedy_failures"]), 1)
+
     def test_eager_anchor_detects_compilation_drift_that_cancels_eager_error(self):
         hf = self.trace()
         eager = self.trace(logits={CASE_KEY: torch.full((1, 2), 1.08)})

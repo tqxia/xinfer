@@ -7,12 +7,16 @@
 #include <caffe2/serialize/inline_container.h>
 
 #include <algorithm>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace xinfer {
+
+// Optional synchronous load diagnostics; callbacks are never retained by owners.
+using LoadObserver = std::function<void(const char *)>;
 
 // A load-scoped proof: only verification can bind a manifest to package paths.
 class ValidatedBundle {
@@ -111,6 +115,8 @@ inline at::ScalarType shared_weights_dtype(const std::string &name) {
     return at::kFloat;
   if (name == "float64")
     return at::kDouble;
+  if (name == "float8_e4m3fn")
+    return at::kFloat8_e4m3fn;
   if (name == "int64")
     return at::kLong;
   if (name == "int32")
@@ -128,7 +134,8 @@ inline at::ScalarType shared_weights_dtype(const std::string &name) {
 
 class SharedWeights {
 public:
-  SharedWeights(ValidatedBundle bundle, const Json &contract) : bundle_(std::move(bundle)) {
+  SharedWeights(ValidatedBundle bundle, const Json &contract, LoadObserver observer = {})
+      : bundle_(std::move(bundle)) {
     require(bundle_.contract_ == contract, "Shared weights contracts differ");
     auto archive =
         torch::jit::load((bundle_.directory_ / "weights.pt").string(), c10::Device(at::kCPU));
@@ -163,6 +170,8 @@ public:
                                  descriptor.at("stride").get<std::vector<int64_t>>(),
                                  descriptor.at("offset").get<int64_t>());
     }
+    if (observer)
+      observer("cpu_archive_validated");
     for (const auto &[name, descriptor] : bundle_.manifest_.at("storages").items()) {
       const auto type = descriptor.at("device").get<std::string>();
       storages_.emplace(name,
@@ -179,6 +188,8 @@ public:
       const auto &storage = storages_.at(descriptor.at("storage").get<std::string>());
       tensors_.emplace(name, storage.as_strided(shape, stride, offset));
     }
+    if (observer)
+      observer("canonical_pool_allocated_cpu_archive_alive");
   }
 
   fs::path package_path(const std::string &kind) const {

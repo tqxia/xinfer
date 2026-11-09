@@ -2,6 +2,7 @@
 
 import torch
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Attention, apply_rotary_pos_emb
+from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeAttention
 
 from compiler.common.attention import load_attention_ops
 from compiler.qwen35.model import TextCache
@@ -10,7 +11,7 @@ from compiler.qwen35.model import TextCache
 class FlashAttention(torch.nn.Module):
     def __init__(self, original):
         super().__init__()
-        if type(original) is not Qwen3_5Attention:
+        if type(original) not in (Qwen3_5Attention, Qwen3_5MoeAttention):
             raise ValueError("Expected Qwen3.5 full attention")
         config = original.config
         heads, kv_heads, dim = (

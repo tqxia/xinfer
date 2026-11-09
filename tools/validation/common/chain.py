@@ -17,6 +17,8 @@ from tools.validation.common.validation import (
 class Policy:
     limit: float = DEFAULT_RELATIVE_LIMIT
     state_rows: object = None
+    state_required: bool = False
+    tokens_required: bool = False
 
     def rows(self, tensor, spec):
         if self.state_rows is not None:
@@ -92,8 +94,9 @@ def compare_traces(
             rows = a.float(), b.float()
         error = tensor_metrics(a, b, rows=rows)
         # Different implementations may round internal state differently. The
-        # shared numerical gate bounds logits; same-artifact parity stays exact.
-        mandatory = exact or state_spec is None
+        # BF16 gate bounds logits; FP8 can also require state/token agreement.
+        # Same-artifact parity stays exact for every model.
+        mandatory = exact or state_spec is None or policy.state_required
         row = dict(
             comparison=label,
             case=case,
@@ -147,11 +150,11 @@ def compare_traces(
                     case=case,
                     step=step,
                     tensor="tokens",
-                    required=exact,
+                    required=exact or policy.tokens_required,
                     differences=differences,
                 )
                 report["top1_differences"].append(row)
-                report["failures" if exact else "diagnostics"].append(row)
+                report["failures" if row["required"] else "diagnostics"].append(row)
 
     for case, step in sorted(states):
         left, right = actual.states[case, step], expected.states[case, step]
@@ -189,15 +192,15 @@ def compare_traces(
                 comparison=label,
                 case=name,
                 tensor="greedy_tokens",
-                required=exact,
+                required=exact or policy.tokens_required,
                 first_difference=first,
                 actual_ids=a["ids"],
                 expected_ids=b["ids"],
             )
             report["greedy_differences"].append(row)
-            if exact:
+            if row["required"]:
                 report["greedy_failures"].append(row)
-            report["failures" if exact else "diagnostics"].append(row)
+            report["failures" if row["required"] else "diagnostics"].append(row)
         if exact:
             require(len(a["rows"]) == len(b["rows"]), "Native generation length differs")
             require(a["position"] == b["position"], "Native generation position differs")

@@ -59,6 +59,10 @@ class FreshDeviceSetup(unittest.TestCase):
                 "qwen35_requirements.txt",
             ):
                 shutil.copy2(ENVIRONMENTS / target / name, self.scripts / target / name)
+        shutil.copy2(
+            ENVIRONMENTS / "gb10/qwen36_requirements.txt",
+            self.scripts / "gb10/qwen36_requirements.txt",
+        )
         self.outside = self.base / "caller"
         self.outside.mkdir()
         self.record = self.base / "calls.jsonl"
@@ -97,6 +101,7 @@ class FreshDeviceSetup(unittest.TestCase):
             ("l20", "qwen35", "-torch213-venv"),
             ("gb10", "qwen3", "-venv"),
             ("gb10", "qwen35", "-venv"),
+            ("gb10", "qwen36", "-venv"),
         ):
             with self.subTest(target=target):
                 self.record.unlink(missing_ok=True)
@@ -129,6 +134,15 @@ class FreshDeviceSetup(unittest.TestCase):
                     )
                 )
                 self.assertEqual(calls[-1]["arguments"], ["-m", "pip", "check"])
+
+    def test_qwen36_is_gb10_only_before_environment_creation(self):
+        result = self.run_setup("l20", "--model", "qwen36")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("only GB10", result.stderr)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.root / "work").exists())
+        self.assertIn("qwen36", self.run_setup("gb10", "--help").stdout)
+        self.assertNotIn("qwen36", self.run_setup("l20", "--help").stdout)
 
     def test_custom_interpreter_venv_and_local_wheel_preserve_spaces_and_repo_relative_paths(
         self,
