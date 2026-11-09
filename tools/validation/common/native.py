@@ -202,7 +202,7 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
             rows=list(logits),
             position=row["position"],
             state=_states(destination / f"{name}.states", specs, row["position"], compact)
-            if model == "qwen35"
+            if model in ("qwen35", "qwen36")
             else (),
         )
     return trace, native

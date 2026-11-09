@@ -189,3 +189,51 @@ Keep the Nsight library-path correction as a temporary running-container
 workaround; leave the Dockerfile unchanged for now. TODO: revisit the image using
 an NVIDIA official base, retaining the pinned model environments and validating
 AOTI export, C++ execution and profiling from clean shell environments.
+
+## Qwen3.6-35B-A3B-FP8 integration
+
+| Step | Scope | Status |
+|---|---|---|
+| 1 | Pinned text checkpoint and GB10 environment | Complete |
+| 2 | FP8 loading/adapters and eager memory/execution | Complete; HF numerical acceptance open |
+| 3 | Complete-model dynamic export and AOTI compilation | Complete at explicit 1,024-slot capacity |
+| 4 | C++ runtime, shared-pool lifetime, memory and deployment | Complete on GB10, including installed/relocated CLI |
+| 5 | Full HF → adapted → AOTI → C++ correctness | Matrix executed; HF/eager and compiler/eager numerical gaps retained |
+| 6 | L20 integration and benchmarks | Pending; separate target artifacts and correctness gate |
+
+Start on GB10 with pinned mixed-dtype, text-only checkpoint preparation and a
+fresh independent environment. Keep FP8 weight/BF16 scale bytes, untied embeddings
+and LM head, original generation EOS settings and complete source provenance.
+Process source shards incrementally and verify transfers before publication.
+See [preparation, loading and eager validation](docs/qwen36-fp8.md).
+
+The mixed-dtype loader and thin FP8 adapters reuse the existing hybrid state,
+attention and GDN execution path. On GB10, FP8-only eager replacement agrees
+bitwise with the official HF FP8 execution across the four-layer prefix and all
+40 layers. Combined adapters complete the functional matrix and short generation;
+HF logit/state/hidden numerical acceptance remains open and must be investigated
+before claiming full-model correctness. Tolerances and required checks stay unchanged.
+The full-model 16,384-slot short memory probe peaks at 34.29 GiB allocated on
+GB10, including validation overhead. Numerical investigation and proposed fixes
+are recorded in [the Qwen3.6 numerical record](docs/experiments/qwen36-numerics.md).
+Fixes are deferred while the current kernels proceed through dynamic 2–512
+prefill, decode, quantized shared weights, Python-free C++ generation and carried
+state checks. Report export/compilation, compiler-to-eager comparison and exact
+native parity independently; these do not establish HF numerical acceptance.
+The complete 40-layer dynamic prefill and one-token decode now compile on GB10
+with a 1,024-slot cache and one shared FP8/BF16 weight archive. C++ passes all
+1,991 bitwise comparisons against Python AOTI, including carried state and greedy
+generation. Python AOTI executes the full matrix but fails 1,339 required
+comparisons against adapted eager; all teacher argmax and short generated tokens
+still agree. Record that compiler/eager numerical gap separately from the
+existing HF adapter failures; neither numerical gate is accepted.
+Step 4 also corrected the pinned Torch AOTI user-managed handle leak through a
+guarded build-only header overlay and fresh packages. Live ATen allocation now
+returns exactly to its warmed baseline after C++ runtime destruction. The
+installed/moved runtime passes the native matrix, three production generation
+cases and 18 CPU-only rejection probes; caller-Spec and file-preflight contracts
+pass. The correction preserves all 1,991 old/new recorded outputs bitwise.
+Use unchanged HF FP8 as
+the primary reference for this checkpoint and retain BF16 block diagnostics
+separately. Validate process peaks before extending to L20 or large contexts;
+benchmark after correctness. Keep the existing Qwen3/Qwen3.5 paths unchanged.

@@ -11,6 +11,7 @@ historical evidence; their commands and results may describe retired code.
 
 - `compiler/<model>/` owns model loading, adapters, kernels and export.
   `compiler/common/` owns shared compilation, metadata and weight helpers.
+  `compiler/patches/` owns guarded PyTorch compiler compatibility patches.
 - `runtime/common/` owns shared native loading, state, generation and measurement.
   Model-specific runtime headers validate their model's ABI.
 - `tools/` owns preparation, numerical validation, benchmarking and diagnostics.
@@ -38,7 +39,10 @@ Use environment checking to verify the selected stack and configured build.
 
 Preserve BF16 HF → adapted/optimized eager → Python AOTI → C++ AOTI validation,
 with identical teacher-forced inputs and an unmodified BF16 HF baseline. Generate
-HF references during validation. Full-model validation does not load a separate
+HF references during validation. For an FP8 checkpoint, use its unmodified HF
+FP8 execution as the primary reference and retain BF16-dequantized block
+diagnostics separately; existing BF16 model baselines stay unchanged.
+Full-model validation does not load a separate
 FP32 HF control model; standalone kernel FP32 checks remain required. Keep
 native/Python bitwise equality, finite-value, state ownership, masking, reset/reuse,
 generation and boundary checks strict.

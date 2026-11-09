@@ -1,19 +1,16 @@
 // Regression for caller-independent Spec ownership and constructor preflight.
-#include "qwen3/runtime.h"
-#include "qwen35/runtime.h"
+#include "common/model.h"
 #include "common/settings.h"
 
 #include <iostream>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 namespace {
 using Json = nlohmann::json;
 using xinfer::require;
 using Trace = std::vector<at::Tensor>;
-
-const std::vector<at::Tensor> &state(const qwen::Runtime &runtime) { return runtime.cache(); }
-const std::vector<at::Tensor> &state(const qwen35::Runtime &runtime) { return runtime.state(); }
 
 template <class Spec> void mutate(Spec &spec) {
   spec.max_prefill = spec.capacity = spec.vocab = 0;
@@ -28,7 +25,7 @@ template <class Runtime> Trace trace(Runtime &runtime) {
   Trace result;
   for (const auto &tokens : {std::vector<int64_t>{42, 13}, std::vector<int64_t>{42}}) {
     result.push_back(runtime.step(tokens).cpu());
-    for (const auto &tensor : state(runtime))
+    for (const auto &tensor : runtime.state())
       result.push_back(tensor.cpu());
   }
   require(runtime.position() == 3, "Incorrect position after prefill and decode");
@@ -53,7 +50,22 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
     at::set_num_threads(2);
     at::globalContext().setAllowTF32CuBLAS(true);
     at::globalContext().setAllowTF32CuDNN(true);
-    Runtime runtime(packages, caller);
+    std::vector<std::string> phases;
+    auto callback_owner = std::make_shared<int>(0);
+    std::weak_ptr<int> callback_lifetime = callback_owner;
+    Runtime runtime(packages, caller, [owner = callback_owner, &phases](const char *phase) {
+      (void)owner;
+      phases.emplace_back(phase);
+    });
+    callback_owner.reset();
+    require(callback_lifetime.expired(), "Runtime retained its load observer");
+    require(phases == std::vector<std::string>{"cpu_archive_validated",
+                                               "canonical_pool_allocated_cpu_archive_alive",
+                                               "loaders_constructed", "prefill_bound",
+                                               "decode_bound"},
+            "Runtime load phases differ");
+    report["load_observer_released"] = true;
+    report["load_phases"] = phases;
     require(at::get_num_threads() == 1 && !at::globalContext().allowTF32CuBLAS() &&
                 !at::globalContext().allowTF32CuDNN(),
             "Runtime did not configure threads and TF32");
@@ -145,7 +157,8 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
   reject(reused, "decode", "reused_spec_after_verification");
 }
 
-void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec &validated) {
+template <class Spec, class Runtime>
+void check_gpu_preflight(const std::filesystem::path &packages, const Spec &validated) {
   auto wrong_gpu = validated;
   require(wrong_gpu.compute_capability.size() == 2, "Invalid test compute capability");
   wrong_gpu.compute_capability[0] = 99;
@@ -154,7 +167,7 @@ void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec
   wrong_gpu.shared_weights = Json();
   bool rejected = false;
   try {
-    qwen::Runtime runtime(packages, wrong_gpu);
+    Runtime runtime(packages, wrong_gpu);
   } catch (const std::runtime_error &error) {
     rejected = std::string(error.what()) == "GPU architecture mismatch";
   }
@@ -164,8 +177,9 @@ void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 4 || (argc == 5 && std::string(argv[4]) == "--files-only"),
-            "Usage: qwen_runtime_contract qwen3|qwen35 PACKAGE_DIR OUTPUT_JSON [--files-only]");
+    require(
+        argc == 4 || (argc == 5 && std::string(argv[4]) == "--files-only"),
+        "Usage: qwen_runtime_contract qwen3|qwen35|qwen36 PACKAGE_DIR OUTPUT_JSON [--files-only]");
     const bool files_only = argc == 5;
     c10::InferenceMode inference;
     const std::string model(argv[1]);
@@ -174,26 +188,18 @@ int main(int argc, char **argv) {
                    {"torch", TORCH_VERSION},
                    {"cases", Json::array()},
                    {"passed", false}};
-    if (model == "qwen3") {
-      const qwen::Spec spec(argv[2]);
+    xinfer::with_model(argv[2], [&](const auto &spec, auto) {
+      using Spec = std::decay_t<decltype(spec)>;
+      using Runtime = xinfer::Runner<Spec>;
+      require(model == xinfer::model_name(spec.model_type), "Model argument differs from package");
       if (files_only) {
-        check_file_preflight<qwen::Spec, qwen::Runtime>(argv[2], spec, argv[3], report);
+        check_file_preflight<Spec, Runtime>(argv[2], spec, argv[3], report);
       } else {
-        check_gpu_preflight(argv[2], spec);
+        check_gpu_preflight<Spec, Runtime>(argv[2], spec);
         report["gpu_guard_before_weights"] = true;
-        check_ownership<qwen::Spec, qwen::Runtime>(argv[2], spec, report);
+        check_ownership<Spec, Runtime>(argv[2], spec, report);
       }
-    } else if (model == "qwen35") {
-      const qwen35::Spec spec(argv[2]);
-      if (files_only) {
-        check_file_preflight<qwen35::Spec, qwen35::Runtime>(argv[2], spec, argv[3], report);
-      } else {
-        xinfer::checked_device(spec);
-        check_ownership<qwen35::Spec, qwen35::Runtime>(argv[2], spec, report);
-      }
-    } else {
-      throw std::runtime_error("Unknown model: " + model);
-    }
+    });
     report["passed"] = true;
     auto file = xinfer::output_file(argv[3]);
     file << report.dump(2) << '\n';

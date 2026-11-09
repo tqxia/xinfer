@@ -22,10 +22,18 @@ namespace xinfer {
 // ordered contiguous state, KV-only mutation and model-defined outputs.
 inline constexpr int64_t runtime_abi_version = 1;
 
-enum class ModelType { Qwen3, Qwen35 };
+enum class ModelType { Qwen3, Qwen35, Qwen36 };
 
 inline const char *model_name(ModelType model) {
-  return model == ModelType::Qwen3 ? "qwen3" : "qwen35";
+  switch (model) {
+  case ModelType::Qwen3:
+    return "qwen3";
+  case ModelType::Qwen35:
+    return "qwen35";
+  case ModelType::Qwen36:
+    return "qwen36";
+  }
+  throw std::runtime_error("Unsupported model type");
 }
 
 inline ModelType parse_model_type(const std::string &type) {
@@ -33,6 +41,8 @@ inline ModelType parse_model_type(const std::string &type) {
     return ModelType::Qwen3;
   if (type == "qwen35")
     return ModelType::Qwen35;
+  if (type == "qwen36")
+    return ModelType::Qwen36;
   throw std::runtime_error("Unsupported model type");
 }
 
@@ -42,6 +52,8 @@ inline ModelType model_from_identity(const Json &identity) {
     return ModelType::Qwen3;
   if (model == "qwen3.5")
     return ModelType::Qwen35;
+  if (model == "qwen3.6")
+    return ModelType::Qwen36;
   throw std::runtime_error("Unsupported model identity: " + model);
 }
 
@@ -125,7 +137,8 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   check_metadata_schema(metadata);
   check_runtime_abi(metadata);
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
-              (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
+              (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35" ||
+               metadata.at("model_type") == "qwen36"),
           "Unsupported model type");
   const auto &fields = metadata_fields();
   for (const auto &field : fields)
@@ -221,7 +234,8 @@ inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
           "Package model types differ");
   for (const auto *m : {&prefill, &decode})
     require(m->contains("model_type") && m->at("model_type").is_string() &&
-                (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
+                (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35" ||
+                 m->at("model_type") == "qwen36"),
             "Unsupported model type");
   static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",
                                                             "package_bytes", "package_sha256"};
@@ -240,7 +254,7 @@ struct StateSpec {
   std::vector<int64_t> shape, stride;
   at::ScalarType dtype;
   bool inplace;
-  // ABI 1: Qwen3 returns logits only; Qwen3.5 also returns every state.
+  // ABI 1: Qwen3 returns logits only; hybrid models also return every state.
   std::optional<size_t> output_index;
 };
 
@@ -274,8 +288,8 @@ struct SpecBase {
                        std::move(stride),
                        item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
                        item.at("update") == "inplace",
-                       model_type == ModelType::Qwen35 ? std::optional<size_t>(state.size() + 1)
-                                                       : std::nullopt});
+                       model_type == ModelType::Qwen3 ? std::nullopt
+                                                      : std::optional<size_t>(state.size() + 1)});
     }
   }
 

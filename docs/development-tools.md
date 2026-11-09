@@ -38,6 +38,21 @@ git ls-files -z '*.py' | xargs -0 work/format-venv/bin/ruff format --check
 git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry-run --Werror
 ```
 
+## PyTorch compatibility patches
+
+Guarded compiler workarounds and their focused tests live in
+[`compiler/patches/`](../compiler/patches/README.md). Its README documents
+the affected Torch internals, upstream issues/fixes, source guards,
+application scope and upgrade/removal checks. Run their CPU regressions
+with the pinned model environment:
+
+```bash
+Q36_PY=work/gb10/qwen36-venv/bin/python  # Or the selected pinned model environment.
+CUDA_VISIBLE_DEVICES='' "$Q36_PY" -m unittest -v \
+  compiler.patches.tests.test_triton_access \
+  compiler.patches.tests.test_aoti_compat
+```
+
 ## CPU unit tests
 
 Tests follow the code they cover. Preparation, benchmark and validation tooling
@@ -121,14 +136,18 @@ execution; the full-model acquisition and token CLIs live in `tools/prepare/`.
 
 ## Shared native executables
 
-Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
-targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
+Qwen3, Qwen3.5 and Qwen3.6 build the same `xinfer_aoti`, `xinfer_benchmark` and
+`xinfer_validate` targets in separate `build/qwen3/`, `build/qwen35/` and
+`build/qwen36/` directories. Each executable
 reads the package metadata to select the model-specific contract. Both entry
 JSON files require the shared
 [`schema_version: 5` format](package-metadata.md), `runtime_abi_version: 1`, and an
-explicit `model_type` of `qwen3` or `qwen35`. Schema 1 through schema 4 and
+explicit `model_type` of `qwen3`, `qwen35` or `qwen36`. Schema 1 through schema 4 and
 unversioned sidecars must be converted or re-exported; model selection reads the versioned
 metadata directly.
+Qwen3.6 dispatch support does not establish full-model native/Python parity or
+HF numerical acceptance; its staged checks are described in the
+[Qwen3.6 guide](qwen36-fp8.md).
 
 The common `Runner<Spec>` owns package loaders, shared weights, device checks,
 token validation, positions, prompt chunking and prefill/decode dispatch.
@@ -148,7 +167,7 @@ and replace functional conv/recurrent outputs. Reset reuses KV storage and zeros
 replacement state. Returned tensors are checked for shape, dtype, device,
 contiguity and required KV aliases before replacement state is adopted. The
 generation CLI refuses existing output/trace files and path aliases. Native benchmarks use
-the same report header and timing boundaries for both models. The validation
+the same report header and timing boundaries across model contracts. The validation
 binary records every logit and selected state checkpoints. Expanded-capacity
 checks store the populated KV prefix and complete functional state; untouched
 future KV is checked separately. The case manifest records checkpoint coverage.
@@ -160,6 +179,58 @@ prompt partitioning/generation on CPU without model packages or a GPU:
 CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_state_contract
 CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_generation_contract
 ```
+
+The same validation build also provides `qwen_weight_memory` and
+`qwen_runtime_contract` for package-backed checks. Build them with the matching
+model environment and run fresh processes serially; for example:
+
+```bash
+MODEL=qwen36
+BUILD="$PWD/build/$MODEL"
+PACKAGES="$PWD/artifacts/$MODEL/complete-bundle-new"
+NATIVE_CHECKS="$PWD/artifacts/$MODEL/native-checks-new"
+"$CMAKE" --build "$BUILD" --target qwen_weight_memory qwen_runtime_contract -j2
+"$BUILD/qwen_weight_memory" "$MODEL" "$PACKAGES" "$NATIVE_CHECKS/memory.json"
+"$BUILD/qwen_runtime_contract" "$MODEL" "$PACKAGES" "$NATIVE_CHECKS/contract.json"
+```
+
+The memory probe records synchronized load, first-prefill/decode and destruction
+boundaries, including the temporary CPU-archive/GPU-pool overlap and separate
+binding of both loaders. It reports CUDA device use, ATen allocator counters,
+process RSS/high-water RSS and system available memory. Boundary samples are
+not an exact global CUDA peak, and allocator peaks exclude raw AOTI allocations.
+On unified-memory devices those figures overlap; do not add them. It executes
+only eight prefill tokens and one decode, not a full-context accuracy test or
+benchmark. The optional synchronous load observer exists only during runtime
+construction; production calls omit it, retain no callback and emit no phase
+samples. The runtime contract checks descriptor ownership, observer release,
+runtime settings and preflight ordering. Its `--files-only` form checks fresh
+file-integrity rejection without allocating GPU weights.
+
+Native memory investigation found that the pinned Torch 2.13 AOTI wrapper leaked
+its cloned `user_managed` tensor handles after runtime destruction. Canonical
+weight pointers still alias correctly during binding; the problem is ownership
+of those handles. `compiler/patches/aoti_compat.py` supplies a scoped temporary
+header overlay during `compile_shared`, guarded by Torch version/Git and the
+original header checksum. It assigns RAII ownership to cloned handles without
+altering installed Torch files, tensor storage or arithmetic. **Recompile both
+packages** to embed the correction; rebuilding a native executable alone cannot
+repair an existing wrapper. The rebuilt Qwen3.6 capacity-1,024 bundle returned
+ATen live allocation exactly to its warmed 32 MiB baseline after destruction,
+with zero post-destroy allocated growth; both loader bindings retained the same
+pool allocation. The short eight-token prefill/one-decode probe peaked at
+33.4283 GiB allocated / 33.4492 GiB reserved. This does not measure total unified
+memory, full-context inference or the amount returned to the operating system.
+All three `Spec` lifetime cases, callback release, runtime settings and the
+pre-weight GPU guard passed; three fresh file-preflight rejection cases passed
+with CUDA hidden. Rebuilt outputs matched the original bundle in all 1,991
+recorded comparisons, and the installed/moved native runtime passed all 1,991
+comparisons against rebuilt Python AOTI. The installed/renamed production CLI
+also passed three exact ID/logit-trace generation cases and all 18 CUDA-hidden
+rejections on a renamed complete bundle. Native linkage remained Python-free
+and the controller did not initialize CUDA.
+Existing HF/compiler numerical failures remain independent and unchanged; see
+the [Qwen3.6 guide](qwen36-fp8.md) for scope and raw report paths.
 
 `Spec` validates metadata and the model ABI. Each native runtime construction
 performs fresh file preflight: it hashes prefill and decode once each against the
@@ -180,12 +251,22 @@ for the CMake `Runtime` component, installed layout and prefix relocation.
 
 ## Python validation tools
 
-One metadata-selected command runs numerical validation for either model:
+Qwen3 and Qwen3.5 share one metadata-selected numerical validation command:
 
 ```bash
 "$Q35_PY" -m tools.validation.validate \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation
 ```
+
+Qwen3.6 currently uses the separate staged commands in its
+[model guide](qwen36-fp8.md). `tools.validation.qwen36.cli` is a CPU-only
+controller for production `xinfer_aoti` parity with saved Python AOTI traces,
+plus CPU pre-load rejections and Python-free native linkage checks. For a
+deployment check, pass an installed/relocated executable and complete bundle;
+the controller runs children from its fresh output directory with absolute
+paths and sanitized Python/library-path variables. Its CLI result remains
+separate from preserved HF/compiler failures and does not establish performance
+or model numerical acceptance.
 
 `--packages` and a fresh `--output` are required. The model directory and native
 `xinfer_validate` path default from package identity; existing `--model-dir` and

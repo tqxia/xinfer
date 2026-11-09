@@ -8,13 +8,16 @@ from pathlib import Path
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from tools.prepare.qwen3 import REVISIONS as QWEN3_REVISIONS
 from tools.prepare.qwen35 import REVISIONS as QWEN35_REVISIONS
+from tools.prepare.qwen36 import REVISIONS as QWEN36_REVISIONS
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
 from compiler.common.context import model_context_limit
 
 
-MODELS = {model: "qwen3" for model in QWEN3_REVISIONS} | {
-    model: "qwen35" for model in QWEN35_REVISIONS
-}
+MODELS = (
+    {model: "qwen3" for model in QWEN3_REVISIONS}
+    | {model: "qwen35" for model in QWEN35_REVISIONS}
+    | {model: "qwen36" for model in QWEN36_REVISIONS}
+)
 
 
 def model_hooks(model):

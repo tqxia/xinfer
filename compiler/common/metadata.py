@@ -145,7 +145,7 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
     _schema(metadata)
     _runtime_abi(metadata)
     require(
-        metadata.get("model_type") in ("qwen3", "qwen35")
+        metadata.get("model_type") in ("qwen3", "qwen35", "qwen36")
         and (model_type is None or metadata["model_type"] == model_type),
         "Unsupported model type",
     )
@@ -255,7 +255,7 @@ def validate_metadata_pair(prefill, decode, model_type=None):
     require(prefill.get("model_type") == decode.get("model_type"), "Package model types differ")
     for m in (prefill, decode):
         require(
-            m.get("model_type") in ("qwen3", "qwen35")
+            m.get("model_type") in ("qwen3", "qwen35", "qwen36")
             and (model_type is None or m["model_type"] == model_type),
             "Unsupported model type",
         )

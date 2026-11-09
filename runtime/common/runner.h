@@ -15,8 +15,8 @@ public:
   using Spec = ModelSpec;
   using Loader = torch::inductor::AOTIModelPackageLoader;
 
-  Runner(const fs::path &packages, const Spec &spec)
-      : Runner(spec, spec.validate_files(packages)) {}
+  Runner(const fs::path &packages, const Spec &spec, LoadObserver observer = {})
+      : Runner(spec, spec.validate_files(packages), std::move(observer)) {}
 
   void reset(double fill = 0) {
     state_.reset(fill);
@@ -67,13 +67,20 @@ public:
   int64_t decode_calls() const { return decode_calls_; }
 
 private:
-  Runner(const Spec &spec, ValidatedBundle bundle)
+  Runner(const Spec &spec, ValidatedBundle bundle, LoadObserver observer)
       : spec_(spec), device_(configured_device(spec_)),
-        weights_(std::move(bundle), spec_.shared_weights),
+        weights_(std::move(bundle), spec_.shared_weights, observer),
         prefill_(weights_.package_path("prefill").string()),
         decode_(weights_.package_path("decode").string()), state_(spec_.state, device_) {
+    // CPU archive objects left scope; loaders constructed. reset() allocates state below.
+    if (observer)
+      observer("loaders_constructed");
     weights_.load(prefill_, "prefill");
+    if (observer)
+      observer("prefill_bound");
     weights_.load(decode_, "decode");
+    if (observer)
+      observer("decode_bound");
     extent_ =
         at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();

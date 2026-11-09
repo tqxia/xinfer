@@ -14,10 +14,12 @@ import zipfile
 import torch
 import torch.nn.functional as F
 
-from compiler.common.artifacts import sha256
+from compiler.common.artifacts import canonical_json, json_sha256, sha256
 from compiler.common.weights import (
     SHARED_WEIGHT_OPTIONS,
     SharedWeights,
+    _Archive,
+    _register,
     compile_shared,
     validate_shared_weights,
 )
@@ -75,6 +77,119 @@ def mapping(directory):
     with zipfile.ZipFile(directory / "weights.pt") as archive:
         record = next(name for name in archive.namelist() if name.endswith("/extra/weights.json"))
         return json.loads(archive.read(record))
+
+
+class SharedFP8Archive(unittest.TestCase):
+    """Mixed storage and borrowing contracts without CUDA or compilation."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        identity = dict(model="qwen3.6", revision="fp8-storage-fixture")
+        data = dict(
+            format=2,
+            identity=identity,
+            identity_sha256=json_sha256(identity),
+            storages={},
+            tensors={},
+            sources={},
+            entries={},
+        )
+        weight = (torch.arange(256, dtype=torch.float32) / 16 - 8).to(torch.float8_e4m3fn)
+        self.originals = dict(
+            weight=weight.reshape(8, 32),
+            sliced=weight.reshape(8, 32)[1::2, 1::2],
+            scales=torch.tensor([0.5, 1.0, 2.0, 4.0], dtype=torch.bfloat16),
+        )
+        storages, cache = {}, {}
+        for name, value in self.originals.items():
+            data["sources"][name] = _register(value, data, storages, cache)
+        for kind in ("prefill", "decode"):
+            package = self.directory / (kind + ".pt2")
+            package.write_bytes(kind.encode())
+            data["entries"][kind] = dict(
+                constants=dict(data["sources"]), package_sha256=sha256(package)
+            )
+        archive = _Archive(data["identity_sha256"])
+        for name, value in storages.items():
+            archive.register_buffer(name, value)
+        path = self.directory / "weights.pt"
+        torch.jit.save(
+            torch.jit.script(archive),
+            str(path),
+            _extra_files={"weights.json": canonical_json(data)},
+        )
+        self.contract = dict(
+            format=2,
+            file="weights.pt",
+            identity=data["identity_sha256"],
+            bytes=path.stat().st_size,
+            sha256=sha256(path),
+        )
+        self.manifest = data
+
+    def test_fp8_bytes_and_strided_views_roundtrip_without_dequantizing(self):
+        pool = SharedWeights(self.directory, self.contract)
+        self.assertEqual(len(pool.storages), 2, "FP8 views must retain one shared storage")
+        restored = {name: pool.tensors[view] for name, view in self.manifest["sources"].items()}
+        self.assertEqual(
+            restored["weight"].untyped_storage().data_ptr(),
+            restored["sliced"].untyped_storage().data_ptr(),
+        )
+        for name, original in self.originals.items():
+            value = restored[name]
+            self.assertEqual(value.dtype, original.dtype)
+            self.assertEqual(value.shape, original.shape)
+            self.assertEqual(value.stride(), original.stride())
+            self.assertEqual(value.storage_offset(), original.storage_offset())
+            self.assertTrue(
+                torch.equal(
+                    value.contiguous().view(torch.uint8),
+                    original.contiguous().view(torch.uint8),
+                ),
+                name,
+            )
+        for descriptor in self.manifest["storages"].values():
+            expected = 256 if descriptor["dtype"] == "float8_e4m3fn" else 8
+            self.assertEqual(descriptor["bytes"], expected)
+
+    def test_both_loaders_borrow_the_same_fp8_storage(self):
+        bindings = []
+
+        class Loader:
+            def get_constant_fqns(self):
+                return ["weight", "sliced", "scales"]
+
+            def load_constants(self, values, **options):
+                bindings.append((values, options))
+
+        pool = SharedWeights(self.directory, self.contract)
+        with patch("torch._inductor.aoti_load_package", side_effect=lambda _: Loader()):
+            loaders = [pool.load(kind) for kind in ("prefill", "decode")]
+        self.assertEqual(len(bindings), 2)
+        for values, options in bindings:
+            self.assertEqual(options, dict(check_full_update=True, user_managed=True))
+            self.assertEqual(values["weight"].dtype, torch.float8_e4m3fn)
+            self.assertEqual(values["scales"].dtype, torch.bfloat16)
+        for name in self.originals:
+            self.assertEqual(bindings[0][0][name].data_ptr(), bindings[1][0][name].data_ptr())
+        self.assertTrue(all(loader._shared_weights_owner is pool for loader in loaders))
+
+    def test_versioned_qwen36_metadata_matches_archive_identity(self):
+        pair = metadata_pair("qwen36")
+        for kind, item in pair.items():
+            path = self.directory / (kind + ".pt2")
+            item.update(
+                package_bytes=path.stat().st_size,
+                package_sha256=sha256(path),
+                shared_weights=self.contract,
+            )
+        result = validate_shared_weights(self.directory, pair["prefill"], pair["decode"])
+        self.assertEqual(result["identity"]["model"], "qwen3.6")
+        pair["decode"]["model_type"] = "qwen35"
+        with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
+            validate_shared_weights(self.directory, pair["prefill"], pair["decode"])
 
 
 class SharedWeightBundle(unittest.TestCase):
@@ -191,6 +306,22 @@ class SharedWeightBundle(unittest.TestCase):
                 torch.testing.assert_close(
                     compiled(inputs(rows)), self.model(inputs(rows)), rtol=0, atol=0
                 )
+
+    def test_real_cpu_packages_release_all_user_managed_tensor_handles(self):
+        pool = SharedWeights(self.bundle, self.contract)
+        views = list(pool.tensors.values())
+        before = [value._use_count() for value in views]
+        weak = [torch._C._WeakTensorRef(value) for value in views]
+        loaders = [pool.load(kind) for kind in ("prefill", "decode")]
+        self.assertTrue(all(value._use_count() > count for value, count in zip(views, before)))
+        with torch.inference_mode():
+            torch.testing.assert_close(loaders[1](inputs(1)), self.model(inputs(1)), rtol=0, atol=0)
+        del loaders
+        gc.collect()
+        self.assertEqual([value._use_count() for value in views], before)
+        del pool, views
+        gc.collect()
+        self.assertTrue(all(reference.expired() for reference in weak))
 
     def test_compile_options_have_one_owner_and_do_not_mutate_the_caller(self):
         directory = self.root / "compile-options"

@@ -1,6 +1,7 @@
 #pragma once
 #include "../qwen3/runtime.h"
 #include "../qwen35/runtime.h"
+#include "../qwen36/runtime.h"
 
 #include <memory>
 
@@ -17,6 +18,10 @@ template <class Function> decltype(auto) with_model(const fs::path &packages, Fu
   case ModelType::Qwen35: {
     const qwen35::Spec spec(metadata);
     return function(spec, [&] { return std::make_unique<qwen35::Runtime>(packages, spec); });
+  }
+  case ModelType::Qwen36: {
+    const qwen36::Spec spec(metadata);
+    return function(spec, [&] { return std::make_unique<qwen36::Runtime>(packages, spec); });
   }
   }
   throw std::runtime_error("Unsupported model type");

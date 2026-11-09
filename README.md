@@ -4,13 +4,16 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 
 - [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
+- [Qwen3.6-35B-A3B-FP8](docs/qwen36-fp8.md): full-model FP8 export, AOTI, bitwise Python/C++ parity, native lifetime/memory and relocated CLI checks on GB10; HF and compiler/eager numerical acceptance remain open.
 - [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters and export settings.
 `runtime/<model>/` owns model-specific package ABI checks. Shared compiler
-artifact, metadata and weight helpers live in `compiler/common/`. Numerical validation
+artifact, metadata and weight helpers live in `compiler/common/`. Guarded PyTorch
+compiler compatibility workarounds live in [`compiler/patches/`](compiler/patches/README.md).
+Numerical validation
 and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
 and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
 offline tokenization use the shared `tools/prepare/` command.
@@ -23,7 +26,7 @@ are `environments/l20/setup.sh`,
 `runtime/common/` owns the runner, state storage, device and package preflight,
 positions, prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
 One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
-both models, selected from package metadata. One state policy retains persistent
+all three model families, selected from package metadata. One state policy retains persistent
 KV buffers and replaces functional conv/recurrent state using metadata update
 rules and the runtime ABI's output order. Generation stops at EOS or the token
 budget. Benchmark requests
@@ -32,7 +35,7 @@ Unit tests follow code ownership: tooling tests live under `tools/<area>/tests/`
 while compiler/model/operator tests remain beside their code.
 See the [CPU unit-test commands](docs/development-tools.md#cpu-unit-tests).
 The common numerical CLI is `tools.validation.validate`; model-specific
-CLI/deployment contract tools remain under `tools/validation/{qwen3,qwen35}/`. Detailed results live
+CLI/deployment contract tools remain under `tools/validation/{qwen3,qwen35,qwen36}/`. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 generated native builds belong in `build/<model>/`; venvs and scratch scripts
 belong in `work/`. These directories are ignored.
@@ -40,16 +43,16 @@ belong in `work/`. These directories are ignored.
 Use the pinned Ruff and clang-format tools with the repository settings; see
 [formatting commands](docs/development-tools.md#formatting).
 
-Both exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
+All model exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
 Model-specific extras live under `model_specific`; common fields have identical
 names and validation for both families. Schema 5 records compiled capacity and
 per-call bounds. Request prompts and output budgets share that capacity. It retains
 `runtime_abi_version: 1`. Retained schema 1 through schema 4 and unversioned
 sidecars need conversion or re-export before use with the current runtime.
 
-Both exporters accept `--max-context-length`. When omitted, capacity is derived
+All exporters accept `--max-context-length`. When omitted, capacity is derived
 from the selected model's text-config `max_position_embeddings`: 40,960 for the
-pinned Qwen3-0.6B and 262,144 for both Qwen3.5 checkpoints. An explicit capacity
+pinned Qwen3-0.6B and 262,144 for Qwen3.5 and Qwen3.6 checkpoints. An explicit capacity
 must be in 512..that ceiling. The selected capacity determines actual KV allocation.
 Compiled prefill remains dynamic over 2–512 tokens per call; shared generation
 splits a longer prompt automatically, using decode for a one-token remainder.

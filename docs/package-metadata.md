@@ -1,11 +1,11 @@
 # Package metadata
 
-Both model families use `schema_version: 5` and `runtime_abi_version: 1` in
+The Qwen3, Qwen3.5 and Qwen3.6 model families use `schema_version: 5` and `runtime_abi_version: 1` in
 `prefill.json` and `decode.json`.
 `compiler/common/metadata.py` builds, finalizes and reads the shared Python
 format. `runtime/common/spec.h` is the common C++ reader. Model-specific modules
 validate their supported tensor ABI; `runtime/common/state.h` handles state for
-both models.
+all models.
 
 | Fields | Meaning |
 | --- | --- |
@@ -15,7 +15,7 @@ both models.
 | `cache_length`, `state` | Compiled context capacity and contiguous state shapes/types/ownership |
 | `export_options`, `tf32`, `triton_enable_fp_fusion`, `inductor_configs` | Export and numerical contract |
 | `package_bytes`, `package_sha256`, `shared_weights` | Package and archive integrity |
-| `model_specific` | DeltaNet numerical policy and minimal packing settings; empty for Qwen3 |
+| `model_specific` | DeltaNet policy, packing settings and Qwen3.6 FP8 backend/format/kernel identity; empty for Qwen3 |
 
 `cache_length` is chosen at export with `--max-context-length`. Its default is
 the selected model's declared text-model context ceiling, not a fixed 16K value.
@@ -43,7 +43,7 @@ enlarge a package's state or symbolic bounds.
 Every ordered state descriptor gives its `layer`, `kind`, `shape`, `dtype` and
 `update` policy. KV inputs use `inplace`; conv/recurrent inputs use `replace`.
 Readers derive state names and contiguous strides. Qwen3 cache geometry and
-Qwen3.5 layer types are derived from state rather than duplicated under
+hybrid-model layer types are derived from state rather than duplicated under
 `model_specific`.
 
 The C++ reader also derives each state's optional output position from
@@ -66,7 +66,7 @@ fills them with the requested value, and initializes replacement state to zero.
   replace the previous state.
 - Attention uses the read-only valid-prefix Flash operator with attention-library
   ABI 1. Python and C++ query the loaded library's actual ABI before use.
-- Qwen3 returns last-token logits only. Qwen3.5 returns last-token logits followed
+- Qwen3 returns last-token logits only. Qwen3.5 and Qwen3.6 return last-token logits followed
   by every state tensor in descriptor order; returned K/V tensors alias their
   caller-owned input buffers. Logits have shape `[1, vocab_size]`.
 
@@ -83,6 +83,16 @@ representation, input/output order or mutation semantics requires a new runtime
 ABI. New weights or compiler tuning do not change the calling convention.
 Numerical settings, toolchain compatibility and artifact checksums remain
 explicit metadata fields.
+
+Qwen3.6 adds `model_type: qwen36` with the same calling convention. Its complete
+text model has 80 ordered state tensors: three DeltaNet pairs followed by one
+attention pair, repeated ten times. The FP8 parameter archive retains E4M3fn
+weights and BF16 scales, with dtype recorded per storage; activation/logit and
+state dtypes retain the ABI above. Both compiled entry points borrow from one
+shared archive. This requires a runtime built with Qwen3.6 model dispatch and
+E4M3fn archive support. Older executables reject the new model type; existing
+Qwen3/Qwen3.5 packages keep their contracts unchanged. Archive format 2 and
+runtime ABI 1 do not change.
 
 Both entries must agree on all stable fields, including `model_specific`.
 Entry point, token range and package size/hash may differ. Unknown or missing

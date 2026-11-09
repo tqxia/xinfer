@@ -86,6 +86,15 @@ versions come from that file's Torch pin. Reports include the `requirements`
 map separately from the hardware profile. Failures exit nonzero and are still
 written to the requested JSON report. Keep the recorded build provenance as well.
 
+## Qwen3.6 preparation on GB10
+
+`gb10/setup.sh --model qwen36` creates the separate FP8 model environment from
+`gb10/qwen36_requirements.txt`. Use `check.sh --target gb10 --model qwen36` with
+its interpreter. L20 setup/check does not yet support this model. The
+[Qwen3.6 guide](../docs/qwen36-fp8.md) describes the CPU/Mac preparation Bash entry
+point, sharded checkpoint transfer and offline verification. Full-model native
+build/export instructions will follow the model integration.
+
 ## Build native runtimes for each model
 
 Each model's native build uses LibTorch from that model's Python environment.
@@ -249,7 +258,7 @@ acceptance remains open. The new profile has not been validated on GB10.
 ## Install and relocate the runtime
 
 After building, install the project's runtime component into a fresh prefix.
-Either model's build contains the shared executables supporting both models;
+Each model's build contains the shared executables supporting all three model families;
 the example below installs from `build/qwen3/`.
 GNUInstallDirs selects executable and library directories, typically `bin/`
 and `lib/` or `lib64/`. `xinfer_aoti` is always included;

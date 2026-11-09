@@ -1,0 +1,7 @@
+# CPU checkpoint preparation and offline tokenization; also usable on macOS.
+torch==2.13.0
+numpy==2.5.4
+transformers==5.20.2
+huggingface-hub==2.3.0
+tokenizers==0.23.3
+safetensors==0.8.0

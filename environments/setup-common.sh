@@ -3,7 +3,7 @@
 
 usage() {
   cat <<EOF
-Usage: environments/$target/setup.sh --model qwen3|qwen35 [options]
+Usage: environments/$target/setup.sh --model $models [options]
 
 Create a fresh model environment from the device and model requirements.
 
@@ -22,6 +22,10 @@ fail() {
   exit 2
 }
 
+models="qwen3|qwen35"
+if [[ "$target" == gb10 ]]; then
+  models+="|qwen36"
+fi
 model=""
 python=python3.12
 venv=""
@@ -44,7 +48,8 @@ while [[ $# -gt 0 ]]; do
 done
 case "$model" in
   qwen3|qwen35) ;;
-  *) usage >&2; fail "Select --model qwen3 or qwen35" ;;
+  qwen36) [[ "$target" == gb10 ]] || fail "Qwen3.6 setup currently supports only GB10" ;;
+  *) usage >&2; fail "Select --model $models" ;;
 esac
 
 cd "$repo_root"

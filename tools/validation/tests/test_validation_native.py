@@ -105,7 +105,7 @@ class NativeTraceContracts(unittest.TestCase):
                 stop="eos",
             )
             (destination / "chat.f32").write_bytes(raw(chat_logits))
-            if model == "qwen35":
+            if model in ("qwen35", "qwen36"):
                 (destination / "chat.states").write_bytes(
                     b"".join(raw(tensor) for tensor in states(9))
                 )
@@ -149,19 +149,26 @@ class NativeTraceContracts(unittest.TestCase):
         self.assertEqual(trace.greedy["chat"]["ids"], [1, 0])
         self.assertTrue(bits_equal(trace.greedy["chat"]["rows"][0], chat_logits[0]))
 
-    def test_qwen35_decodes_every_teacher_state_and_greedy_final_state(self):
-        trace, _, logits, _, states = self.fixture("qwen35")
-        self.assertEqual(set(trace.states), set(trace.logits))
-        self.assertEqual(len(trace.states), 4)
-        for key, values in trace.states.items():
-            self.assertEqual(len(values), 2)
-            self.assertEqual([value.dtype for value in values], [torch.bfloat16, torch.float32])
-            self.assertTrue(bits_equal(trace.logits[key], logits[key[1]].bfloat16().float()))
-            self.assertEqual(trace.logits[key].dtype, torch.float32)
-            for actual, expected in zip(values, states(key[1])):
-                self.assertTrue(bits_equal(actual, expected))
-        for actual, expected in zip(trace.greedy["chat"]["state"], states(9)):
-            self.assertTrue(bits_equal(actual, expected))
+    def test_hybrid_models_decode_every_teacher_state_and_greedy_final_state(self):
+        for model in ("qwen35", "qwen36"):
+            with self.subTest(model=model):
+                trace, _, logits, _, states = self.fixture(model)
+                self.assertEqual(set(trace.states), set(trace.logits))
+                self.assertEqual(len(trace.states), 4)
+                for key, values in trace.states.items():
+                    self.assertEqual(len(values), 2)
+                    self.assertEqual(
+                        [value.dtype for value in values], [torch.bfloat16, torch.float32]
+                    )
+                    self.assertTrue(
+                        bits_equal(trace.logits[key], logits[key[1]].bfloat16().float())
+                    )
+                    self.assertEqual(trace.logits[key].dtype, torch.float32)
+                    for actual, expected in zip(values, states(key[1])):
+                        self.assertTrue(bits_equal(actual, expected))
+                self.assertEqual(len(trace.greedy["chat"]["state"]), len(states(9)))
+                for actual, expected in zip(trace.greedy["chat"]["state"], states(9)):
+                    self.assertTrue(bits_equal(actual, expected))
 
     def test_truncated_and_extra_trace_or_cache_bytes_are_rejected(self):
         for model, name in (

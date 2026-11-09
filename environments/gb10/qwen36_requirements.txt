@@ -1,0 +1,12 @@
+# Complete Qwen3.6 FP8 environment for GB10.
+--extra-index-url https://download.pytorch.org/whl/cu130
+torch==2.13.0+cu130
+triton==3.7.1
+cmake==4.3.4
+ninja==1.13.2
+transformers==5.20.2
+huggingface-hub==2.3.0
+tokenizers==0.23.3
+safetensors==0.8.0
+numpy==2.5.4
+kernels==0.17.2

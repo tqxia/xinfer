@@ -91,7 +91,7 @@ def collect(model, requirements, build=None):
         packages={name: package_version(name) for name in requirements},
         native_tools={name: native_tool(name) for name in ("c++", "nvcc")},
     )
-    if model == "qwen35":
+    if model in ("qwen35", "qwen36"):
         actual["optional_backends"] = {
             name: importlib.util.find_spec(name) is not None for name in ("fla", "causal_conv1d")
         }
@@ -145,7 +145,7 @@ def validate(actual, profile, requirements):
             expect(name, actual["packages"].get(name), version)
     for name, available in actual.get("optional_backends", {}).items():
         if available:
-            issues.append(f"Qwen3.5 requires an environment without {name}")
+            issues.append(f"This model requires an environment without {name}")
     torch = actual["torch"]
     if "error" in torch:
         issues.append("Torch cannot be imported: " + torch["error"])
@@ -176,7 +176,7 @@ def validate(actual, profile, requirements):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("l20", "gb10"), required=True)
-    parser.add_argument("--model", choices=("qwen3", "qwen35"), required=True)
+    parser.add_argument("--model", choices=("qwen3", "qwen35", "qwen36"), required=True)
     parser.add_argument(
         "--build", type=Path, help="Also check this configured CMake build's Torch_DIR"
     )
@@ -184,6 +184,8 @@ def main(argv=None):
         "--output", type=Path, help="Save the same JSON printed to stdout, including failures"
     )
     args = parser.parse_args(argv)
+    if args.model == "qwen36" and args.target != "gb10":
+        parser.error("Qwen3.6 environment checking currently supports only GB10")
     profile = json.loads((ROOT / "environments" / args.target / "profile.json").read_text())
     requirements = model_requirements(args.target, args.model)
     actual = collect(args.model, requirements, args.build)

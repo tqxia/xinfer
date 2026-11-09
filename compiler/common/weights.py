@@ -1,6 +1,7 @@
 """Complete prefill/decode bundles backed by one retained, verified tensor pool."""
 
 from contextlib import contextmanager
+import gc
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ from compiler.common.artifacts import (
     sha256,
 )
 from compiler.common.metadata import finalize_metadata, validate_metadata, validate_metadata_pair
+from compiler.patches.aoti_compat import owned_constant_handles
 
 
 SHARED_WEIGHT_OPTIONS = {
@@ -122,7 +124,7 @@ def validate_shared_weights(directory, prefill, decode):
             )
     manifest = _manifest(directory, decode["shared_weights"])
     if "schema_version" in decode:
-        model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35"}.get(
+        model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35", "qwen3.6": "qwen36"}.get(
             manifest["identity"].get("model")
         )
         require(model_type == decode["model_type"], "Package model identity mismatch")
@@ -271,9 +273,20 @@ def _register(tensor, data, storages, cache):
     return view_name
 
 
+def _release_cuda_cache():
+    # Strict export can leave large temporary parameter copies in the allocator
+    # cache. Return inactive blocks before compilation or the CPU archive pool
+    # competes for the same physical memory on unified-memory devices.
+    if torch.cuda.is_initialized():
+        gc.collect()
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+
+
 def _compile_entry(kind, directory, export_entry, data, storages, inductor_configs):
     """Finish one graph before exporting the next, retaining only CPU tensors."""
     exported, metadata_factory = export_entry(kind, directory)
+    _release_cuda_cache()
     compiled_path = directory / f"{kind}.pt2"
     options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
     print(
@@ -287,6 +300,8 @@ def _compile_entry(kind, directory, export_entry, data, storages, inductor_confi
     compiled = torch._inductor.aoti_load_package(str(compiled_path))
     names = compiled.get_constant_fqns()
     require(len(names) == len(set(names)), "Shared weights package has duplicate constant FQNs")
+    del compiled
+    _release_cuda_cache()
     values = dict(exported.state_dict)
     values.update(
         {
@@ -354,10 +369,11 @@ def compile_shared(directory, export_entry, *, identity, inductor_configs):
     ) as temporary:
         staging = Path(temporary) / "bundle"
         staging.mkdir()
-        metadata = {
-            kind: _compile_entry(kind, staging, export_entry, data, storages, inductor_configs)
-            for kind in ("prefill", "decode")
-        }
+        with owned_constant_handles():
+            metadata = {
+                kind: _compile_entry(kind, staging, export_entry, data, storages, inductor_configs)
+                for kind in ("prefill", "decode")
+            }
         needed_views = {
             name for entry in data["entries"].values() for name in entry["constants"].values()
         }

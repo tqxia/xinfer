@@ -1,6 +1,6 @@
 """Environment contracts can run without a Torch installation or GPU."""
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import copy
 import io
 import json
@@ -84,7 +84,7 @@ class EnvironmentContract(unittest.TestCase):
             any(call.args[0] in ("fla", "causal_conv1d") for call in modules.call_args_list)
         )
 
-    def test_qwen35_detects_forbidden_backends_without_importing_them(self):
+    def test_delta_models_detect_forbidden_backends_without_importing_them(self):
         find_spec = environment.importlib.util.find_spec
 
         def available(name, *args, **kwargs):
@@ -92,21 +92,23 @@ class EnvironmentContract(unittest.TestCase):
                 object() if name in ("fla", "causal_conv1d") else find_spec(name, *args, **kwargs)
             )
 
-        with (
-            patch.object(environment.importlib.util, "find_spec", side_effect=available),
-            patch.object(environment, "native_tool", return_value={}),
-        ):
-            collected = environment.collect("qwen35", REQUIREMENTS)
-        self.assertEqual(collected["optional_backends"], dict(fla=True, causal_conv1d=True))
-        actual = observed()
-        actual["optional_backends"] = collected["optional_backends"]
-        self.assertEqual(
-            environment.validate(actual, PROFILE, REQUIREMENTS),
-            [
-                "Qwen3.5 requires an environment without fla",
-                "Qwen3.5 requires an environment without causal_conv1d",
-            ],
-        )
+        for model in ("qwen35", "qwen36"):
+            with (
+                self.subTest(model=model),
+                patch.object(environment.importlib.util, "find_spec", side_effect=available),
+                patch.object(environment, "native_tool", return_value={}),
+            ):
+                collected = environment.collect(model, REQUIREMENTS)
+                self.assertEqual(collected["optional_backends"], dict(fla=True, causal_conv1d=True))
+                actual = observed()
+                actual["optional_backends"] = collected["optional_backends"]
+                self.assertEqual(
+                    environment.validate(actual, PROFILE, REQUIREMENTS),
+                    [
+                        "This model requires an environment without fla",
+                        "This model requires an environment without causal_conv1d",
+                    ],
+                )
 
     def test_matching_stack_and_distribution_version_without_cuda_suffix(self):
         self.assertEqual(environment.validate(observed(), PROFILE, REQUIREMENTS), [])
@@ -265,6 +267,32 @@ class EnvironmentContract(unittest.TestCase):
             self.assertFalse(report["passed"])
             self.assertTrue(any("Torch cannot be imported" in s for s in report["issues"]))
             self.assertEqual(json.loads(stdout.getvalue()), report)
+
+    def test_qwen36_reads_its_gb10_pins_and_rejects_an_unsupported_target(self):
+        requirements = environment.model_requirements("gb10", "qwen36")
+        self.assertEqual(requirements["kernels"], "0.17.2")
+        self.assertEqual(requirements["torch"], "2.13.0+cu130")
+        actual = observed()
+        actual["platform"]["machine"] = "aarch64"
+        actual["packages"] = requirements
+        actual["torch"].update(runtime_version="2.13.0+cu130", cuda="13.0")
+        actual["gpu"] = dict(name="GB10", capability=[12, 1])
+        with (
+            patch.object(environment, "collect", return_value=actual) as collect,
+            redirect_stdout(io.StringIO()) as stdout,
+        ):
+            self.assertEqual(environment.main(["--target", "gb10", "--model", "qwen36"]), 0)
+        self.assertTrue(json.loads(stdout.getvalue())["passed"])
+        collect.assert_called_once_with("qwen36", requirements, None)
+        with (
+            patch.object(environment, "collect") as collect,
+            redirect_stderr(io.StringIO()) as stderr,
+            self.assertRaises(SystemExit) as error,
+        ):
+            environment.main(["--target", "l20", "--model", "qwen36"])
+        self.assertEqual(error.exception.code, 2)
+        self.assertIn("only GB10", stderr.getvalue())
+        collect.assert_not_called()
 
 
 if __name__ == "__main__":

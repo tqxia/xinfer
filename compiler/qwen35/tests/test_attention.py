@@ -172,7 +172,13 @@ class PrefixFlashGeometry(unittest.TestCase):
     @torch.inference_mode()
     def test_input_derived_gqa_geometry_and_fake_contract(self):
         # Include a geometry outside either model to catch a hidden profile whitelist.
-        for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256), (16, 4, 256), (6, 2, 64)):
+        for heads, kv_heads, dim in (
+            (16, 8, 128),
+            (8, 2, 256),
+            (16, 4, 256),
+            (16, 2, 256),
+            (6, 2, 64),
+        ):
             with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
                 inputs = self.inputs(heads, kv_heads, dim)
                 q, k, v, extent, scale = inputs
