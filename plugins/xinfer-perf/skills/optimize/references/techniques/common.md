@@ -26,6 +26,17 @@ Predict which execution cost should change and verify the selected code actually
 changes. Fewer library calls or a faster isolated kernel need not reduce native
 decode latency once transformations, reductions and workspace are included.
 
+A tuning flag can also change decomposition and arithmetic. In the
+[GB10 experiment](../../../../../../docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md),
+coordinate-descent tuning replaced singleton matmuls with reductions. Its broad
+speedup added required token/state failures despite exact Python/native parity.
+A narrower head experiment exposed another confound: fresh default autotuning
+changed unrelated normalization schedules. Freeze unchanged per-kernel choices
+when isolating a transformation, verify actual kernel bodies, launch settings
+and binaries plus external-call operands, and compare state payloads directly.
+Check output-logit errors separately; matching state does not imply matching
+logits. A measured global gain is not numerical acceptance.
+
 ## Adjust layout and scheduling
 
 Use profiler evidence of inefficient accesses, spills, stalls or limited

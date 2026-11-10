@@ -65,6 +65,9 @@ itself does not hardcode that model or hardware. Runtime optimization is deferre
 to a separate future skill. CodeBuddy packaging and discovery are also future
 work; this version supports Codex and Claude Code.
 
+See the [GB10 Qwen3.5-0.8B experiment](../../docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md)
+for baseline profiling, three compiler trials and correctness/performance feedback.
+
 ## Check the package
 
 From the xinfer checkout, validate the manifests:
