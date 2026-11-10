@@ -19,6 +19,10 @@ historical evidence; their commands and results may describe retired code.
 - `environments/` owns setup, device/model requirements and hardware profiles.
 - Tests follow the code they cover. Keep module/operator/kernel checks in unit
   tests and full export-to-native accuracy checks in `tools/validation/`.
+- Functions and helpers used only by tests or tooling belong in their respective
+  test or tool modules. Production code must not expose test-only or tool-only
+  APIs. Put shared test helpers in test modules and test-only native helpers in
+  test translation units.
 - Extend shared implementations and model hooks before introducing parallel
   model-specific orchestration. Derive geometry and bounds from inputs or
   metadata where supported; make actual model/ABI restrictions explicit.
