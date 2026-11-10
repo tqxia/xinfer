@@ -1,5 +1,26 @@
 # Qwen3 implementation and deferred work
 
+## Performance optimization plugin
+
+[`xinfer-perf`](plugins/xinfer-perf/README.md) supplies the shared `optimize` skill
+for compiler configuration, graph passes, adapters, fusion and kernel tuning.
+It defaults to native decode latency, uses existing project validation/benchmark
+commands and invokes Nsight tools directly. Keep reusable plugin helpers under
+`plugins/xinfer-perf/`; add them when actual investigations demonstrate a need.
+The Qwen3.5-0.8B demonstration on GB10 (compiler-option comparison followed by a
+profiling-driven decode experiment) is deferred; local plugin checks do not
+establish GPU correctness or performance.
+
+TODO: add CodeBuddy packaging and verify skill discovery. The first version
+supports Codex and Claude Code using the same skill and reference guides.
+
+TODO: add a separate runtime optimization skill alongside `optimize`, covering
+generation-loop overhead, CPU/GPU coordination, CUDA Graphs and cache/state
+management. Share general measurement/analysis helpers between the skills, while
+keeping their implementation scopes distinct. Do not scaffold that skill yet.
+
+## Qwen3 scope
+
 Current Qwen3-0.6B scope: one fused BF16 AOTInductor compilation profile using
 valid-prefix FlashAttention/native GQA, explicit caller-owned cache state and a
 Python-free C++ generation loop. The eager-numerics profile and efficient

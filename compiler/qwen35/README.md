@@ -411,8 +411,9 @@ Export the pair with matching settings into a fresh directory:
   --output artifacts/qwen35/0.8b/text-optimized
 ```
 
-Metadata records the `enable_inductor_optimization` flag and resolved
-`inductor_configs`; the runtime rejects package pairs with different configs.
+Export logs record the `enable_inductor_optimization` flag and full resolved
+tuning options. Metadata retains only the precision and external-constant
+compilation settings; the runtime checks those settings across the package pair.
 The flag is off by default and
 requires no runtime switch. Rerun the unified numerical and runtime-contract checks with
 `--packages artifacts/qwen35/0.8b/text-optimized`, since these optimizations can

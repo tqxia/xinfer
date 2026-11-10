@@ -6,6 +6,8 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
 - [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
 - [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
+- [Performance optimization plugin](plugins/xinfer-perf/README.md): compiler/kernel
+  investigations in Codex and Claude Code, with native decode as the default objective.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters, kernels and export settings.
