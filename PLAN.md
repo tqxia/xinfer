@@ -7,6 +7,9 @@ for compiler configuration, graph passes, adapters, fusion and kernel tuning.
 It defaults to native decode latency, uses existing project validation/benchmark
 commands and invokes Nsight tools directly. Keep reusable plugin helpers under
 `plugins/xinfer-perf/`; add them when actual investigations demonstrate a need.
+Baseline profiling precedes candidate selection; each hypothesis cites concrete
+profile evidence. Reuse matching captures when available, and defer candidate
+selection when profiling evidence is missing.
 The Qwen3.5-0.8B demonstration on GB10 (compiler-option comparison followed by a
 profiling-driven decode experiment) is deferred; local plugin checks do not
 establish GPU correctness or performance.

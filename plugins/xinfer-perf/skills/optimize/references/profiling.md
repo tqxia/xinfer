@@ -1,8 +1,16 @@
 # Investigate decode with existing profilers
 
-Read this when measurements need an explanation. Run `nsys` and `ncu` directly
-on the GPU host. Check their installed `--help` and versions before choosing
-capture/filter options; supported metrics depend on the tool and device.
+Read this before selecting optimization candidates. Profile the native baseline
+with `nsys`; use targeted `ncu` captures when an observed kernel needs deeper
+analysis. Run the tools directly on the GPU host. Check their installed `--help`
+and versions before choosing capture/filter options; supported metrics depend
+on the tool and device.
+
+Reuse an existing capture when its packages/native implementation, device,
+software environment and relevant workload match the baseline. Record those
+identities and the capture path in the experiment notes. If no matching capture
+is available, obtain one before proposing candidates. If capture is blocked,
+report the missing evidence and defer candidate selection.
 
 ## Start with the native workload
 
@@ -59,10 +67,14 @@ Triton source, using the actual package/build artifacts. Shapes, dispatch and
 call sites help disambiguate repeated names. Fusion, combo kernels and external
 calls can make a one-kernel/one-node mapping impossible; retain that ambiguity.
 
-Inspect enough source to propose a compiler option, graph change, adapter or
-kernel experiment. Confirm the candidate changes the intended generated code
-or dispatch, then return to unprofiled native measurements. A Python probe or
-microbenchmark can explain a mechanism but does not replace the deployed path.
+For each candidate, cite the profile observation, its decode relevance and the
+mechanism the change is expected to improve. Inspect the associated source to
+choose a compiler option, graph change, adapter or kernel experiment. If phase
+attribution is too uncertain to support the hypothesis, investigate it further
+before selecting that candidate. Confirm the candidate changes the intended
+generated code or dispatch, then return to unprofiled native measurements. A
+Python probe or microbenchmark can explain a mechanism but does not replace the
+deployed path.
 
 Keep profiler commands, versions and result paths in the experiment notes. If
 counters are unavailable, report the limitation and use the evidence available.

@@ -5,6 +5,13 @@ xinfer. It defaults to native decode latency per token and uses existing xinfer
 commands, `nsys` and `ncu` directly. The coding agent chooses hypotheses and edits;
 the existing validators and benchmarks supply evidence.
 
+The default loop is baseline measurement → profiling → hypothesis →
+compiler/kernel change → export/validation → paired measurement.
+Profile before choosing candidates; a matching saved capture can be reused.
+Each hypothesis cites an observed hotspot or execution behavior. If usable
+profiling evidence is missing, the agent obtains it or reports the gap and
+defers candidate selection.
+
 ## Load the plugin
 
 Run these commands from a xinfer checkout. For Claude Code, load the plugin for
@@ -40,8 +47,8 @@ build or experiment files inside the installed plugin.
 ## Example requests
 
 > Use xinfer-perf to investigate decode latency for this compiled model. Start
-> from the existing baseline and try at most three compiler-side candidates in
-> two hours. Keep numerical failures visible.
+> by profiling the existing baseline, then try at most three compiler-side
+> candidates supported by that profile in two hours. Keep numerical failures visible.
 
 > Continue the experiment described in work/perf/notes.md. Read the saved results
 > and finish the pending comparison before trying another change.

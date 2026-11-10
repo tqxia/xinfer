@@ -8,6 +8,11 @@ and numerical policy. Inspect command `--help` when the checkout differs.
 
 ## Establish comparable inputs
 
+Start candidate selection from the baseline profile described in
+[profiling.md](profiling.md). Record which measured hotspot or execution behavior
+supports the hypothesis. If that evidence is absent or no longer matches the
+baseline, profile first; do not substitute a list of plausible tuning options.
+
 Record the checkpoint and baseline package, source revision plus local patch,
 Python environment, native executable/library, GPU UUID and workload. Existing
 benchmark reports already record package/binary/workload hashes and telemetry;
@@ -78,7 +83,8 @@ noise obscures the effect. Profiled and unprofiled timings are separate evidence
 
 Inspect export logs/generated code to confirm the intended change was applied.
 Record the hypothesis, patch, exact commands, measurements, numerical changes,
-conclusion and next action in a short note. Retain failed attempts. On resumption,
-read that note and check for still-running work before launching another job.
+supporting profile, conclusion and next action in a short note. Retain failed
+attempts. On resumption, read that note and check for still-running work before
+launching another job.
 Report a faster exploratory candidate separately from model acceptance when
 required numerical checks remain unresolved.

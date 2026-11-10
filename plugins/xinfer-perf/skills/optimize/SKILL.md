@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: Investigate and optimize compiled LLM inference in xinfer through compiler configuration, graph passes, inference adapters, fusion and GPU kernels. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
+description: Profile and optimize compiled LLM inference in xinfer through compiler configuration, graph passes, inference adapters, fusion and GPU kernels. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
 ---
 
 # Optimize xinfer compilation
@@ -28,13 +28,26 @@ When continuing an experiment, read its notes, commands and result files first.
 Reuse relevant evidence instead of repeating completed work. Note any changes
 in source, artifacts, workload or environment before comparing old and new runs.
 
-## Investigate and experiment
+## Profile the baseline
 
-- Start from the user's evidence or establish a baseline with the existing
-  benchmark. Consult [profiling.md](references/profiling.md) when a capture or
-  kernel-level investigation would answer a concrete question. Invoke `nsys`
-  and `ncu` directly and use their built-in summaries and exports.
-- Choose a hypothesis and identify what result would support or reject it.
+Establish baseline measurements with the existing benchmark, then profile the
+native execution before choosing optimization candidates. Follow
+[profiling.md](references/profiling.md): start with `nsys` and use targeted `ncu`
+captures when kernel counters would help explain an observed hotspot. Invoke the
+profilers directly; both tools are not required for every investigation.
+
+An existing capture can satisfy this step if it matches the baseline artifacts,
+hardware/software environment and relevant workload. Check that match on resume.
+Record the capture/result paths, concrete observations and how they relate to
+decode (or the requested objective). Source inspection, historical results from
+another target and intuition alone do not replace profiling this baseline.
+If usable profiling evidence is unavailable, collect it or report what is
+missing and defer candidate selection.
+
+## Form hypotheses and experiment
+
+- Tie each candidate to an observation in the baseline profile and explain the
+  mechanism it could improve. Identify what result would support or reject it.
   Inspect the relevant graph, generated code or kernel before changing it.
   Keep an experiment focused enough to explain its effect; use ablations when
   several changes interact.
@@ -47,9 +60,12 @@ in source, artifacts, workload or environment before comparing old and new runs.
   Kernel microbenchmarks guide the work; native model measurements establish
   its effect on inference.
 
-Adapt this sequence to the task. A supplied profile, existing candidate or
-specific kernel can be the starting point. Delegate independent investigation
-or review when useful, while running measurements serially on the selected GPU.
+An existing candidate or a specific kernel can focus the investigation; first
+establish the matching baseline profiling evidence. Reuse that evidence for
+further candidates against the same baseline. Reprofile when a changed baseline
+or workload makes it stale, or when results need explanation. Delegate independent
+investigation or review when useful, while running measurements serially on the
+selected GPU.
 
 ## Interpret and retain the result
 
