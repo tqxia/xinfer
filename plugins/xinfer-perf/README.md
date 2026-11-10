@@ -12,6 +12,12 @@ Each hypothesis cites an observed hotspot or execution behavior. If usable
 profiling evidence is missing, the agent obtains it or reports the gap and
 defers candidate selection.
 
+A small [symptom index](skills/optimize/references/optimization-index.md) links
+profiles to common technique notes and hardware-specific applicability guidance.
+After each experiment, the agent compares its prediction with observed results
+and records what that means for the next attempt. Extend the notes from actual
+optimizations rather than preloading a large technique catalog.
+
 ## Load the plugin
 
 Run these commands from a xinfer checkout. For Claude Code, load the plugin for

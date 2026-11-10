@@ -12,6 +12,8 @@ Start candidate selection from the baseline profile described in
 [profiling.md](profiling.md). Record which measured hotspot or execution behavior
 supports the hypothesis. If that evidence is absent or no longer matches the
 baseline, profile first; do not substitute a list of plausible tuning options.
+Use the [symptom index](optimization-index.md) for relevant technique notes;
+hardware-specific recipes require a match to the actual target and toolchain.
 
 Record the checkpoint and baseline package, source revision plus local patch,
 Python environment, native executable/library, GPU UUID and workload. Existing
@@ -88,3 +90,22 @@ attempts. On resumption, read that note and check for still-running work before
 launching another job.
 Report a faster exploratory candidate separately from model acceptance when
 required numerical checks remain unresolved.
+
+## Compare prediction with observation
+
+Before editing, record the mechanism and expected change in launches, traffic,
+kernel behavior or native latency. Use qualitative expectations unless a numeric
+estimate has a stated basis. After every attempt, including compile/validation
+failures, compare the prediction with the result. A short note is enough:
+
+```text
+Before: profile/observation; proposed change; expected effect; refuting evidence.
+After: implementation applied; measured performance/correctness; result paths.
+Feedback: expected versus observed; explanation or unknowns; decision/next action.
+```
+
+Record unmeasured effects as unknown, not as improvements. If the result differs
+from the prediction, distinguish an unapplied change, invalid/noisy measurement,
+incorrect mechanism and numerical failure using the available evidence. Reprofile
+when needed. Explain what new evidence would justify retrying an ineffective
+approach. Use this feedback on resumption rather than repeating the same guess.

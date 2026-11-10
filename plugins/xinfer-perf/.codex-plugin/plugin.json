@@ -1,6 +1,6 @@
 {
   "name": "xinfer-perf",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Investigate and optimize xinfer decode performance through compiler configuration, graph passes, adapters and kernels.",
   "skills": "./skills/"
 }

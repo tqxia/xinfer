@@ -10,6 +10,9 @@ commands and invokes Nsight tools directly. Keep reusable plugin helpers under
 Baseline profiling precedes candidate selection; each hypothesis cites concrete
 profile evidence. Reuse matching captures when available, and defer candidate
 selection when profiling evidence is missing.
+A small symptom index routes to common and hardware-specific technique notes;
+experiments record predicted versus observed effects to guide later attempts.
+Grow that guidance from actual optimizations, keeping model details in model code.
 The Qwen3.5-0.8B demonstration on GB10 (compiler-option comparison followed by a
 profiling-driven decode experiment) is deferred; local plugin checks do not
 establish GPU correctness or performance.

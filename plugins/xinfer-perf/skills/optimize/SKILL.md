@@ -47,7 +47,10 @@ missing and defer candidate selection.
 ## Form hypotheses and experiment
 
 - Tie each candidate to an observation in the baseline profile and explain the
-  mechanism it could improve. Identify what result would support or reject it.
+  mechanism it could improve. Use the [symptom index](references/optimization-index.md)
+  to load relevant common or hardware-specific technique notes as needed.
+  Record the expected metric/latency change and what would refute the hypothesis
+  before editing; a qualitative prediction is sufficient when numbers lack a basis.
   Inspect the relevant graph, generated code or kernel before changing it.
   Keep an experiment focused enough to explain its effect; use ablations when
   several changes interact.
@@ -83,8 +86,12 @@ an unprofiled, controlled native comparison.
 
 Keep ordinary notes with the hypothesis, source revision/patch, exact commands,
 artifact/result paths, observations and next action in the experiment directory.
-Retain failed and inconclusive attempts. On stopping, give the reviewable change,
-measured outcome, numerical status, limitations and what to try next.
+After each attempt, compare the prediction with observed performance and
+correctness, including failed or inconclusive outcomes. Use the short
+[feedback format](references/experiments.md#compare-prediction-with-observation)
+to explain mismatches and guide the next hypothesis. Retain failed attempts.
+On stopping, give the reviewable change, measured outcome, numerical status,
+limitations and what to try next.
 
 Runtime/generation-loop changes belong to a future separate skill. If the
 evidence points there, report that opportunity without expanding this task.
