@@ -27,7 +27,7 @@ changes. Fewer library calls or a faster isolated kernel need not reduce native
 decode latency once transformations, reductions and workspace are included.
 
 A tuning flag can also change decomposition and arithmetic. In the
-[GB10 experiment](../../../../../../docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md),
+[GB10 experiment](https://github.com/tqxia/xinfer/blob/3e05a9d4db8c945dfcd12d05a31c50955775d8b6/docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md),
 coordinate-descent tuning replaced singleton matmuls with reductions. Its broad
 speedup added required token/state failures despite exact Python/native parity.
 A narrower head experiment exposed another confound: fresh default autotuning

@@ -30,6 +30,9 @@ in source, artifacts, workload or environment before comparing old and new runs.
 
 ## Profile the baseline
 
+Consult the relevant [hardware notes](references/techniques/hardware.md#target-notes)
+before autotuning or timing; use target-specific load-health observations.
+
 Establish baseline measurements with the existing benchmark, then profile the
 native execution before choosing optimization candidates. Follow
 [profiling.md](references/profiling.md): start with `nsys` and use targeted `ncu`
@@ -49,8 +52,9 @@ missing and defer candidate selection.
 - Tie each candidate to an observation in the baseline profile and explain the
   mechanism it could improve. Use the [symptom index](references/optimization-index.md)
   to load relevant common or hardware-specific technique notes as needed.
-  Record the expected metric/latency change and what would refute the hypothesis
-  before editing; a qualitative prediction is sufficient when numbers lack a basis.
+  Record the candidate's origin and readiness, expected metric/latency change and
+  what would refute the hypothesis before editing; a qualitative prediction is
+  sufficient when numbers lack a basis.
   Inspect the relevant graph, generated code or kernel before changing it.
   Keep an experiment focused enough to explain its effect; use ablations when
   several changes interact.

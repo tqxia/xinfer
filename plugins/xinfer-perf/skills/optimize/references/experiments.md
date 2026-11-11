@@ -93,14 +93,20 @@ required numerical checks remain unresolved.
 
 ## Compare prediction with observation
 
+Record each candidate's origin and source or prior experiment: an existing option,
+a reused approach or a new implementation. Record its readiness, such as a scratch
+prototype, validated experiment or maintained implementation, and update it after
+the attempt. Readiness is separate from the validator's model acceptance result.
+
 Before editing, record the mechanism and expected change in launches, traffic,
 kernel behavior or native latency. Use qualitative expectations unless a numeric
 estimate has a stated basis. After every attempt, including compile/validation
 failures, compare the prediction with the result. A short note is enough:
 
 ```text
+Candidate: origin/reference; initial readiness.
 Before: profile/observation; proposed change; expected effect; refuting evidence.
-After: implementation applied; measured performance/correctness; result paths.
+After: implementation applied; current readiness; performance/correctness; result paths.
 Feedback: expected versus observed; explanation or unknowns; decision/next action.
 ```
 

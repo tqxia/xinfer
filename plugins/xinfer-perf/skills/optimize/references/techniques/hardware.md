@@ -1,4 +1,35 @@
-# Hardware-specific mechanisms
+# Hardware-specific guidance
+
+Consult the relevant target notes before autotuning and timing. A quiet GPU is
+not necessarily healthy under load: sample clocks, utilization, power and clock
+event reasons during a short representative workload. Interpret them against the
+selected device's healthy behavior, not a universal frequency threshold.
+
+## Target notes
+
+### GB10 (SM 12.1)
+
+One tested system stayed at 611 MHz under load despite passing idle checks.
+After shutdown and PSU power disconnection, its busy samples returned to roughly
+2.4–2.5 GHz. This is an observed failure/recovery on that system, not a normal
+GB10 clock target or a proven root cause shared by all GB10 devices.
+
+Check load telemetry before export/autotuning as well as benchmarking. After
+recovering from abnormal clocks, reassess artifacts whose tuning choices were
+selected under the fault; the recorded experiment re-exported its baseline.
+Evidence is in `docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md` in the
+selected xinfer checkout.
+
+### L20 (SM 8.9)
+
+One tested L20 held 2,520 MHz during native timing. Its sustained matrix-multiply
+probe ran at 2,460–2,505 MHz with software power-capping event `0x4`. Interpret
+clock events against the workload, power and temperature; do not require every
+event flag to be zero or import GB10's frequency observations as a threshold.
+The supporting experiment report remains local for now. These observations do
+not define universal L20 clocks.
+
+## Feature-dependent mechanisms
 
 Read this when a hypothesis depends on features such as TMA, specialized matrix
 instructions, tensor memory or architecture-specific asynchronous pipelines.
