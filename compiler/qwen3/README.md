@@ -14,7 +14,8 @@ The former eager-numerics compilation profile and efficient-attention export
 backend are retired. Existing efficient packages must be re-exported. Known HF
 cache/token differences are documented in [numerical history](../../docs/experiments/qwen3-numerics.md);
 [the attention guide](../../docs/flash-attention.md) describes the fixed operator
-and package ABI. Qwen3.5 retains its separate adapter, environment and policy.
+and package ABI. Qwen3.5 retains its separate adapter and environment; both models
+follow the [shared numerical policy](../../docs/development-tools.md#shared-numerical-policy).
 
 ## Environment
 
@@ -280,21 +281,18 @@ against HF `generate()`, and fixes the teacher-forced inputs used by later stage
 The chain compares adjacent stages and Python AOTI directly with the BF16 HF
 baseline. Cache boundaries, future-slot poisoning, write regions,
 storage reuse and overflow remain strict. The optional `--model-dir` selects a
-prepared checkpoint; no saved-reference input is required. Validation separates
-two conclusions:
-
-- Runtime correctness requires finite results, bitwise native/Python AOTI
-  agreement, correct cache writes/masking, stable storage, reset/reuse, legal
-  boundaries/overflow rejection and matching native/Python generation.
-- HF logit error remains bounded by the existing 5% row-relative L2 and
-  peak-normalized error limits. HF cache differences and differing top-token or
-  greedy-sequence choices are recorded diagnostics, with parity reported
-  separately from the overall result. A successful run does not claim HF
-  bitwise or token parity.
+prepared checkpoint; no saved-reference input is required. Both model families
+use [shared_bf16 v1](../../docs/development-tools.md#shared-numerical-policy):
+matched-input logit comparisons retain both inclusive 5% row-error bounds;
+full-model state, HF top-token and HF greedy-sequence differences are diagnostic.
+Finite results, native/Python AOTI bitwise agreement, cache writes/masking,
+storage ownership, reset/reuse and boundary rejection remain required. A
+successful numerical run does not establish HF token parity or task quality.
 
 Logit comparisons use identical fed tokens, including when greedy trajectories
 differ. The independent BF16 HF eager baseline remains in the reports. Focused
-attention/operator checks retain their own numerical correctness requirements.
+attention/operator checks run separately and retain their own required output
+and state tolerances.
 The original HF SDPA reference is not replaced by the compiled Flash adapter.
 See [numerical history](../../docs/experiments/qwen3-numerics.md) for the recorded
 14/56 cache differences and two top-token mismatches on L20.

@@ -133,12 +133,16 @@ shipping CLI and deployment contract.
 
 ## Numerical policy and evidence
 
+Both model families follow the
+[shared numerical policy](development-tools.md#shared-numerical-policy).
 Finite results, C++/Python AOTI bitwise agreement, cache write regions, poisoning,
-masking, reset/reuse, storage and boundary checks remain hard requirements. HF
-logits retain the existing 5% relative-L2 and peak-normalized limits. HF cache
-and top-token/greedy-sequence differences are accepted diagnostics and are
-reported separately from runtime correctness and HF parity. HF logit comparisons
-use identical fed tokens even when independent greedy trajectories differ.
+masking, reset/reuse, storage and boundary checks remain hard requirements.
+Matched-input logits retain both existing 5% row-error limits. Full-model state
+and HF top-token/greedy-sequence differences are diagnostics, with their metrics
+retained. Logit comparisons use identical fed tokens even when independent
+greedy trajectories differ. Focused attention tests run separately with their
+own required tolerances; a full-model numerical pass does not establish task
+quality or resolve recorded numerical differences.
 
 The retained L20/Torch 2.7 evidence covers 26 cases/185 rows with exact native/
 Python AOTI logits and caches. HF comparison reports 14/56 cache deviations and

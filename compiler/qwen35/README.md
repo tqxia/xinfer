@@ -16,7 +16,10 @@ profile has not been validated on GB10.
 
 The historical [4B L20 run](../../docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04)
 validates export, shared-weight loading and native/Python parity. Full HF/FP32
-controls ran; the required numerical limits remain unmet.
+controls ran; that report's required numerical limits remain unmet. Historical
+results retain their original policy. The current
+[shared full-model policy](../../docs/development-tools.md#shared-numerical-policy)
+requires a fresh run and does not resolve the recorded numerical differences.
 
 Generation, fixed-token timing and native validation use the shared
 `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executables. Package
@@ -442,6 +445,8 @@ verification:
 
 Kernel numerical and behavior checks run through `test_kernels`; the
 `test_kernels_aoti` module checks exact direct-kernel/Python AOTI parity.
+Run affected kernel/block tests separately as required checks; the unified
+full-model command does not invoke them or change their tolerances.
 The unified numerical command selects Qwen3.5 from package metadata and runs
 HF → eager → Python AOTI → C++ AOTI. The eager stage includes the adapters
 and linear packing selected by package metadata. It checks adjacent stages and
@@ -476,11 +481,17 @@ saved-reference input files or a separate preparation command. Qwen3 additionall
 checks its manual HF greedy decoding against HF `generate()`.
 The numerical report preserves the model and
 end-to-end fixture origins, intermediate-stage isolation, the BF16 HF baseline,
-native/Python bitwise comparisons, carried state and generation
-checks. Logits and state retain both 5% error limits. HF token and greedy
-agreement remains required for the original end-to-end fixtures; model-only
-token differences remain diagnostic. Review the complete reports before
-accepting a new package.
+native/Python bitwise comparisons, carried state and generation checks.
+Both model families use
+[shared_bf16 v1](../../docs/development-tools.md#shared-numerical-policy).
+Matched-input logits retain both inclusive 5% row-error bounds, including HF
+replay on the compiled greedy continuation. Full-model state errors and HF
+top-token/greedy differences are diagnostic for every fixture. State metrics,
+token margins and first divergences remain in reports. Shapes, finite values,
+ownership, write boundaries, reset/reuse and overflow remain required, as does
+bitwise native/Python AOTI parity. Historical reports retain their stricter
+state/token gates; reclassification does not fix the underlying differences.
+Review diagnostics and task quality separately before accepting a new package.
 
 The kernel unit and AOTI test modules each cover both the 0.8B and 4B
 geometries automatically, using synthetic fixtures without a model checkpoint.

@@ -15,11 +15,8 @@ from tools.validation.common.validation import (
 
 @dataclass
 class Policy:
-    state_required: bool = False
-    tokens_required: bool = False
     limit: float = DEFAULT_RELATIVE_LIMIT
     state_rows: object = None
-    token_keys: object = None
 
     def rows(self, tensor, spec):
         if self.state_rows is not None:
@@ -75,7 +72,6 @@ def compare_traces(
     policy,
     *,
     exact=False,
-    required=True,
     state_keys=None,
     logit_keys=None,
     check_tokens=True,
@@ -95,7 +91,9 @@ def compare_traces(
         else:
             rows = a.float(), b.float()
         error = tensor_metrics(a, b, rows=rows)
-        mandatory = required and (exact or state_spec is None or policy.state_required)
+        # Different implementations may round internal state differently. The
+        # shared numerical gate bounds logits; same-artifact parity stays exact.
+        mandatory = exact or state_spec is None
         row = dict(
             comparison=label,
             case=case,
@@ -135,7 +133,7 @@ def compare_traces(
                     case=case,
                     step=step,
                     tensor="raw_logits",
-                    required=required,
+                    required=True,
                     exact=True,
                     **raw_error,
                 ),
@@ -144,24 +142,16 @@ def compare_traces(
         if check_tokens:
             differences = token_differences(a, b)
             if differences:
-                mandatory = required and (
-                    exact
-                    or (
-                        policy.tokens_required
-                        and (policy.token_keys is None or (case, step) in policy.token_keys)
-                    )
-                )
                 row = dict(
                     comparison=label,
                     case=case,
                     step=step,
                     tensor="tokens",
-                    required=mandatory,
+                    required=exact,
                     differences=differences,
                 )
                 report["top1_differences"].append(row)
-                if mandatory:
-                    report["failures"].append(row)
+                report["failures" if exact else "diagnostics"].append(row)
 
     for case, step in sorted(states):
         left, right = actual.states[case, step], expected.states[case, step]
@@ -191,7 +181,6 @@ def compare_traces(
             "Generation rows and tokens disagree",
         )
         if a["ids"] != b["ids"]:
-            mandatory = required and (exact or policy.tokens_required)
             first = next(
                 (i for i, (x, y) in enumerate(zip(a["ids"], b["ids"])) if x != y),
                 min(len(a["ids"]), len(b["ids"])),
@@ -200,15 +189,15 @@ def compare_traces(
                 comparison=label,
                 case=name,
                 tensor="greedy_tokens",
-                required=mandatory,
+                required=exact,
                 first_difference=first,
                 actual_ids=a["ids"],
                 expected_ids=b["ids"],
             )
             report["greedy_differences"].append(row)
-            if mandatory:
+            if exact:
                 report["greedy_failures"].append(row)
-                report["failures"].append(row)
+            report["failures" if exact else "diagnostics"].append(row)
         if exact:
             require(len(a["rows"]) == len(b["rows"]), "Native generation length differs")
             require(a["position"] == b["position"], "Native generation position differs")

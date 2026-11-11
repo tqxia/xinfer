@@ -241,6 +241,8 @@ beside the tests. `compiler/qwen35/tests/test_kernels_aoti.py`
 checks export, decomposition and exact direct-kernel/Python AOTI output/state
 parity for both geometries and BF16/FP32. It compiles packages in temporary
 directories, reuses them across test methods and skips when CUDA is unavailable.
+Run the affected kernel/block tests as required checks when changing their
+implementation; the full-model validation command does not invoke them.
 There is no standalone kernel-validation CLI or kernel C++ runner; full-model
 validation retains native coverage. Production compiler and runtime code stays
 in its existing directories.
@@ -261,18 +263,55 @@ Shared tensor measurements live in `compiler/common/tests/tensors.py` and are
 reused by `tools/validation/common/validation.py`; report and native-file helpers
 remain in the validation tooling. Shared metric names are `max_abs`,
 `relative_l2` and `peak_relative`.
-Unified reports record canonical stage names, per-stage comparisons,
-`numerical_policy`, required `failures` and separate `diagnostics`. The shared
-full-model relative-L2 and peak-normalized limits remain 5%; focused kernel
-unit tests retain their own limits. Qwen3 requires bounded logits and reports
-HF cache/token/greedy drift. Qwen3.5 also requires state bounds; its original
-end-to-end fixtures retain required Python-AOTI/HF top-token and greedy-token
-agreement, while model-only token comparisons remain diagnostic. Full-model
-validation does not load a separate FP32 HF control model. Standalone kernel
-FP32 checks are unchanged. Native/Python AOTI comparisons remain
-bitwise. Structural cache/write, poisoning, reset/reuse and overflow checks are
-required independently of numerical differences. Historical reports retain
-their original layouts and labels.
+
+### Shared numerical policy
+
+Qwen3 and Qwen3.5 use the same full-model policy, recorded in new reports as
+`numerical_policy.name: shared_bf16` and `numerical_policy.version: 1`.
+Classification depends on the comparison, not the model or fixture origin.
+
+| Check | Acceptance rule |
+| --- | --- |
+| Matched-input logits: eager/HF, Python AOTI/eager and Python AOTI/HF | Required: both worst-row relative-L2 and peak-relative errors must be at most 5% |
+| HF logits replayed on the compiled greedy continuation | Required: the same logit bounds |
+| Full-model KV, convolution and recurrent-state numerical differences across HF/eager/AOTI | Diagnostic, with all measured errors retained |
+| HF-relative teacher top-token and independent greedy-sequence differences | Diagnostic for every fixture |
+| C++/Python execution of the same AOTI packages | Required: bitwise logits and selected states, exact generated tokens and positions |
+| Shapes, finite values, state ownership, cache write regions/masking, reset/reuse and overflow | Required, independently of numerical differences |
+
+For each comparison row, relative L2 is `norm(actual-reference) / norm(reference)`;
+peak-relative error is `max(abs(actual-reference)) / max(abs(reference))`.
+Both denominators have a `1e-12` floor, and the limit is inclusive. These are
+row-normalized metrics, not an elementwise 5% tolerance. `max_abs` is reported
+without a separate full-model acceptance threshold. State row definitions remain
+model-specific. The existing 5% bounds are unchanged.
+
+Teacher top-token records retain reference margins and selected-token gaps;
+greedy records retain the first divergence and both sequences. Small logit
+changes can change argmax, while independent generation subsequently follows
+different inputs. The HF replay keeps logit acceptance on matching inputs.
+Diagnostic state/token differences remain evidence to investigate; a numerical
+pass alone does not establish equivalent task quality or deployment readiness.
+
+Reports retain canonical stages, all tensor `comparisons`, required `failures`
+and separate `diagnostics`. The diagnostic list contains state rows exceeding
+the existing 5% threshold and non-native token/greedy mismatch records; all state
+metrics remain in `comparisons`, including those within the threshold.
+Token/greedy mismatch records are also indexed in `top1_differences` and
+`greedy_differences`; these are additional views, so count each record once.
+Structural violations abort validation and are recorded as errors. These checks
+are outside the tensor-comparison count.
+
+Full-model validation retains the unmodified BF16 HF reference and does not load
+a separate FP32 HF control model. Focused kernel/block tests keep their own
+output and carried-state tolerances, including standalone FP32 controls, and run
+separately. Historical reports retain their original policies, failures and
+labels. Earlier unified Qwen3.5 reports required state bounds and end-to-end
+token agreement. Changing their classification does not fix the numerical
+differences or establish a fresh validation result.
+Performance experiments may separately record a predeclared baseline-relative
+continuation criterion; it does not replace the project validation result or
+task-quality acceptance.
 
 Model validation modules require Python assertions. They refuse `-O`, `-OO` and
 `PYTHONOPTIMIZE` before loading models or creating reports, because their graph,
@@ -414,9 +453,10 @@ accuracy is checked separately with the validation tooling.
 
 The default validation report records HF cache errors and differing token IDs,
 including top-two margins and the HF score gap to the compiled-selected token.
-Those differences are accepted diagnostic results for the fused Flash profile;
-the report distinguishes HF parity from runtime correctness. Logit differences
-must still satisfy the existing 5% relative-L2 and peak-normalized limits.
+Those differences are diagnostic under the
+[shared numerical policy](#shared-numerical-policy); the report distinguishes HF
+parity from runtime correctness. Logit differences must still satisfy both
+existing 5% row-error limits.
 
 C++/Python AOTI bitwise agreement, finite-value checks, cache writes and masking,
 reset/reuse, stable storage, boundary rejection and native/Python generation

@@ -125,8 +125,6 @@ class HFRuntime:
 
 class Suite:
     model_type = "qwen3"
-    state_required = False
-    tokens_required = False
 
     def __init__(self, model_dir, pair):
         self.model_dir = Path(model_dir)

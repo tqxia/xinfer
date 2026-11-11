@@ -48,7 +48,11 @@ with identical teacher-forced inputs and an unmodified BF16 HF baseline. Generat
 HF references during validation. Full-model validation does not load a separate
 FP32 HF control model; standalone kernel FP32 checks remain required. Keep
 native/Python bitwise equality, finite-value, state ownership, masking, reset/reuse,
-generation and boundary checks strict.
+native generation and boundary checks strict. Both models follow the
+[shared numerical policy](docs/development-tools.md#shared-numerical-policy):
+matched-input logit bounds are required; full-model state and HF token/greedy
+differences are diagnostic. Run affected kernel/block tests separately; their
+output and carried-state acceptance limits remain required.
 
 Do not loosen tolerances, change references or suppress failures to make an
 optimization pass. Report HF numerical acceptance separately from native parity;

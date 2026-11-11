@@ -6,8 +6,8 @@ from compiler.common.artifacts import require
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.common.tests.tensors import cpu_copy as cpu_copy
 
-# The full-model logit/state checks share this default. Kernel-level tests pass
-# their independently chosen limits explicitly or use row_errors directly.
+# Required full-model logits and diagnostic state measurements share this
+# threshold. Kernel tests retain their independently chosen acceptance limits.
 DEFAULT_RELATIVE_LIMIT = 0.05
 
 

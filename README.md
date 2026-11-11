@@ -84,9 +84,10 @@ compilation profile. Both exporters embed the native attention library in each
 Build the compiler's `xinfer_attention_ops` target from the repository root
 before export. The default CMake build includes compiler kernels and runtime
 executables; explicit runtime targets build independently. Each model retains
-its own compiler environment and numerical policy. Python export and standalone
-operator tests select the attention library from `build/qwen3/` or `build/qwen35/`;
-`XINFER_ATTENTION_OPS_LIBRARY` can select another build. Package inference and
+its own compiler environment; both share the same full-model numerical policy.
+Python export and standalone operator tests select the attention library from
+`build/qwen3/` or `build/qwen35/`; `XINFER_ATTENTION_OPS_LIBRARY` can select another
+build. Package inference and
 validation use the bundled implementation. Existing executable-path options
 select another native runtime.
 The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
@@ -101,8 +102,12 @@ Package metadata selects the model hooks. The shared runner uses identical
 teacher-forced inputs, checks adjacent stages and retains a direct
 Python-AOTI/HF comparison. Both models generate HF references during validation;
 Qwen3 also cross-checks manual HF greedy decoding against HF `generate()`. No
-saved-reference preparation is required. CLI/deployment contract checks remain
-separate. See the model guides for numerical policies and commands.
+saved-reference preparation is required. Both models require bounded matched-input
+logit error and exact native/Python AOTI parity; full-model state and HF token
+differences are diagnostic. Structural state and runtime checks remain required.
+See the [shared numerical policy](docs/development-tools.md#shared-numerical-policy)
+for criteria and report versioning. CLI/deployment contract checks and affected
+kernel/block tests run separately. See the model guides for commands.
 
 CPU portability remains a known limitation: AOTI package wrappers inherit the build
 host's instruction set (including AVX-512 on L20), and the project does not enforce
@@ -132,6 +137,6 @@ controller shares environment capture, rotated process order, failure handling
 and summaries across models. Warmup predictions
 are checked as well as measured repeats. Benchmark reports include package,
 binary and workload checksums. Benchmark reports contain performance and harness
-results; numerical accuracy reports remain in the validation tooling. Qwen3 keeps an independent BF16 HF eager reference for
-validation, with bounded HF logit error and separate cache/token drift
-diagnostics. CUDA Graph integration is deferred.
+results; numerical accuracy reports remain in the validation tooling. Both models
+keep an independent BF16 HF eager reference for validation, with bounded logit
+error and separate state/token drift diagnostics. CUDA Graph integration is deferred.

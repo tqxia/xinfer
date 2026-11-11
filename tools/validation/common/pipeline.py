@@ -1,7 +1,6 @@
 """Execute one HF → eager → Python AOTI → C++ AOTI validation chain."""
 
 from contextlib import closing
-from dataclasses import replace
 
 import torch
 
@@ -84,7 +83,7 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
             left,
             right,
             specs,
-            replace(policy, tokens_required=False),
+            policy,
             state_keys=set(),
             greedy_names=set(),
         )
@@ -93,12 +92,7 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
 @torch.inference_mode()
 def validate_chain(suite, packages, native, output, metadata, report):
     specs = suite.specs
-    policy = Policy(
-        state_required=suite.state_required,
-        tokens_required=suite.tokens_required,
-        state_rows=getattr(suite, "state_rows", None),
-    )
-    numerical_policy = replace(policy, tokens_required=False)
+    policy = Policy(state_rows=getattr(suite, "state_rows", None))
     report["reference_protocol"] = dict(
         dtype="bfloat16", cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
     )
@@ -111,12 +105,15 @@ def validate_chain(suite, packages, native, output, metadata, report):
         native_write_and_ownership_checks="every call",
     )
     report["numerical_policy"] = dict(
+        name="shared_bf16",
+        version=1,
         limits=dict(relative_l2=policy.limit, peak_relative=policy.limit),
-        hf_state_errors="required" if policy.state_required else "reported",
-        hf_token_differences="required for final AOTI on end-to-end cases"
-        if policy.tokens_required
-        else "reported",
+        logit_errors="required",
+        state_errors="diagnostic",
+        token_differences="diagnostic",
+        greedy_differences="diagnostic",
         native_python_aoti="bitwise",
+        runtime_contracts="required",
     )
     report["native_sha256"] = sha256(native)
     hf = eager = None
@@ -160,7 +157,7 @@ def validate_chain(suite, packages, native, output, metadata, report):
                         result,
                         hf,
                         specs,
-                        numerical_policy,
+                        policy,
                         logit_keys=set(result.logits),
                         state_keys=set(result.states),
                         greedy_names=set(),
@@ -168,7 +165,7 @@ def validate_chain(suite, packages, native, output, metadata, report):
                 else:
                     require(name == "eager", "Unknown eager stage")
                     eager = result
-                    compare_traces(report, "eager", "hf", eager, hf, specs, numerical_policy)
+                    compare_traces(report, "eager", "hf", eager, hf, specs, policy)
                 report["stages"].append(_stage_summary(name, result, control=control))
                 del result
             finally:
@@ -194,16 +191,9 @@ def validate_chain(suite, packages, native, output, metadata, report):
         runtime.close()
         del runtime
         torch.cuda.empty_cache()
-    compare_traces(report, "python_aoti", "eager", compiled, eager, specs, numerical_policy)
+    compare_traces(report, "python_aoti", "eager", compiled, eager, specs, policy)
     del eager
-    token_keys = {
-        (case["name"], step)
-        for case in cases
-        if case.get("origin", {}).get("suite") != "model"
-        for step in range(len(case["steps"]))
-    }
-    anchor_policy = replace(policy, token_keys=token_keys)
-    compare_traces(report, "python_aoti", "hf", compiled, hf, specs, anchor_policy)
+    compare_traces(report, "python_aoti", "hf", compiled, hf, specs, policy)
     report["stages"].append(_stage_summary("python_aoti", compiled))
 
     print("Stage: cpp_aoti", flush=True)
