@@ -5,13 +5,10 @@ xinfer. It defaults to native decode latency per token and uses existing xinfer
 commands, `nsys` and `ncu` directly. The coding agent chooses hypotheses and edits;
 the existing validators and benchmarks supply evidence.
 
-Start with baseline measurement and profiling, then review unnecessary
-computation in the requested workload. Follow with an iterative loop of fusion
-or kernel-optimization hypotheses → implementation → export → validation → paired
-benchmark → candidate profiling → analysis → next target. Revisit work
-elimination when the graph or workload changes, or new evidence exposes more
-unnecessary computation. Compiler options, graph passes, inference adapters and
-custom operators support these goals.
+Start with baseline measurement and profiling, then iterate on fusion and kernel
+optimization: hypothesis → implementation → export → validation → paired
+benchmark → candidate profiling → analysis → next target. Compiler options,
+graph passes, inference adapters and custom operators support these goals.
 
 Profile before choosing candidates; a matching saved capture can be reused.
 Each hypothesis cites an observed hotspot or execution behavior. If usable

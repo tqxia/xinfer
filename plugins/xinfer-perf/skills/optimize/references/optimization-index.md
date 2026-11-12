@@ -1,13 +1,11 @@
 # From profile observations to techniques
 
-Use this after establishing the baseline profile. Begin with a structural review
-of work elimination, then use the remaining costs to guide fusion and kernel
-experiments. Load only the relevant note; these are starting questions, not an
-exhaustive catalog or a rule that a metric mandates a technique.
+Use this after establishing the baseline profile. Use measured costs to guide
+fusion and kernel experiments. Load only the relevant note; these are starting
+questions, not an exhaustive catalog or a rule that a metric mandates a technique.
 
 | Observed behavior | Starting direction | Read |
 | --- | --- | --- |
-| Computation produces unused outputs or processes irrelevant token/cache regions | Can this work be omitted while preserving required outputs and state, and is it still present in the compiled artifact? | [Work elimination](techniques/common.md#work-elimination) |
 | Repeated small launches or intermediate copies/writes in one region | Can fusion or projection packing reduce launches, traffic or repeated loads? | [Fusion](techniques/common.md#fusion) |
 | Matrix/reduction calls dominate the target phase | Would tuning, another compiler/library implementation or a rewritten kernel improve the complete region? | [Kernel optimization](techniques/common.md#kernel-optimization) |
 | Inefficient memory transactions, spills or insufficient parallel work | Is the layout or schedule unsuitable for these inputs? | [Layout and scheduling](techniques/common.md#layout-and-scheduling) |

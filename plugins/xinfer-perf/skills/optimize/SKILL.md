@@ -1,13 +1,13 @@
 ---
 name: optimize
-description: Profile and optimize compiled LLM inference in xinfer through work elimination, fusion and GPU kernel optimization. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
+description: Profile and optimize compiled LLM inference in xinfer through fusion and GPU kernel optimization. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
 ---
 
 # Optimize xinfer compilation
 
-Start from baseline evidence, review unnecessary computation, then iterate on
-fusion and kernel optimization. Compiler options, graph passes, inference
-adapters and custom operators are implementation mechanisms for these goals.
+Start from baseline profiling and iterate on fusion and kernel optimization.
+Compiler options, graph passes, inference adapters and custom operators are
+implementation mechanisms for these goals.
 Preserve the current exported interface and C++ runtime contract.
 
 ## Establish the task
@@ -47,21 +47,23 @@ missing and defer candidate selection.
 
 ## Review work elimination
 
-Initially inspect which outputs and carried state the requested workload
-actually consumes. Compare the relevant graph and generated code with the
-profile: is any computation unnecessary, and has the compiler already removed
-it? Consult [work elimination](references/techniques/common.md#work-elimination)
-for examples and constraints.
+Briefly check the measured path for computation whose results the workload does
+not consume, such as vocabulary projections for unused prompt rows, token-wise
+normalization before a last-row slice or attention over unused cache capacity.
+Confirm the work is present in the compiled artifact; it may already be removed.
 
-Record opportunities or that no applicable work remains to eliminate. A
-prefill-only opportunity may have little value for a decode objective; prioritize
-the requested phase. Treat a proposed elimination as an experiment under the
-same validation, measurement and candidate budget as other changes.
+Preserve required outputs, all cache/state updates, masks and positions. Trace
+state dependencies before removing work whose output is discarded. Changed
+shapes can still alter floating-point rounding; validate the compiled result.
 
-Reuse this structural review for an unchanged baseline. Revisit it when the
-graph or workload changes, or later evidence exposes more unnecessary work.
-It is usually front-loaded, rather than a requirement to find new elimination
-in every iteration.
+Record applicable opportunities, already handled cases or that none apply.
+Estimate the removable cost in the requested phase when evidence permits;
+prefill-only savings do not improve single-token decode. Choose candidates by
+expected native benefit, with the same experiment loop and budget as other changes.
+
+Reuse the review for an unchanged baseline; revisit it when the graph, workload
+or new evidence warrants it. Then focus the investigation on fusion and kernel
+optimization.
 
 ## Iterate on fusion and kernel optimization
 
@@ -78,7 +80,7 @@ candidates when the evidence supports them; use graph passes, adapters or custom
 operators when the intervention needs them. Do not exhaust configuration options
 or implement a custom kernel merely to follow a fixed sequence.
 
-For each candidate, including work elimination, complete the experiment loop:
+For each candidate, complete the experiment loop:
 
 1. **Form the hypothesis.** Tie it to an observation in the current baseline
    profile and explain the mechanism it could improve. Use the

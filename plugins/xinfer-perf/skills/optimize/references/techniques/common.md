@@ -1,29 +1,10 @@
-# Common optimization goals and mechanisms
+# Fusion and kernel optimization
 
 These techniques apply broadly. Their speedups, compiler options and tuning
 values remain specific to the measured workload and target. Start from a
 profile observation and inspect the compiled implementation before choosing one.
 Compiler settings, graph passes, inference adapters and custom operators are
 ways to implement the goals below; a transformation can serve several goals.
-
-## Work elimination
-
-During the initial structural review, identify computations whose results the
-requested inference path does not consume. Examples to check include vocabulary
-projections for unused prompt rows, token-wise normalization before a last-row
-slice, or attention over irrelevant cache capacity. Confirm the compiler has
-not already omitted the work.
-
-Preserve required outputs, all cache/state updates, masks and positions. A
-discarded output can still depend on work needed to update state; trace those
-dependencies before removing it. Predict the operations or rows omitted and
-validate the resulting compiled path. Mathematically equivalent shapes can
-still change floating-point rounding.
-
-Review the relevant phase: an elimination for multi-token prefill can remove
-nothing in single-token decode. Record already implemented or inapplicable
-opportunities rather than forcing a candidate. Reuse the review until the graph,
-workload or new evidence warrants another look.
 
 ## Fusion
 
