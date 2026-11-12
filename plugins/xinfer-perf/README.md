@@ -10,6 +10,11 @@ optimization: hypothesis → implementation → export → validation → paired
 benchmark → candidate profiling → analysis → next target. Compiler options,
 graph passes, inference adapters and custom operators support these goals.
 
+Kernel rewrites and custom fusion kernels use a local inner loop of hypothesis,
+edit/compile, correctness, microbenchmark and required NCU analysis before
+returning to model export and native measurement. Implementations may use
+Triton, CUDA C++ or targeted PTX.
+
 Profile before choosing candidates; a matching saved capture can be reused.
 Each hypothesis cites an observed hotspot or execution behavior. If usable
 profiling evidence is missing, the agent obtains it or reports the gap and
@@ -62,11 +67,12 @@ build or experiment files inside the installed plugin.
 > Continue the experiment described in work/perf/notes.md. Read the saved results
 > and finish the pending comparison before trying another change.
 
-The default budget is three candidate attempts or two hours, whichever comes
-first. The first project demonstration targets Qwen3.5-0.8B on GB10; the skill
-itself does not hardcode that model or hardware. Runtime optimization is deferred
-to a separate future skill. CodeBuddy packaging and discovery are also future
-work; this version supports Codex and Claude Code.
+The default budget is three model-level candidate attempts or two hours,
+whichever comes first. Local kernel revisions share the same overall time budget;
+reserve time for integration. The first project demonstration targets
+Qwen3.5-0.8B on GB10; the skill itself does not hardcode that model or hardware.
+Runtime optimization is deferred to a separate future skill. CodeBuddy packaging
+and discovery are also future work; this version supports Codex and Claude Code.
 
 See the [GB10 Qwen3.5-0.8B experiment](https://github.com/tqxia/xinfer/blob/3e05a9d4db8c945dfcd12d05a31c50955775d8b6/docs/experiments/gb10-qwen35-perf-plugin-2026-11-10.md)
 for baseline profiling, three compiler trials and correctness/performance feedback.

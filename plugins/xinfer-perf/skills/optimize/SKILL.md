@@ -19,8 +19,11 @@ environment, model artifacts, native binaries and GPU. Follow that checkout's
 Default to native **decode milliseconds per token**, with context length,
 prefill latency and memory reported alongside it. Follow a different objective
 or workload when the user supplies one. Unless specified otherwise, budget three
-candidate attempts or two hours of investigation, whichever comes first; record
-the start and use command timeouts appropriate to the remaining time.
+model-level candidate attempts or two hours of investigation, whichever comes
+first; record the start and use command timeouts appropriate to the remaining
+time. Kernel revisions belong to their outer candidate and share that time
+budget. Changing the target or model-level hypothesis starts another attempt;
+reserve time for integration and native measurement.
 
 When continuing an experiment, read its notes, commands and result files first.
 Reuse relevant evidence instead of repeating completed work. Note any changes
@@ -33,9 +36,9 @@ before autotuning or timing; use target-specific load-health observations.
 
 Establish baseline measurements with the existing benchmark, then profile the
 native execution before choosing optimization candidates. Follow
-[profiling.md](references/profiling.md): start with `nsys` and use targeted `ncu`
-captures when kernel counters would help explain an observed hotspot. Invoke the
-profilers directly; both tools are not required for every investigation.
+[profiling.md](references/profiling.md): use `nsys` for native execution and
+targeted `ncu` captures for kernel analysis. NCU evidence is required for baseline
+and candidate kernel analysis in the inner loop. Invoke the profilers directly.
 
 An existing capture can satisfy this step if it matches the baseline artifacts,
 hardware/software environment and relevant workload. Check that match on resume.
@@ -91,7 +94,11 @@ expands these seven steps with the existing commands and evidence to retain:
 2. **Implement the change.** Inspect the relevant graph, generated code or kernel.
    Use an isolated checkout or scratch experiment, preserving the baseline and
    the user's other changes. Keep the change focused; use ablations when changes
-   interact. Commits and publishing require the user's instruction.
+   interact. For existing kernel rewrites or custom fusion kernels, use the
+   [kernel inner loop](references/techniques/kernel-optimization.md#kernel-inner-loop):
+   local hypothesis → edit/compile → correctness → microbenchmark → NCU analysis
+   → next revision. Consider Triton, CUDA C++ and targeted PTX according to the
+   measured bottleneck. Commits and publishing require the user's instruction.
 3. **Export.** Use the project's existing export interface. Verify that the
    intended code or compiler setting reaches the measured compiled artifact.
 4. **Validate.** Run affected local/operator checks and project numerical/native

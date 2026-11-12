@@ -28,7 +28,10 @@ represents decode everywhere.
 On resumption, read the notes, commands and results, and check for still-running
 work before launching another job. Verify that the evidence still matches the
 source, artifacts, workload and environment. Work within the remaining candidate
-and time budget established in `SKILL.md`.
+and time budget established in `SKILL.md`. Local kernel revisions belong to
+their outer candidate and share the same clock; changing the target or
+model-level hypothesis starts another outer attempt. Reserve time for export,
+full validation and native measurement.
 
 ## 1. Form the hypothesis
 
@@ -52,6 +55,15 @@ environments and checkpoint files. Choose a focused change, but combine changes
 when necessary to test the hypothesis and explain that dependency; use ablations
 to distinguish their effects. Preserve the exported interface and runtime
 contract. Commits and publishing require the user's instruction.
+
+When rewriting an existing kernel or implementing a custom fusion kernel, enter
+the [kernel inner loop](techniques/kernel-optimization.md#kernel-inner-loop)
+inside this step. Use Triton, CUDA C++ or targeted PTX as the measured bottleneck
+and target support warrant. Iterate on local correctness, microbenchmarks and
+required baseline/candidate NCU analysis before returning to step 3. Ordinary
+compiler-option comparisons can remain in the outer loop. New operator or
+packaging boundaries need an early export/AOTI and C++ execution proof before
+extensive tuning; local kernel revisions do not each require a full-model export.
 
 ## 3. Export
 
@@ -133,6 +145,11 @@ analysis with validation and unprofiled timing to explain gains, regressions or
 uncertainty, and identify the remaining bottleneck. Profiler timings are separate
 evidence from the unprofiled paired comparison. The original baseline capture
 does not describe changed candidate code.
+
+Kernel analysis requires NCU evidence. Reuse inner-loop captures only when the
+exported kernel implementation, launch configuration and measured conditions
+match; otherwise capture the packaged kernel. Local kernel timings and profiles
+do not replace the paired C++ benchmark or native execution profile.
 
 ## 7. Choose the next target
 

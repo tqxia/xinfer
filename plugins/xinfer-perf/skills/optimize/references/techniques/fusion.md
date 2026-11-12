@@ -10,3 +10,9 @@ arithmetic may remain; describe any redundant computation removed separately.
 Check whether added copies, workspace, register pressure or changed rounding
 boundaries offset the saving. Measure the whole replacement, including its
 preparation, then use the remaining profile costs to guide another iteration.
+
+If fusion introduces a custom kernel, develop it through the
+[kernel inner loop](kernel-optimization.md#kernel-inner-loop). Triton, CUDA C++
+and targeted PTX are implementation choices; use NCU for baseline and candidate
+kernel analysis. Compare the complete fused region against the original region,
+then return to the outer export, validation and paired native measurement steps.
