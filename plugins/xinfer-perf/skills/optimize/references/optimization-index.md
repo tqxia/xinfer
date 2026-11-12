@@ -6,9 +6,9 @@ questions, not an exhaustive catalog or a rule that a metric mandates a techniqu
 
 | Observed behavior | Starting direction | Read |
 | --- | --- | --- |
-| Repeated small launches or intermediate copies/writes in one region | Can fusion or projection packing reduce launches, traffic or repeated loads? | [Fusion](techniques/common.md#fusion) |
-| Matrix/reduction calls dominate the target phase | Would tuning, another compiler/library implementation or a rewritten kernel improve the complete region? | [Kernel optimization](techniques/common.md#kernel-optimization) |
-| Inefficient memory transactions, spills or insufficient parallel work | Is the layout or schedule unsuitable for these inputs? | [Layout and scheduling](techniques/common.md#layout-and-scheduling) |
+| Repeated small launches or intermediate copies/writes in one region | Can fusion or projection packing reduce launches, traffic or repeated loads? | [Fusion](techniques/fusion.md) |
+| Matrix/reduction calls dominate the target phase | Would tuning, another compiler/library implementation or a rewritten kernel improve the complete region? | [Kernel optimization](techniques/kernel-optimization.md) |
+| Inefficient memory transactions, spills or insufficient parallel work | Is the layout or schedule unsuitable for these inputs? | [Layout and scheduling](techniques/kernel-optimization.md#layout-and-scheduling) |
 | A proposed mechanism needs target-specific instructions or resources | Does the exact GPU and installed toolchain support it, and can this workload amortize its cost? | [Hardware-specific mechanisms](techniques/hardware.md) |
 
 Check whether the compiler already performs the proposed transformation.

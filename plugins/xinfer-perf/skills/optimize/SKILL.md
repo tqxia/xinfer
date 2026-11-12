@@ -70,10 +70,10 @@ optimization.
 Choose the next candidate from the remaining measured costs:
 
 - **Fusion:** combine related operations to reduce launches, intermediate memory
-  traffic or repeated loads. See [fusion](references/techniques/common.md#fusion).
+  traffic or repeated loads. See [fusion](references/techniques/fusion.md).
 - **Kernel optimization:** improve a required operation through tuning, library
   selection, layout/scheduling changes or rewriting its implementation. See
-  [kernel optimization](references/techniques/common.md#kernel-optimization).
+  [kernel optimization](references/techniques/kernel-optimization.md).
 
 These goals can overlap. Consider supported compiler options as low-cost
 candidates when the evidence supports them; use graph passes, adapters or custom

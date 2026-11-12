@@ -247,7 +247,7 @@ bodies/configurations and binaries. These should reuse existing xinfer export, v
 provenance records; model-specific Torch probes belong with their experiments.
 
 The demonstrated decomposition, compilation-isolation and numerical-checking lessons were added to the
-[common technique notes](../../plugins/xinfer-perf/skills/optimize/references/techniques/common.md), with
+[kernel optimization notes](../../plugins/xinfer-perf/skills/optimize/references/techniques/kernel-optimization.md#compiler-and-library-choices), with
 an experiment link in the plugin README. The other items above remain proposed improvements. Technique
 notes should continue to grow from measured outcomes, including failures.
 
