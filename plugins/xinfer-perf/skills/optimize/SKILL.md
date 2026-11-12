@@ -1,22 +1,20 @@
 ---
 name: optimize
-description: Profile and optimize compiled LLM inference in xinfer through compiler configuration, graph passes, inference adapters, fusion and GPU kernels. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
+description: Profile and optimize compiled LLM inference in xinfer through work elimination, fusion and GPU kernel optimization. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
 ---
 
 # Optimize xinfer compilation
 
-Use the existing coding agent to investigate, implement and evaluate focused
-compiler-side experiments. Choose the approach from the evidence; a configuration
-change, graph rewrite, adapter or kernel can each be the right intervention.
+Start from baseline evidence, review unnecessary computation, then iterate on
+fusion and kernel optimization. Compiler options, graph passes, inference
+adapters and custom operators are implementation mechanisms for these goals.
 Preserve the current exported interface and C++ runtime contract.
 
 ## Establish the task
 
-Locate the xinfer checkout separately from this installed plugin. Read its
-`AGENTS.md`, `README.md` and relevant model/environment guides. Resolve the actual
-model, interpreter, package bundle, native executable and GPU from those sources
-and the user's environment. Run project commands from that checkout, using the
-matching interpreter. An agent on another machine can use its ordinary SSH tools.
+Run project commands from the target xinfer checkout using the matching Python
+environment, model artifacts, native binaries and GPU. Follow that checkout's
+`AGENTS.md` and relevant model/environment guides.
 
 Default to native **decode milliseconds per token**, with context length,
 prefill latency and memory reported alongside it. Follow a different objective
@@ -47,34 +45,79 @@ another target and intuition alone do not replace profiling this baseline.
 If usable profiling evidence is unavailable, collect it or report what is
 missing and defer candidate selection.
 
-## Form hypotheses and experiment
+## Review work elimination
 
-- Tie each candidate to an observation in the baseline profile and explain the
-  mechanism it could improve. Use the [symptom index](references/optimization-index.md)
-  to load relevant common or hardware-specific technique notes as needed.
-  Record the candidate's origin and readiness, expected metric/latency change and
-  what would refute the hypothesis before editing; a qualitative prediction is
-  sufficient when numbers lack a basis.
-  Inspect the relevant graph, generated code or kernel before changing it.
-  Keep an experiment focused enough to explain its effect; use ablations when
-  several changes interact.
-- Work in an isolated checkout or scratch experiment, preserving the baseline
-  and the user's other changes. Use normal Git and filesystem tools; commits
-  and publishing require the user's instruction.
-- Follow [experiments.md](references/experiments.md) for xinfer's existing
-  export, validation and paired benchmark interfaces. Verify that the candidate
-  code or compiler setting actually reaches the measured compiled artifact.
-  Kernel microbenchmarks guide the work; native model measurements establish
-  its effect on inference.
+Initially inspect which outputs and carried state the requested workload
+actually consumes. Compare the relevant graph and generated code with the
+profile: is any computation unnecessary, and has the compiler already removed
+it? Consult [work elimination](references/techniques/common.md#work-elimination)
+for examples and constraints.
 
-An existing candidate or a specific kernel can focus the investigation; first
-establish the matching baseline profiling evidence. Reuse that evidence for
-further candidates against the same baseline. Reprofile when a changed baseline
-or workload makes it stale, or when results need explanation. Delegate independent
-investigation or review when useful, while running measurements serially on the
-selected GPU.
+Record opportunities or that no applicable work remains to eliminate. A
+prefill-only opportunity may have little value for a decode objective; prioritize
+the requested phase. Treat a proposed elimination as an experiment under the
+same validation, measurement and candidate budget as other changes.
 
-## Interpret and retain the result
+Reuse this structural review for an unchanged baseline. Revisit it when the
+graph or workload changes, or later evidence exposes more unnecessary work.
+It is usually front-loaded, rather than a requirement to find new elimination
+in every iteration.
+
+## Iterate on fusion and kernel optimization
+
+Choose the next candidate from the remaining measured costs:
+
+- **Fusion:** combine related operations to reduce launches, intermediate memory
+  traffic or repeated loads. See [fusion](references/techniques/common.md#fusion).
+- **Kernel optimization:** improve a required operation through tuning, library
+  selection, layout/scheduling changes or rewriting its implementation. See
+  [kernel optimization](references/techniques/common.md#kernel-optimization).
+
+These goals can overlap. Consider supported compiler options as low-cost
+candidates when the evidence supports them; use graph passes, adapters or custom
+operators when the intervention needs them. Do not exhaust configuration options
+or implement a custom kernel merely to follow a fixed sequence.
+
+For each candidate, including work elimination, complete the experiment loop:
+
+1. **Form the hypothesis.** Tie it to an observation in the current baseline
+   profile and explain the mechanism it could improve. Use the
+   [symptom index](references/optimization-index.md) for relevant technique notes.
+   Record its origin, readiness, expected change and refuting evidence before
+   editing; a qualitative prediction is sufficient when numbers lack a basis.
+2. **Implement the change.** Inspect the relevant graph, generated code or kernel.
+   Use an isolated checkout or scratch experiment, preserving the baseline and
+   the user's other changes. Keep the change focused; use ablations when changes
+   interact. Commits and publishing require the user's instruction.
+3. **Export.** Follow [experiments.md](references/experiments.md) for the existing
+   interfaces. Verify that the intended code or compiler setting reaches the
+   measured compiled artifact.
+4. **Validate.** Run affected local/operator checks and project numerical/native
+   validation, applying the correctness criteria below.
+5. **Benchmark.** Compare the candidate with the current baseline using controlled,
+   unprofiled paired native measurements. Kernel microbenchmarks guide the work;
+   native model measurements establish its effect on inference.
+6. **Profile and analyze.** Profile the candidate's native execution with the
+   relevant workload, following [profiling.md](references/profiling.md). Compare
+   its kernels, launches, traffic and remaining costs with the baseline profile
+   and the hypothesis. Explain measured gains, regressions or uncertainty and
+   identify what now limits the requested metric.
+7. **Choose the next target.** Use correctness, benchmark and profile findings to
+   keep, reject or investigate the change and select the next experiment within
+   the remaining budget. When a validated improvement becomes the new baseline,
+   use its measurements and profile for the next iteration; preserve the original
+   baseline and failed attempts.
+
+Reuse matching baseline evidence across attempts. Candidate profiling can reuse
+an existing capture only when it matches that candidate's artifacts, environment
+and workload; the original baseline capture does not describe changed code.
+If an earlier step fails, record the failure and available evidence before
+choosing the next attempt. An existing candidate or a specific kernel can focus
+the investigation, with matching baseline evidence established first. Delegate
+independent investigation or review when useful, while running measurements
+serially on the selected GPU.
+
+### Judge and record each iteration
 
 Keep numerical correctness, measurement conditions and performance conclusions
 distinct. Existing project validators own numerical policy. Preserve their
@@ -93,9 +136,9 @@ artifact/result paths, observations and next action in the experiment directory.
 After each attempt, compare the prediction with observed performance and
 correctness, including failed or inconclusive outcomes. Use the short
 [feedback format](references/experiments.md#compare-prediction-with-observation)
-to explain mismatches and guide the next hypothesis. Retain failed attempts.
-On stopping, give the reviewable change, measured outcome, numerical status,
-limitations and what to try next.
+to explain mismatches and choose the next fusion or kernel experiment within the
+remaining budget. Retain failed attempts. On stopping, give the reviewable
+change, measured outcome, numerical status, limitations and what to try next.
 
 Runtime/generation-loop changes belong to a future separate skill. If the
 evidence points there, report that opportunity without expanding this task.

@@ -1,4 +1,4 @@
-# Compile, validate and measure a candidate
+# Export, validate, benchmark, profile and analyze a candidate
 
 Read this when moving from a hypothesis to an experiment. Paths mentioned here
 refer to the selected xinfer checkout, which may differ from the installed
@@ -76,7 +76,16 @@ packing/kernel experiment needs different mappings or native libraries, inspect
 that mismatch and record what comparison support is missing. Do not bypass the
 check or silently measure both bundles with the wrong operator library.
 
-## Interpret and continue
+## Profile, analyze and choose the next target
+
+After the paired benchmark, profile the candidate's native execution following
+[profiling.md](profiling.md). Reuse a capture only if it matches that candidate,
+environment and workload. Compare its kernels, launch behavior and remaining
+costs with the baseline profile and the predicted mechanism. Combine this
+analysis with validation and unprofiled timing to decide whether to keep,
+reject or investigate the change, then choose the next target. When a validated
+improvement becomes the new baseline, carry its measurements and profile into
+the next iteration while retaining the original evidence.
 
 Use `decode_ms_per_token` as the default objective: native fixed-token decode
 includes argmax and host reads. Read per-case distributions, prefill and memory

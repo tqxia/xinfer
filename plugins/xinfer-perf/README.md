@@ -5,8 +5,14 @@ xinfer. It defaults to native decode latency per token and uses existing xinfer
 commands, `nsys` and `ncu` directly. The coding agent chooses hypotheses and edits;
 the existing validators and benchmarks supply evidence.
 
-The default loop is baseline measurement → profiling → hypothesis →
-compiler/kernel change → export/validation → paired measurement.
+Start with baseline measurement and profiling, then review unnecessary
+computation in the requested workload. Follow with an iterative loop of fusion
+or kernel-optimization hypotheses → implementation → export → validation → paired
+benchmark → candidate profiling → analysis → next target. Revisit work
+elimination when the graph or workload changes, or new evidence exposes more
+unnecessary computation. Compiler options, graph passes, inference adapters and
+custom operators support these goals.
+
 Profile before choosing candidates; a matching saved capture can be reused.
 Each hypothesis cites an observed hotspot or execution behavior. If usable
 profiling evidence is missing, the agent obtains it or reports the gap and
@@ -78,9 +84,6 @@ claude plugin validate plugins/xinfer-perf
 
 After registering the Codex marketplace, `codex plugin list --marketplace
 xinfer-local --available --json` checks its discovery.
-
-Manifest validation and discovery do not exercise an LLM session or prove GPU
-correctness. Use the project validation and benchmark commands for experiments.
 
 Host packaging references: [Codex](https://developers.openai.com/plugins/build/plugins) and
 [Claude Code](https://code.claude.com/docs/en/plugins-reference).

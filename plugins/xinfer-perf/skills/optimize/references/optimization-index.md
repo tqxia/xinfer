@@ -1,18 +1,21 @@
 # From profile observations to techniques
 
-Use this after establishing the baseline profile. Load only the note relevant
-to the observation; these are starting questions, not an exhaustive catalog or
-a rule that a particular metric mandates a technique.
+Use this after establishing the baseline profile. Begin with a structural review
+of work elimination, then use the remaining costs to guide fusion and kernel
+experiments. Load only the relevant note; these are starting questions, not an
+exhaustive catalog or a rule that a metric mandates a technique.
 
 | Observed behavior | Starting direction | Read |
 | --- | --- | --- |
-| Repeated small launches or intermediate copies/writes in one region | Can compiler fusion, graph simplification or packing eliminate actual compiled work? | [Combine work](techniques/common.md#remove-or-combine-work) |
-| Matrix/reduction calls dominate the target phase | Would another supported compiler configuration or library/generated implementation improve the complete region? | [Execution choices](techniques/common.md#choose-compiler-or-library-execution) |
-| Inefficient memory transactions, spills or insufficient parallel work | Is the layout or schedule unsuitable for these inputs? | [Layout and scheduling](techniques/common.md#adjust-layout-and-scheduling) |
+| Computation produces unused outputs or processes irrelevant token/cache regions | Can this work be omitted while preserving required outputs and state, and is it still present in the compiled artifact? | [Work elimination](techniques/common.md#work-elimination) |
+| Repeated small launches or intermediate copies/writes in one region | Can fusion or projection packing reduce launches, traffic or repeated loads? | [Fusion](techniques/common.md#fusion) |
+| Matrix/reduction calls dominate the target phase | Would tuning, another compiler/library implementation or a rewritten kernel improve the complete region? | [Kernel optimization](techniques/common.md#kernel-optimization) |
+| Inefficient memory transactions, spills or insufficient parallel work | Is the layout or schedule unsuitable for these inputs? | [Layout and scheduling](techniques/common.md#layout-and-scheduling) |
 | A proposed mechanism needs target-specific instructions or resources | Does the exact GPU and installed toolchain support it, and can this workload amortize its cost? | [Hardware-specific mechanisms](techniques/hardware.md) |
 
 Check whether the compiler already performs the proposed transformation.
-An unexplained observation calls for more investigation, not a forced match
+Graph passes, inference adapters and custom operators can implement any of these
+goals. An unexplained observation calls for more investigation, not a forced match
 to this table. Runtime-only findings remain opportunities for the future skill.
 
 Common mechanisms still need target measurements; hardware-specific recipes

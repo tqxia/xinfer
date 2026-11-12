@@ -1,16 +1,18 @@
 # Investigate decode with existing profilers
 
-Read this before selecting optimization candidates. Profile the native baseline
-with `nsys`; use targeted `ncu` captures when an observed kernel needs deeper
-analysis. Run the tools directly on the GPU host. Check their installed `--help`
-and versions before choosing capture/filter options; supported metrics depend
-on the tool and device.
+Read this for the initial native baseline profile. Within each experiment
+iteration, profile the candidate after validation and unprofiled paired
+benchmarking. Start with `nsys`; use targeted `ncu` captures when an observed
+kernel needs deeper analysis. Run the tools directly on the GPU host. Check
+their installed `--help` and versions before choosing capture/filter options;
+supported metrics depend on the tool and device.
 
 Reuse an existing capture when its packages/native implementation, device,
-software environment and relevant workload match the baseline. Record those
-identities and the capture path in the experiment notes. If no matching capture
-is available, obtain one before proposing candidates. If capture is blocked,
-report the missing evidence and defer candidate selection.
+software environment and relevant workload match the variant being analyzed.
+Record those identities and the capture path in the experiment notes. A baseline
+capture supplies the before evidence; analyze a matching candidate capture to
+explain the change and identify the next target. If matching profiling evidence
+is missing, obtain it or report the gap before choosing the next candidate.
 
 ## Start with the native workload
 
@@ -67,13 +69,16 @@ Triton source, using the actual package/build artifacts. Shapes, dispatch and
 call sites help disambiguate repeated names. Fusion, combo kernels and external
 calls can make a one-kernel/one-node mapping impossible; retain that ambiguity.
 
-For each candidate, cite the profile observation, its decode relevance and the
-mechanism the change is expected to improve. Inspect the associated source to
-choose a compiler option, graph change, adapter or kernel experiment. If phase
-attribution is too uncertain to support the hypothesis, investigate it further
-before selecting that candidate. Confirm the candidate changes the intended
-generated code or dispatch, then return to unprofiled native measurements. A
-Python probe or microbenchmark can explain a mechanism but does not replace the
+For initial target selection, cite the baseline observation, its relevance to
+the requested phase and the mechanism a change could improve. Inspect the
+associated source to choose a compiler option, graph change, adapter or kernel
+experiment. Investigate uncertain phase attribution before selecting a candidate.
+
+Within each completed iteration, confirm the candidate changed the intended
+generated code or dispatch. Compare its profile with the baseline, hypothesis
+and unprofiled paired measurements to explain the result and choose the next
+target. Repeat benchmarking when noise or new evidence warrants it. A Python
+probe or microbenchmark can explain a mechanism but does not replace the
 deployed path.
 
 Keep profiler commands, versions and result paths in the experiment notes. If
