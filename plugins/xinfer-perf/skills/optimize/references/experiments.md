@@ -1,19 +1,18 @@
-# Export, validate, benchmark, profile and analyze a candidate
+# Experiment loop details
 
-Read this when moving from a hypothesis to an experiment. Paths mentioned here
-refer to the selected xinfer checkout, which may differ from the installed
-plugin directory. Read its `AGENTS.md`, model guide, `environments/README.md` and
-relevant sections of `docs/development-tools.md`; these own the current commands
-and numerical policy. Inspect command `--help` when the checkout differs.
+This expands the seven-step [experiment loop](../SKILL.md#iterate-on-fusion-and-kernel-optimization)
+in `SKILL.md`. Paths refer to the selected xinfer checkout, which may differ from
+the installed plugin directory. Read its `AGENTS.md`, model guide,
+`environments/README.md` and relevant sections of `docs/development-tools.md`;
+these own the current commands and numerical policy. Inspect command `--help`
+when the checkout differs.
 
-## Establish comparable inputs
+## Before the loop
 
-Start candidate selection from the baseline profile described in
-[profiling.md](profiling.md). Record which measured hotspot or execution behavior
-supports the hypothesis. If that evidence is absent or no longer matches the
-baseline, profile first; do not substitute a list of plausible tuning options.
-Use the [symptom index](optimization-index.md) for relevant technique notes;
-hardware-specific recipes require a match to the actual target and toolchain.
+Establish baseline measurements and the matching native profile described in
+[profiling.md](profiling.md) before choosing candidates. Reuse matching evidence;
+if it is missing or stale, profile first. The brief work-elimination review stays
+in `SKILL.md`; use the measured costs to focus fusion and kernel experiments.
 
 Record the checkpoint and baseline package, source revision plus local patch,
 Python environment, native executable/library, GPU UUID and workload. Existing
@@ -26,12 +25,35 @@ span multiple compiled prefill calls; these limits are different. Select context
 positions that exercise the hypothesis rather than assuming one short prompt
 represents decode everywhere.
 
+On resumption, read the notes, commands and results, and check for still-running
+work before launching another job. Verify that the evidence still matches the
+source, artifacts, workload and environment. Work within the remaining candidate
+and time budget established in `SKILL.md`.
+
+## 1. Form the hypothesis
+
+Identify the measured hotspot or execution behavior the candidate addresses.
+Use the [symptom index](optimization-index.md) for relevant technique notes;
+hardware-specific recipes require a match to the actual target and toolchain.
+
+Before editing, record the candidate's origin and source or prior experiment:
+an existing option, a reused approach or a new implementation. Record its
+readiness, such as a scratch prototype, validated experiment or maintained
+implementation. Predict the mechanism and expected change in launches, traffic,
+kernel behavior or native latency, and what would refute the hypothesis. Use
+qualitative expectations unless a numeric estimate has a stated basis.
+
+## 2. Implement the change
+
+Inspect the relevant graph, generated code or kernel before choosing the edit.
 Keep the baseline intact. Use ordinary worktrees or scratch copies for candidate
 edits, with separate package/build outputs where needed. Reuse matching existing
 environments and checkpoint files. Choose a focused change, but combine changes
-when necessary to test the hypothesis and explain that dependency.
+when necessary to test the hypothesis and explain that dependency; use ablations
+to distinguish their effects. Preserve the exported interface and runtime
+contract. Commits and publishing require the user's instruction.
 
-## Use the existing interfaces
+## 3. Export
 
 Set paths from the selected checkout and environment. In these examples, `PY`,
 `MODEL_DIR`, `CANDIDATE`, `BASELINE`, `BENCHMARK`, `VALIDATOR` and result paths are
@@ -47,18 +69,37 @@ that exporter. Preserve its exit status and log:
 export CUDA_VISIBLE_DEVICES="$GPU_UUID"
 "$PY" -m "$EXPORT_MODULE" --model-dir "$MODEL_DIR" \
   --max-context-length "$CAPACITY" --output "$CANDIDATE" > "$EXPORT_LOG" 2>&1
+```
+
+Inspect the export log and generated implementation to confirm the intended
+change reached the package. A source edit or flag alone does not establish that
+the measured artifact contains the change.
+
+## 4. Validate
+
+Run affected local/operator checks as described by the model guide, then the
+project's numerical/native validation:
+
+```bash
 "$PY" -m tools.validation.validate --model-dir "$MODEL_DIR" \
   --packages "$CANDIDATE" --native "$VALIDATOR" --output "$VALIDATION"
 ```
 
-Run relevant local/operator tests as described by the model guide. Validate the
-baseline too if matching evidence is unavailable. Use each variant's matching
-source when evaluating its adapted eager stage. Preserve required failures and
-their error metrics, including existing HF failures; do not suppress nonzero
-validation exits or reduce validation to token agreement. Numerical findings and
-native execution/parity are separate from performance findings.
+Validate the baseline too if matching evidence is unavailable. Use each
+variant's matching source when evaluating its adapted eager stage. Preserve
+validator exit status, required failures, diagnostics and changes in actual
+errors; do not reduce validation to failure counts or token agreement.
 
-The shared comparison uses the same native executable for both package bundles:
+Known HF failures permit exploratory timing while retaining the failed
+acceptance result. Nonfinite outputs, invalid state or native/Python disagreement
+make a candidate unsuitable for a performance recommendation. Apply the project
+validators' policy; numerical findings and native parity remain separate from
+performance findings.
+
+## 5. Benchmark
+
+Use controlled, unprofiled paired native measurements. The shared comparison
+uses the same native executable for both package bundles:
 
 ```bash
 "$PY" -m tools.benchmark compare --model-dir "$MODEL_DIR" \
@@ -71,46 +112,52 @@ task. The controller alternates process order and checks idle conditions. Run
 GPU measurements sequentially. `--allow-busy` is for functional exploration;
 its provisional timings do not demonstrate an improvement.
 
+Use `decode_ms_per_token` as the default objective: native fixed-token decode
+includes argmax and host reads. Read per-case distributions, context length,
+prefill and memory alongside it. Compare repeated rounds; use an A/A run or
+additional samples when noise obscures the effect. Kernel microbenchmarks guide
+implementation choices; native measurements establish the inference effect.
+
 The comparator requires compatible package contracts and logical weights. If a
 packing/kernel experiment needs different mappings or native libraries, inspect
 that mismatch and record what comparison support is missing. Do not bypass the
 check or silently measure both bundles with the wrong operator library.
 
-## Profile, analyze and choose the next target
+## 6. Profile and analyze
 
 After the paired benchmark, profile the candidate's native execution following
 [profiling.md](profiling.md). Reuse a capture only if it matches that candidate,
 environment and workload. Compare its kernels, launch behavior and remaining
 costs with the baseline profile and the predicted mechanism. Combine this
-analysis with validation and unprofiled timing to decide whether to keep,
-reject or investigate the change, then choose the next target. When a validated
-improvement becomes the new baseline, carry its measurements and profile into
-the next iteration while retaining the original evidence.
+analysis with validation and unprofiled timing to explain gains, regressions or
+uncertainty, and identify the remaining bottleneck. Profiler timings are separate
+evidence from the unprofiled paired comparison. The original baseline capture
+does not describe changed candidate code.
 
-Use `decode_ms_per_token` as the default objective: native fixed-token decode
-includes argmax and host reads. Read per-case distributions, prefill and memory
-alongside it. Compare repeated rounds; use an A/A run or additional samples when
-noise obscures the effect. Profiled and unprofiled timings are separate evidence.
+## 7. Choose the next target
 
-Inspect export logs/generated code to confirm the intended change was applied.
-Record the hypothesis, patch, exact commands, measurements, numerical changes,
-supporting profile, conclusion and next action in a short note. Retain failed
-attempts. On resumption, read that note and check for still-running work before
-launching another job.
+Use correctness, paired measurements and profile findings to keep, reject or
+investigate the candidate, then choose the next experiment within the remaining
+budget. If an earlier step fails, record the failure and available evidence
+before choosing another attempt; do not claim measurements or profiles from
+steps that did not run.
+
+When a validated improvement becomes the new baseline, carry its measurements,
+profile and numerical status into the next iteration. Preserve the original
+baseline and failed attempts. Update readiness after the attempt; implementation
+maturity remains separate from model acceptance.
+
+Keep a short note with the hypothesis, source revision/patch, exact commands,
+artifact and result paths, performance, numerical changes, profile observations,
+decision and next action. On stopping, summarize the reviewable change, measured
+outcome, numerical status, limitations and what to try next.
 Report a faster exploratory candidate separately from model acceptance when
 required numerical checks remain unresolved.
 
-## Compare prediction with observation
+### Compare prediction with observation
 
-Record each candidate's origin and source or prior experiment: an existing option,
-a reused approach or a new implementation. Record its readiness, such as a scratch
-prototype, validated experiment or maintained implementation, and update it after
-the attempt. Readiness is separate from the validator's model acceptance result.
-
-Before editing, record the mechanism and expected change in launches, traffic,
-kernel behavior or native latency. Use qualitative expectations unless a numeric
-estimate has a stated basis. After every attempt, including compile/validation
-failures, compare the prediction with the result. A short note is enough:
+After every attempt, including compile/validation failures, compare the recorded
+prediction with the observed result. A short note is enough:
 
 ```text
 Candidate: origin/reference; initial readiness.

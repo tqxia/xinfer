@@ -80,7 +80,8 @@ candidates when the evidence supports them; use graph passes, adapters or custom
 operators when the intervention needs them. Do not exhaust configuration options
 or implement a custom kernel merely to follow a fixed sequence.
 
-For each candidate, complete the experiment loop:
+For each candidate, complete the experiment loop. [experiments.md](references/experiments.md)
+expands these seven steps with the existing commands and evidence to retain:
 
 1. **Form the hypothesis.** Tie it to an observation in the current baseline
    profile and explain the mechanism it could improve. Use the
@@ -91,9 +92,8 @@ For each candidate, complete the experiment loop:
    Use an isolated checkout or scratch experiment, preserving the baseline and
    the user's other changes. Keep the change focused; use ablations when changes
    interact. Commits and publishing require the user's instruction.
-3. **Export.** Follow [experiments.md](references/experiments.md) for the existing
-   interfaces. Verify that the intended code or compiler setting reaches the
-   measured compiled artifact.
+3. **Export.** Use the project's existing export interface. Verify that the
+   intended code or compiler setting reaches the measured compiled artifact.
 4. **Validate.** Run affected local/operator checks and project numerical/native
    validation, applying the correctness criteria below.
 5. **Benchmark.** Compare the candidate with the current baseline using controlled,
