@@ -55,13 +55,25 @@ prefix, with grouped KV heads and no explicit head expansion. The original HF
 projections, Q/K normalization, RoPE and sigmoid output gate remain in the model.
 DeltaNet layers retain their packaged Triton kernels.
 
+Decode applies a post-export graph pass after linear packing to replace the
+profiled 0.8B singleton BF16 projections with the shared read-only Triton GEMV
+operator. It preserves the frozen weights, output shapes and state interface;
+the vocabulary head and unsupported geometries use their existing linear path.
+The kernel uses FP32 reductions, with four output rows per program for K=1024
+and one for K>=2048. The
+[NCU-guided GEMV experiments](../../docs/experiments/qwen35-gemv-2026-11-13.md)
+record approximately 19% native decode improvement on GB10 and 0.67–1.67% on
+L20 at prompt lengths 22/128/512, current-policy validation and remaining
+state/token diagnostics.
+Performance on other targets or geometries has not been established.
+
 One functional dispatcher selects fused recurrence for T<=97 and B3/C64
 chunked FP32 prefill for longer compiled calls. The threshold is provisional. Focused
 validation compares it with HF recurrent/chunked operations and an independent
 FP32 control; full-model and native checks cover generation and carried state.
 HF/compiler numerical acceptance remains **open**. The experiment record retains
 the earlier validation results, including the retired standalone-core control.
-No timing result is claimed on the busy development GPU.
+The earlier DeltaNet experiment did not claim timing on its busy development GPU.
 
 ## Source layout
 
@@ -73,7 +85,9 @@ No timing result is claimed on the busy development GPU.
 - `kernels/recurrent.py`: fused recurrence, parallel preparation, functional
   branch operators and shape-based `torch.cond` dispatch.
 - `kernels/chunked.py`: C64 FP32 chunking with B3's 32-column U/W transform.
-- `export.py`: strict export and AOTInductor packaging.
+- `export.py`: strict export, projection packing/GEMV rewrite and AOTInductor packaging.
+- `../common/kernels/projection_gemv.py` and `../common/passes/projection_gemv.py`:
+  singleton projection implementation and post-export eligibility checks.
 - `../../tools/prepare/`: shared checkpoint download/verification and offline token IDs.
 - `tests/`: model/compiler, GPU operator and AOTI tests; `delta.py` contains
   synthetic DeltaNet fixtures and explicit-state HF wrappers.
@@ -126,6 +140,22 @@ Rebuild the runtime and re-export packages made with the earlier functional KV a
 `efficient_sdpa` contract. The runtimes reject that legacy metadata before
 loading the packages. A backend change can alter floating-point results;
 the existing numerical validators and limits still apply.
+
+## Projection tests
+
+CPU graph-contract tests cover rewrite eligibility and preserved parameters,
+signatures and output metadata. CUDA tests exercise BF16/FP32 numerical controls,
+tail masks, buffer ownership, streams and Python AOTI packaging without loading
+a checkpoint. Select `Q35_PY` with the
+[target environment guide](../../environments/README.md) before running:
+
+```bash
+CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest compiler.common.tests.test_projection_gemv
+"$Q35_PY" -m unittest compiler.common.tests.test_projection_gemv_cuda
+```
+
+Full-model numerical/native validation remains a separate required check. See
+the experiment report for the measured geometry and its diagnostics.
 
 ## DeltaNet tests
 

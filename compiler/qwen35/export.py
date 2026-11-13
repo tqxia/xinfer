@@ -12,6 +12,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import model_context_limit, resolve_context_length
 from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR
 from compiler.common.passes.pack_linears import pack_linears
+from compiler.common.passes.projection_gemv import replace_projection_gemv
 from compiler.common.weights import compile_shared
 from compiler.common.attention import (
     cache_extent,
@@ -83,6 +84,9 @@ def export_step(model, kind, capacity=None):
     exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
     packing = pack_linears(exported)
+    if kind == "decode":
+        projections = replace_projection_gemv(exported)
+        print(json.dumps(dict(event="decoder_projection_gemv", **projections)), flush=True)
     return exported, packing
 
 
