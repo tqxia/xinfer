@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "xinfer performance investigation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "created_at",
+    "objective",
+    "context",
+    "baseline_revision",
+    "artifacts",
+    "candidates",
+    "revisions",
+    "evidence",
+    "decisions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checkpoint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workload": {
+          "type": "string",
+          "minLength": 1
+        },
+        "environment": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "checkpoint",
+        "workload",
+        "environment"
+      ]
+    },
+    "baseline_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidate_attempts",
+        "minutes"
+      ],
+      "properties": {
+        "candidate_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minutes": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "artifact.schema.json"
+      }
+    },
+    "candidates": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "candidate.schema.json"
+      }
+    },
+    "revisions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "revision.schema.json"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "evidence.schema.json"
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "decision.schema.json"
+      }
+    }
+  }
+}

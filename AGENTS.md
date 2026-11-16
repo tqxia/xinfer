@@ -17,6 +17,9 @@ historical evidence; their commands and results may describe retired code.
 - `tools/` owns preparation, numerical validation, benchmarking and diagnostics.
   Production compiler code must not depend on tooling.
 - `environments/` owns setup, device/model requirements and hardware profiles.
+- `plugins/` owns coding-agent skills and their reusable performance-analysis
+  helpers. Reuse project export, validation and benchmark tools; keep plugin
+  helpers general and model-specific details in the existing model guides.
 - Tests follow the code they cover. Keep module/operator/kernel checks in unit
   tests and full export-to-native accuracy checks in `tools/validation/`.
 - Functions and helpers used only by tests or tooling belong in their respective
