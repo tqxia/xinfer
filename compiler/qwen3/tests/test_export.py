@@ -12,6 +12,13 @@ from compiler.qwen3 import export
 
 
 class ExportContextLength(unittest.TestCase):
+    def test_workflow_errors_are_not_converted_to_cli_usage_errors(self):
+        with (
+            patch.object(export, "export_model", side_effect=ValueError("graph export failed")),
+            self.assertRaisesRegex(ValueError, "graph export failed"),
+        ):
+            export.main([])
+
     def test_context_argument_is_checked_before_model_loading(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -54,6 +54,7 @@ downloads, compiled packages, native binaries or a GPU:
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   compiler.common.tests.test_context compiler.common.tests.test_metadata \
+  compiler.common.tests.test_export \
   compiler.qwen3.tests.test_packages compiler.qwen3.tests.test_export \
   tools.tests.test_common \
   tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \

@@ -11,6 +11,10 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters, kernels and export settings.
+Each model's `export.py` keeps CLI handling, paired-export orchestration, graph
+construction, transformations and checks in separate functions. Qwen3.5 eager
+validation imports the same graph builder from that module. Shared export
+preflight and build reporting live in `compiler/common/export.py`.
 Shared native kernels and C shims live in `compiler/common/kernels/`, including
 attention. `runtime/<model>/` owns model-specific package ABI checks. Shared compiler
 artifact, metadata and weight helpers live in `compiler/common/`. Numerical validation
