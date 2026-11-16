@@ -12,9 +12,9 @@ optimization loop. An
 [investigation record](skills/optimize/references/records/format.md) links
 candidates, implementation revisions, profiles, validation, measurements and
 decisions while keeping detailed results in their existing files.
-The [record helper](skills/optimize/references/records/tools/record.py) bundles
-supporting files and checks record links and identities; see the record guide
-for its two commands.
+The [record helper](skills/optimize/references/records/tools/record.py) shows
+selective record views, bundles supporting files and checks links and identities;
+see the record guide for its commands.
 
 ## Load the plugin
 

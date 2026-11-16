@@ -25,9 +25,10 @@ Prompt length plus forced decode steps must fit that capacity. A long prompt can
 span multiple compiled prefill calls; these limits are different. Select context
 positions that exercise the hypothesis.
 
-On resumption, follow the latest linked decision and inspect unfinished evidence
-and actual jobs. Verify that the evidence still matches the source, artifacts,
-workload and environment. Apply the attempt definition and remaining budget in
+On resumption, use the record helper's `show` overview to find decisions and
+unfinished evidence, then inspect relevant entries and actual jobs. Verify that
+the evidence still matches the source, artifacts, workload and environment. Apply
+the attempt definition and remaining budget in
 [Establish the task](../SKILL.md#establish-the-task).
 
 ## 1. Form the hypothesis

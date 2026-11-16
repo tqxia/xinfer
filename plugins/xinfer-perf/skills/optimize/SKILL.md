@@ -29,8 +29,9 @@ integration and native measurement.
 Create or resume the
 [linked investigation record](references/records/format.md). It connects
 candidates, implementation revisions, evidence and decisions to the existing
-reports. When continuing, read it and the linked notes/results first; reuse
-matching evidence and identify unfinished work before launching another job.
+reports. When continuing, start with the record helper's `show` overview, then
+inspect relevant entries and linked notes/results. Reuse matching evidence and
+identify unfinished work before launching another job.
 
 ## Profile the baseline
 

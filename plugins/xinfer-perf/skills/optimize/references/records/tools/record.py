@@ -1,14 +1,16 @@
-"""Bundle finished evidence files and check linked investigation records."""
+"""Inspect, bundle and check linked investigation records."""
 
 import argparse
 import hashlib
 import json
 import os
+from datetime import datetime
 from graphlib import TopologicalSorter
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
 SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
+COLLECTIONS = ("artifacts", "candidates", "revisions", "evidence", "decisions")
 
 
 def read_json(path):
@@ -62,8 +64,7 @@ def validate(data, schema_name="investigation"):
 
 def check_links(record):
     validate(record)
-    collections = ("artifacts", "candidates", "revisions", "evidence", "decisions")
-    edges = {(collection, key): set() for collection in collections for key in record[collection]}
+    edges = {(collection, key): set() for collection in COLLECTIONS for key in record[collection]}
     root = ("investigation", record["id"])
     edges[root] = set()
 
@@ -118,6 +119,114 @@ def check_links(record):
     list(TopologicalSorter(edges).static_order())
 
 
+def latest(entries):
+    """Retain timestamp ties; JSON insertion order does not establish chronology."""
+    times = {
+        key: datetime.fromisoformat(value["created_at"].replace("Z", "+00:00"))  # noqa: FURB162 -- Python 3.9 CLI support
+        for key, value in entries.items()
+    }
+    newest = max(times.values(), default=None)
+    return {key: value for key, value in entries.items() if times[key] == newest}
+
+
+def evidence_index(entries):
+    fields = ("kind", "scope", "status", "subjects", "summary")
+    return {
+        key: {field: value[field] for field in fields if field in value}
+        for key, value in entries.items()
+    }
+
+
+def show(record, target=None):
+    """Project a validated record without reading artifacts or inferring acceptance."""
+    if target is None:
+        candidates = {}
+        for key, candidate in record["candidates"].items():
+            revisions = [
+                rid for rid, revision in record["revisions"].items() if revision["candidate"] == key
+            ]
+            decisions = {
+                did: decision
+                for did, decision in record["decisions"].items()
+                if decision["revision"] in revisions
+            }
+            selections = latest(
+                {
+                    did: decision
+                    for did, decision in decisions.items()
+                    if "next_baseline" in decision
+                }
+            )
+            candidates[key] = {
+                "hypothesis": candidate["hypothesis"],
+                "baseline_revision": candidate["baseline_revision"],
+                "revisions": revisions,
+                "latest_decisions": latest(decisions),
+                "latest_baseline_selections": {
+                    did: decision["next_baseline"] for did, decision in selections.items()
+                },
+            }
+        return {
+            "investigation": {
+                key: value for key, value in record.items() if key not in COLLECTIONS
+            },
+            "counts": {key: len(record[key]) for key in COLLECTIONS},
+            "candidates": candidates,
+            "running_evidence": evidence_index(
+                {
+                    key: value
+                    for key, value in record["evidence"].items()
+                    if value["status"] == "running"
+                }
+            ),
+        }
+
+    collection, _, key = target.partition("/")
+    if collection not in COLLECTIONS or key not in record[collection]:
+        raise ValueError(f"Unknown record target: {target}; expected collection/id")
+    entry = record[collection][key]
+    result = {collection: {key: entry}}
+    if collection == "candidates":
+        revisions = {
+            rid: revision
+            for rid, revision in record["revisions"].items()
+            if revision["candidate"] == key
+        }
+        decisions = {
+            did: decision
+            for did, decision in record["decisions"].items()
+            if decision["revision"] in revisions
+        }
+        evidence_ids = set(entry["motivation"])
+        for revision in revisions.values():
+            evidence_ids.update(revision.get("motivation", []))
+        for decision in decisions.values():
+            evidence_ids.update(decision["evidence"])
+        evidence = {
+            eid: value
+            for eid, value in record["evidence"].items()
+            if eid in evidence_ids
+            or any(subject["revision"] in revisions for subject in value["subjects"].values())
+        }
+        result.update(revisions=revisions, decisions=decisions, evidence=evidence_index(evidence))
+    elif collection == "evidence":
+        context = {**record["context"], **entry.get("context", {})}
+        exports = {
+            subject["export"]: record["evidence"][subject["export"]]
+            for subject in entry["subjects"].values()
+            if "export" in subject
+        }
+        artifact_ids = set(entry["artifacts"]) | set(context.values())
+        for exported in exports.values():
+            artifact_ids.update(exported["artifacts"])
+        result.update(
+            effective_context=context,
+            exports=exports,
+            artifacts={aid: record["artifacts"][aid] for aid in sorted(artifact_ids)},
+        )
+    return result
+
+
 def check_files(record, directory):
     counts = {"files_checked": 0, "hashes_checked": 0, "remote_files_unchecked": 0}
 
@@ -167,6 +276,13 @@ def main():
     check = commands.add_parser("check", help="Validate schema and links (requires jsonschema)")
     check.add_argument("record", type=Path)
     check.add_argument("--files", action="store_true", help="Also check local files and hashes")
+    view = commands.add_parser(
+        "show", help="Show an overview or linked record (requires jsonschema)"
+    )
+    view.add_argument("record", type=Path)
+    view.add_argument(
+        "target", nargs="?", metavar="COLLECTION/ID", help="Omit for the investigation overview"
+    )
     args = parser.parse_args()
     try:
         if args.command == "bundle":
@@ -174,10 +290,15 @@ def main():
         else:
             record = read_json(args.record)
             check_links(record)
-            result = {"schema_and_links": "valid", "file_check": "not_requested"}
-            if args.files:
-                result.update(check_files(record, args.record.resolve().parent))
-                result["file_check"] = "partial" if result["remote_files_unchecked"] else "complete"
+            if args.command == "show":
+                result = {"record_path": str(args.record.resolve()), **show(record, args.target)}
+            else:
+                result = {"schema_and_links": "valid", "file_check": "not_requested"}
+                if args.files:
+                    result.update(check_files(record, args.record.resolve().parent))
+                    result["file_check"] = (
+                        "partial" if result["remote_files_unchecked"] else "complete"
+                    )
     except (OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")
     print(json.dumps(result, indent=2))

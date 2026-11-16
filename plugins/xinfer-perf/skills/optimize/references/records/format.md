@@ -76,6 +76,9 @@ directory on the execution host. Use the [record helper](tools/record.py):
 
 ```bash
 RECORD_TOOL="$PERF_PLUGIN/skills/optimize/references/records/tools/record.py"
+python "$RECORD_TOOL" show "$RUN/investigation.json"
+python "$RECORD_TOOL" show "$RUN/investigation.json" candidates/c2
+python "$RECORD_TOOL" show "$RUN/investigation.json" evidence/paired-r2
 python "$RECORD_TOOL" bundle "$RUN/paired.files.json" \
   command="$RUN/paired-status.json" log="$RUN/paired.log" \
   report="$RUN/comparison/summary.json" telemetry="$RUN/telemetry.csv"
@@ -83,12 +86,25 @@ python "$RECORD_TOOL" check "$RUN/investigation.json"
 python "$RECORD_TOOL" check "$RUN/investigation.json" --files
 ```
 
+`show` prints JSON for resumption and selective reading. The overview includes
+the original baseline, each candidate's comparison baseline, latest decisions
+and explicit baseline selections, plus running evidence. Latest is determined
+per candidate by timestamp, retaining ties; it does not choose a global baseline.
+An earlier baseline selection remains visible alongside a later rejection.
+Candidate views include revisions, decisions and an evidence index. Evidence
+views include exact export records, inherited context with overrides applied,
+and artifact locations. Use `revisions/ID`, `decisions/ID` or `artifacts/ID` for
+individual entries. Report bodies and manifest inventories remain in their files;
+relative artifact URIs resolve against the directory of `record_path`. Records
+are unchanged.
+
 `bundle` prints an artifact to add and link from evidence; it does not edit the
 record. Its URI is local to the execution host; qualify it for remote use.
-`check` requires `jsonschema` and checks schema, links, cycles and export/revision
-agreement. `--files` also checks local files, hashes, pointers and manifests;
-remote files remain unchecked. Run it where files are available. Model acceptance
-comes from project validators.
+`show` and `check` require `jsonschema` and check schema, links, cycles and
+export/revision agreement. `check --files` also checks local files, hashes,
+pointers and manifests; remote files remain unchecked. Run it where files are
+available. Model acceptance comes from project validators; `show` displays
+recorded status without rechecking results or live jobs.
 
 ## Lifecycle semantics
 

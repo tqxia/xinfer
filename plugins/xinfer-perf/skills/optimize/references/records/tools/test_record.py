@@ -1,6 +1,8 @@
 import copy
 import importlib.util
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -236,6 +238,179 @@ class RecordTests(unittest.TestCase):
             data["artifacts"]["report"]["pointer"] = "/missing"
             with self.assertRaisesRegex(ValueError, "Invalid pointer"):
                 record.check_files(data, root)
+
+
+class ShowTests(unittest.TestCase):
+    def branched_record(self):
+        data = investigation()
+        data["candidates"]["c2"] = copy.deepcopy(data["candidates"]["c1"])
+        data["revisions"]["r3"] = {**data["revisions"]["r2"], "candidate": "c2"}
+        data["decisions"]["d2"] = {
+            **data["decisions"]["d1"],
+            "revision": "r3",
+            "evidence": [],
+            "next_baseline": "r3",
+        }
+        return data
+
+    def test_overview_preserves_candidate_baselines_and_unfinished_work(self):
+        data = self.branched_record()
+        previous = data["decisions"]["d1"]
+        previous["created_at"] = "2026-01-01T01:00:00+01:00"
+        rejected = {
+            **previous,
+            "created_at": "2026-01-01T00:30:00Z",
+            "outcome": "reject",
+            "acceptance": {"local": "passed", "model": "failed"},
+            "assessment": "New validation evidence refutes acceptance.",
+        }
+        del rejected["next_baseline"]
+        # Chronology differs from both insertion order and lexicographic timestamp order.
+        data["decisions"] = {"rejected": rejected, "d2": data["decisions"]["d2"], "d1": previous}
+        data["evidence"]["pending"] = {
+            **data["evidence"]["model-r2"],
+            "status": "running",
+            "subjects": {"implementation": {"revision": "r3"}},
+            "artifacts": [],
+        }
+        record.check_links(data)
+        result = record.show(data)
+        self.assertEqual(result["investigation"]["baseline_revision"], "r0")
+        c1, c2 = (result["candidates"][key] for key in ("c1", "c2"))
+        self.assertEqual(c1["baseline_revision"], "r0")
+        self.assertEqual(c1["latest_decisions"], {"rejected": rejected})
+        self.assertEqual(c1["latest_baseline_selections"], {"d1": "r2"})
+        self.assertEqual(c2["latest_decisions"], {"d2": data["decisions"]["d2"]})
+        self.assertEqual(c2["latest_baseline_selections"], {"d2": "r3"})
+        self.assertEqual(set(result["running_evidence"]), {"pending"})
+        self.assertEqual(result["counts"]["artifacts"], len(data["artifacts"]))
+        self.assertNotIn("artifacts", result)
+
+    def test_equal_timestamps_keep_both_decisions_and_selections(self):
+        data = investigation()
+        data["decisions"]["alternative"] = {
+            **data["decisions"]["d1"],
+            "created_at": "2026-01-01T01:00:00+01:00",
+            "next_baseline": "r0",
+        }
+        record.check_links(data)
+        candidate = record.show(data)["candidates"]["c1"]
+        self.assertEqual(set(candidate["latest_decisions"]), {"d1", "alternative"})
+        self.assertEqual(candidate["latest_baseline_selections"], {"d1": "r2", "alternative": "r0"})
+
+    def test_candidate_includes_motivation_and_cited_evidence(self):
+        data = self.branched_record()
+        for key in ("local-motivation", "decision-support", "unrelated"):
+            data["evidence"][key] = copy.deepcopy(data["evidence"]["profile-r0"])
+        data["revisions"]["r2"]["motivation"] = ["local-motivation"]
+        data["decisions"]["d1"]["evidence"].append("decision-support")
+        record.check_links(data)
+        result = record.show(data, "candidates/c1")
+        self.assertEqual(result["candidates"], {"c1": data["candidates"]["c1"]})
+        self.assertEqual(set(result["revisions"]), {"r2"})
+        self.assertEqual(set(result["decisions"]), {"d1"})
+        self.assertTrue(
+            {"profile-r0", "local-motivation", "decision-support", "paired-r2"}
+            <= result["evidence"].keys()
+        )
+        self.assertNotIn("unrelated", result["evidence"])
+        self.assertNotIn("artifacts", result)
+        self.assertNotIn("artifacts", result["evidence"]["paired-r2"])
+
+    def test_evidence_resolves_context_and_distinct_exports_without_mutation(self):
+        data = investigation()
+        for key in ("package-a", "package-b", "unused"):
+            data["artifacts"][key] = {
+                "kind": "package_metadata",
+                "uri": f"ssh://host/evidence/{key}.json",
+                "sha256": "0" * 64,
+                "pointer": "/package",
+            }
+        data["evidence"]["export-r2"]["artifacts"] = ["package-a"]
+        data["evidence"]["rebuild"] = {
+            **data["evidence"]["export-r2"],
+            "artifacts": ["package-b"],
+        }
+        data["evidence"]["paired-r2"].update(
+            subjects={
+                "baseline": {"revision": "r2", "export": "export-r2"},
+                "candidate": {"revision": "r2", "export": "rebuild"},
+            },
+            context={"workload": "kernel-workload"},
+        )
+        record.check_links(data)
+        before = copy.deepcopy(data)
+        result = record.show(data, "evidence/paired-r2")
+        self.assertEqual(set(result["exports"]), {"export-r2", "rebuild"})
+        self.assertEqual(
+            result["effective_context"], {**data["context"], "workload": "kernel-workload"}
+        )
+        self.assertEqual(
+            set(result["artifacts"]),
+            {"result", "package-a", "package-b", "checkpoint", "environment", "kernel-workload"},
+        )
+        self.assertEqual(result["artifacts"]["package-a"], data["artifacts"]["package-a"])
+        self.assertEqual(data, before)
+
+    def test_single_records_and_unknown_targets(self):
+        data = investigation()
+        for collection, key in (("revisions", "r2"), ("decisions", "d1"), ("artifacts", "result")):
+            with self.subTest(collection=collection):
+                self.assertEqual(
+                    record.show(data, f"{collection}/{key}"),
+                    {collection: {key: data[collection][key]}},
+                )
+        for target in ("candidates", "candidates/missing", "unknown/r2"):
+            with (
+                self.subTest(target=target),
+                self.assertRaisesRegex(ValueError, "Unknown record target"),
+            ):
+                record.show(data, target)
+        empty = investigation()
+        empty.update(candidates={}, decisions={}, evidence={})
+        del empty["revisions"]["r2"]
+        record.check_links(empty)
+        self.assertEqual(record.show(empty)["candidates"], {})
+
+    def test_cli_views_are_read_only_and_do_not_open_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "investigation.json"
+            path.write_text(json.dumps(investigation()))
+            before = path.read_bytes()
+            command = [sys.executable, record.__file__, "show", str(path)]
+            for target in (None, "candidates/c1", "evidence/paired-r2", "decisions/d1"):
+                with self.subTest(target=target):
+                    result = subprocess.run(
+                        command + ([target] if target else []),
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(result.stdout)["record_path"], str(path.resolve()))
+            self.assertEqual(path.read_bytes(), before)
+            self.assertEqual(list(Path(directory).iterdir()), [path])
+            result = subprocess.run(
+                command + ["evidence/missing"], check=False, capture_output=True, text=True
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unknown record target", result.stderr)
+
+    def test_cli_rejects_mismatched_export_links(self):
+        data = investigation()
+        data["evidence"]["paired-r2"]["subjects"]["candidate"]["export"] = "export-r0"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "investigation.json"
+            path.write_text(json.dumps(data))
+            result = subprocess.run(
+                [sys.executable, record.__file__, "show", str(path), "evidence/paired-r2"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("export does not identify the subject revision", result.stderr)
 
 
 if __name__ == "__main__":
