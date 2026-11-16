@@ -107,8 +107,12 @@ existing commands and evidence to retain:
    use the
    [kernel inner loop](references/kernel-optimization-loop.md#kernel-inner-loop)
    before full-model export, starting with baseline calibration against
-   native execution. Consider Triton, CUDA C++ and targeted PTX according to the
-   measured bottleneck. Commits and publishing require the user's instruction.
+   native execution. Its design loop chooses or revises the architecture; its
+   implementation loop builds, tunes and tests it, including plausible
+   interactions. Feed results back to the design loop when tuning stalls or
+   measurements suggest a structural limit.
+   Consider Triton, CUDA C++ and targeted PTX according to the measured bottleneck.
+   Commits and publishing require the user's instruction.
 3. **Export.** Use the project's existing export interface. Verify that the
    intended code or compiler setting reaches the measured compiled artifact.
 4. **Validate.** Run affected local/operator checks and project numerical/native

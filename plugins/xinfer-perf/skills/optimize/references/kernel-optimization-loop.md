@@ -23,7 +23,9 @@ and
 
 Use this inside outer step 2, **Implement the change**, when rewriting an
 existing kernel or building a custom kernel for fusion. Ordinary compiler-option
-comparisons can stay in the outer loop.
+comparisons can stay in the outer loop. The design loop chooses the kernel's
+structure; the implementation loop realizes and tunes it, returning evidence
+for the next design decision.
 
 Define the operator or fused-region boundary, reference and baseline once. Reuse
 existing component fixtures and declared tolerances. Cover actual shapes,
@@ -40,12 +42,34 @@ comparison and explain material discrepancies before using local gains to rank
 revisions. Reuse this calibration while the baseline and measurement conditions
 remain unchanged.
 
-1. **Form a local hypothesis.** Use the NCU evidence and generated code to
-   choose a change in tiling, layout, scheduling, instruction use or
-   implementation. Apply the brief
-   [candidate comparison](experiment-loop.md#1-form-the-hypothesis) to plausible
-   revisions within this region. Predict the affected counters and timing, and
-   what would refute the mechanism.
+### Design loop
+
+1. **Choose or retain a design.** Use the calibrated profile and generated code
+   to compare plausible architectures using the
+   [candidate comparison](experiment-loop.md#1-form-the-hypothesis). State the
+   relevant decomposition, work partitioning, data/state residence and
+   synchronization, with resource costs, dependent changes and expected effects.
+   A small adjustment needs only a brief statement of the retained architecture.
+2. **Implement and evaluate.** Run the implementation loop below within the
+   chosen structure, testing whether its intended mechanisms are realized.
+3. **Reassess from evidence.** Distinguish an unrealized mechanism needing repair,
+   useful local tuning and a structural limit requiring a revised design. When
+   repeated tuning brings no material gain or measurements suggest a structural
+   limit, revisit the design before another sweep. Use a small probe when needed
+   to distinguish the leading explanations, then revise, continue tuning or stop.
+
+### Implementation loop
+
+1. **Form a local hypothesis.** Within the chosen design, use NCU evidence and
+   generated code to choose a focused revision to tiling, layout, scheduling or
+   instruction use. Use the same candidate comparison for local revisions.
+   Predict the affected counters and timing, and what would refute the mechanism.
+
+   When changes plausibly interact, state the dependency to test. Compare the
+   baseline, each viable change alone and the combination, or remove one change
+   from a bundle. Choose only variants that answer that question, using the same
+   baseline and conditions. A combined gain does not establish each member's
+   contribution.
 2. **Edit and compile.** Make a focused revision using a suitable implementation
    language. For a new operator or packaging boundary, prove export/AOTI and C++
    execution with the first correct implementation before extensive tuning.
@@ -67,14 +91,20 @@ remain unchanged.
    measurements materially disagree. Keep, revise or reject the implementation
    using correctness, unprofiled timing and NCU findings; retain failed and
    inconclusive revisions. Update the expected native benefit and its evidence
-   basis before further tuning or integration.
+   basis. Continue local revisions while worthwhile; return to the design loop
+   when the structure needs reassessment or the implementation is ready for
+   integration.
 
-Bound the local search within the outer candidate's remaining budget and reserve
-time for integration. Add each revision under the same outer candidate in the
+### Records and model integration
+
+Both loops share the outer candidate's remaining budget; reserve time for model
+integration. Add each revision under the same outer candidate in the
 [investigation record](records/format.md), linking its parent,
 source/configuration, local prediction, correctness, unprofiled timing, NCU
-capture and feedback decision. Stop when the evidence or remaining time does not
-support another trial.
+capture and feedback decision. Put design choices in candidate `hypothesis` or
+revision `change`, interaction questions in revision `prediction`, and feedback
+from either loop in decision `assessment` / `next_action`. Stop when the evidence
+or remaining time does not support another trial.
 
 A local winner keeps its revision ID when returning to outer steps 3–7: export,
 full validation, paired C++ measurement, native profiling and the next-target

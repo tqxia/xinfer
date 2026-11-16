@@ -82,8 +82,13 @@ require the user's instruction.
 When rewriting an existing kernel or implementing a custom fusion kernel, enter
 the [kernel inner loop](kernel-optimization-loop.md#kernel-inner-loop)
 inside this step. First calibrate the local baseline against the corresponding
-native operation or region, then iterate and return to step 3 with the selected
-implementation. Ordinary compiler-option comparisons can remain in the outer loop.
+native operation or region. The design loop chooses or revises the architecture;
+the implementation loop builds, tunes and tests it, including targeted interaction
+experiments. Feed results back to the design loop when tuning stalls or
+measurements suggest a structural limit. Both loops share the remaining budget
+and existing candidate, revision, evidence and decision records. Return to step 3
+with the selected implementation. Ordinary compiler-option comparisons can remain
+in the outer loop.
 
 ## 3. Export
 
