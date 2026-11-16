@@ -191,10 +191,19 @@ production and HF paths remain ordinary test failures.
 Run the export and AOTI tests separately when changing kernels or the compiler:
 
 ```bash
+"$QWEN_PY" -m unittest compiler.qwen35.tests.test_export
 "$QWEN_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
 ```
 
-These GPU tests cover both geometries and compile four packages per geometry:
+`test_export` uses a small randomly initialized mixed-layer model and the
+production export path, including linear packing and decode GEMV replacement.
+It checks symbolic DeltaNet dispatch, FlashAttention selection and in-place
+cache updates after those passes. These structural assertions live in tests;
+normal exports retain PyTorch graph validation without branch-count diagnostics.
+The graph tests require CUDA and the built native attention library, but do not
+download a checkpoint or compile AOTI packages.
+
+`test_kernels_aoti` covers both geometries and compiles four packages per geometry:
 BF16/FP32 prefill and decode. They check symbolic dispatch before and after
 lowering, dynamic lengths, carried/reset state and nondefault CUDA streams.
 Direct kernel execution and Python AOTI must agree bitwise on core output,

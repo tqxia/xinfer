@@ -51,15 +51,6 @@ def export_step(step, inputs, shapes):
     return exported
 
 
-def check_graph(exported, layers):
-    targets = [n.target for n in exported.graph.nodes if n.op == "call_function"]
-    sites = targets.count(torch.ops.xinfer.flash_attention.default)
-    updates = targets.count(torch.ops.aten.index_copy_.default)
-    assert sites == layers and updates == 2 * sites
-    assert torch.ops.aten.scaled_dot_product_attention.default not in targets
-    return {"name": "qwen3_flash_v1", "replacements": sites, "cache_updates": updates}
-
-
 def entry_metadata(model, kind, checkpoint, capacity, cache_shape):
     from torch._inductor.runtime.triton_helpers import get_backend_options
 
@@ -89,7 +80,6 @@ def export_entry(kind, staging_directory, *, model, step, checkpoint, capacity):
     inputs, shapes = example_inputs(model.config, kind, capacity)
     start = time.perf_counter()
     exported = export_step(step, inputs, shapes)
-    adapter_report = check_graph(exported, model.config.num_hidden_layers)
     # Text dumps expose mutation/shape behavior without another copy of the weights.
     (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
     print(f"Exported {kind}; compiling...", flush=True)
@@ -103,7 +93,7 @@ def export_entry(kind, staging_directory, *, model, step, checkpoint, capacity):
             diagnostics=dict(
                 graph_nodes=len(list(exported.graph.nodes)),
                 export_and_compile_seconds=time.perf_counter() - start,
-                model_adapter=adapter_report,
+                model_adapter=dict(name="qwen3_flash_v1"),
             ),
         )
         return metadata

@@ -77,6 +77,10 @@ Transformers version. The commands deliberately separate them rather than
 discovering all tooling tests in the Qwen3 environment. GPU operator and
 kernel-AOTI tests are listed in the model guides; full-model accuracy checks
 remain separate commands below.
+The `test_export` modules also contain GPU export integration tests, skipped by
+the CPU commands above. Run them with CUDA visible and the model's native
+attention library built to check the production export path's structural
+contracts; they use random model weights and do not compile AOTI packages.
 
 ## Checkpoint preparation and tokenization
 

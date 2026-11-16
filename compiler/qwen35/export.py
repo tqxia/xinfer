@@ -38,38 +38,6 @@ DELTA_OPERATORS = dict(
 )
 
 
-def delta_graph(exported, kind, layers):
-    """Count branch calls, including repeated references to a shared subgraph."""
-    counts = dict(cond=0, short=0, long=0)
-
-    def visit(module):
-        for node in module.graph.nodes:
-            if node.target == torch.ops.higher_order.cond:
-                predicate = node.args[0]
-                assert isinstance(predicate, torch.fx.Node)
-                assert isinstance(predicate.meta.get("val"), torch.SymBool), (
-                    "Expected symbolic DeltaNet dispatch"
-                )
-                assert str(predicate.meta["val"]) not in ("True", "False"), (
-                    "Specialized DeltaNet dispatch"
-                )
-                counts["cond"] += 1
-                for branch in node.args[1:3]:
-                    visit(module.get_submodule(branch.target))
-            else:
-                for branch, operator in DELTA_OPERATORS.items():
-                    counts[branch] += str(node.target) == operator
-
-    visit(exported.graph_module)
-    dynamic = kind == "prefill"
-    top_conditions = sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes)
-    assert top_conditions == (layers if dynamic else 0), "Unexpected top-level DeltaNet conditions"
-    assert counts == dict(
-        cond=layers if dynamic else 0, short=layers, long=layers if dynamic else 0
-    ), counts
-    return counts
-
-
 def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
     capacity = resolve_context_length(model.config, capacity)
@@ -94,17 +62,6 @@ def export_step(model, kind, capacity=None):
         projections = replace_projection_gemv(exported)
         print(json.dumps(dict(event="decoder_projection_gemv", **projections)), flush=True)
     return exported, packing
-
-
-def check_graph(exported, kind, config):
-    assert not exported.graph_signature.buffers_to_mutate
-    targets = [node.target for node in exported.graph.nodes if node.op == "call_function"]
-    full_layers = config.layer_types.count("full_attention")
-    assert targets.count(torch.ops.xinfer.flash_attention.default) == full_layers
-    assert targets.count(torch.ops.aten.index_copy_.default) == 2 * full_layers
-    assert torch.ops.aten.index_copy.default not in targets
-    assert torch.ops.aten.scaled_dot_product_attention.default not in targets
-    return delta_graph(exported, kind, config.layer_types.count("linear_attention"))
 
 
 def entry_metadata(model, kind, checkpoint, capacity):
@@ -148,7 +105,6 @@ def entry_metadata(model, kind, checkpoint, capacity):
 
 def model_diagnostics(model, packing, enable_inductor_optimization):
     return dict(
-        triton_delta_ops=model.config.layer_types.count("linear_attention"),
         linear_packing=packing,
         hidden_size=model.config.hidden_size,
         layer_types=model.config.layer_types,
@@ -171,20 +127,18 @@ def export_entry(
         flush=True,
     )
     export_seconds = time.perf_counter() - start
-    graph = check_graph(exported, kind, model.config)
     (staging_directory / f"{kind}.graph.txt").write_text(
         exported.graph_module.print_readable(print_output=False) + "\n"
     )
     print(
         f"Exported {kind}: {len(list(exported.graph.nodes))} nodes; "
-        f"DeltaNet branches {graph}; ranges {exported.range_constraints}",
+        f"ranges {exported.range_constraints}",
         flush=True,
     )
     compile_start = time.perf_counter()
 
     def metadata_factory(compiled_path):
         diagnostics = dict(
-            delta_graph=graph,
             range_constraints=str(exported.range_constraints),
             graph_nodes=len(list(exported.graph.nodes)),
             export_seconds=export_seconds,

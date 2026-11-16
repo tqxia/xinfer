@@ -265,7 +265,8 @@ Run these commands from the repository root with the selected model environment.
 
 ```bash
 "$Q3_PY" -m unittest \
-  compiler.common.tests.test_attention compiler.qwen3.tests.test_attention
+  compiler.common.tests.test_attention compiler.qwen3.tests.test_attention \
+  compiler.qwen3.tests.test_export
 AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
   --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
   --output artifacts/qwen3-validation
@@ -273,6 +274,10 @@ AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
   --model-dir "$Q3_MODEL" --packages artifacts/qwen3-flash \
   --native "$BUILD/xinfer_aoti" --output artifacts/qwen3-native-smoke
 ```
+
+`test_export` checks prefill/decode graphs from the production export path using
+a small randomly initialized model. FlashAttention selection and in-place cache
+updates are asserted in these tests rather than during normal export.
 
 Use a fresh output directory for validation. The chain runs HF → eager →
 Python AOTI → C++ AOTI on matched inputs. Eager applies the Flash adapter before
