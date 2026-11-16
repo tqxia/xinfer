@@ -3,9 +3,10 @@
 Both model families use `schema_version: 5` and `runtime_abi_version: 1` in
 `prefill.json` and `decode.json`.
 `compiler/common/metadata.py` builds, finalizes and reads the shared Python
-format. `runtime/common/spec.h` is the common C++ reader. Model-specific modules
-validate their supported tensor ABI; `runtime/common/state.h` handles state for
-both models.
+format. `tools/packages.py` checks each model's supported tensor ABI after common
+metadata validation for Python benchmark and validation tools.
+`runtime/common/spec.h` is the common C++ reader, with model-specific ABI checks
+in `runtime/<model>/runtime.h`; `runtime/common/state.h` handles state for both models.
 
 | Fields | Meaning |
 | --- | --- |

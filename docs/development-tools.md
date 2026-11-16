@@ -44,7 +44,8 @@ git ls-files -z '*.cpp' '*.h' | xargs -0 work/format-venv/bin/clang-format --dry
 ## CPU unit tests
 
 Tests follow the code they cover. Preparation, benchmark and validation tooling
-tests live under `tools/<area>/tests/`. Compiler metadata/export, model loading,
+tests live under `tools/<area>/tests/`; shared tooling and model-specific package
+ABI checks are tested under `tools/tests/`. Compiler metadata/export, model loading,
 adapters and kernel tests remain under `compiler/*/tests/`; environment tests
 remain under `environments/tests/`.
 
@@ -55,8 +56,8 @@ downloads, compiled packages, native binaries or a GPU:
 CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   compiler.common.tests.test_context compiler.common.tests.test_metadata \
   compiler.common.tests.test_export \
-  compiler.qwen3.tests.test_packages compiler.qwen3.tests.test_export \
-  tools.tests.test_common \
+  compiler.qwen3.tests.test_export \
+  tools.tests.test_common tools.tests.test_packages \
   tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \
   tools.benchmark.tests.test_benchmark \
   tools.validation.tests.test_common tools.validation.tests.test_qwen3_runtime \

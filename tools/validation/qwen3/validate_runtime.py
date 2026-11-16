@@ -24,7 +24,7 @@ from compiler.common.metadata import (
     read_package_metadata,
     validate_metadata,
 )
-from compiler.qwen3.packages import validate_model_metadata
+from tools.packages import validate_qwen3_metadata as validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
 from tools.common import prompt_chunks
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids

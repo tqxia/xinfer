@@ -21,8 +21,9 @@ artifact, metadata and weight helpers live in `compiler/common/`. Numerical vali
 and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
 and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
 offline tokenization use the shared `tools/prepare/` command.
-`tools/common.py` supplies logged subprocess execution and prompt partitioning;
-focused numerical diagnostics live under `tools/diagnostics/`.
+`tools/common.py` supplies logged subprocess execution and prompt partitioning.
+`tools/packages.py` shares model-specific package ABI checks between benchmarks
+and validation. Focused numerical diagnostics live under `tools/diagnostics/`.
 `environments/` owns project setup, self-contained requirements files for each
 model/device, native-stack checks and hardware profiles. Its Bash entry points
 are `environments/l20/setup.sh`,
@@ -35,7 +36,8 @@ KV buffers and replaces functional conv/recurrent state using metadata update
 rules and the runtime ABI's output order. Generation stops at EOS or the token
 budget. Benchmark requests
 consume all supplied tokens, including EOS, with argmax/host reads timed.
-Unit tests follow code ownership: tooling tests live under `tools/<area>/tests/`,
+Unit tests follow code ownership: shared tooling tests live under `tools/tests/`
+and area-specific tests under `tools/<area>/tests/`,
 while compiler/model/operator tests remain beside their code.
 See the [CPU unit-test commands](docs/development-tools.md#cpu-unit-tests).
 The common numerical CLI is `tools.validation.validate`; model-specific

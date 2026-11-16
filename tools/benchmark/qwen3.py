@@ -1,6 +1,5 @@
 """Qwen3 checkpoint loading and tokenization for the shared benchmark."""
 
-from compiler.qwen3.packages import validate_model_metadata as validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
 from tools.benchmark.common import CONTINUATION_TEXT, PROMPT_TEXT, hf_eager_loader
 

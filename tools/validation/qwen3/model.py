@@ -12,7 +12,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, require
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
 from compiler.qwen3.model import load_model
 from compiler.common.context import model_context_limit
-from compiler.qwen3.packages import validate_model_metadata
+from tools.packages import validate_qwen3_metadata as validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
 from tools.prepare.common import encode_prompt, load_tokenizer
 from tools.validation.common.prompts import chat_prompts

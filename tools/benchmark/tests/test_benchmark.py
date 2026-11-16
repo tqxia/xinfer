@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 
 from tools.benchmark import common as benchmark
 from tools.benchmark import cli as benchmark_cli
+from tools.packages import validate_model_metadata
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256, write_json
 from compiler.common.metadata import validate_metadata_pair
 from compiler.common.tests.test_metadata import metadata_pair
@@ -715,7 +716,7 @@ class ControllerContract(unittest.TestCase):
                     GpuSelection.GPU,
                     "qwen3",
                     {"cpp_aoti": args.packages},
-                    qwen3_benchmark.validate_model_metadata,
+                    validate_model_metadata,
                 )
             entries = environment["packages"]["cpp_aoti"]
             self.assertNotEqual(entries["prefill"]["sha256"], entries["decode"]["sha256"])

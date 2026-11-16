@@ -6,6 +6,7 @@ from pathlib import Path
 
 from compiler.common.artifacts import default_build_dir, require
 from compiler.common.metadata import read_package_metadata
+from tools.packages import validate_model_metadata
 from tools.benchmark.common import (
     eager_worker,
     resolve_gpu,
@@ -43,7 +44,7 @@ def run(args):
     for directory in packages.values():
         pair = read_package_metadata(directory, model_type=model_type)
         for entry in pair.values():
-            hooks.validate_model_metadata(entry)
+            validate_model_metadata(entry)
     args.model_dir = args.model_dir or hooks.default_model_dir(metadata)
     args.native = args.native or default_build_dir(model_type) / "xinfer_benchmark"
 
@@ -63,7 +64,7 @@ def run(args):
         eager={} if paired else {"hf": ("tools.benchmark", "worker")},
         reference=args.baseline_label if paired else "hf",
         prepare_tokens=lambda: hooks.prepare_tokens(args.model_dir),
-        validate_model=hooks.validate_model_metadata,
+        validate_model=validate_model_metadata,
         compare=compare if paired else None,
         timeout=3600,
     )

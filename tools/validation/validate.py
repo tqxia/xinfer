@@ -8,6 +8,7 @@ import traceback
 
 from compiler.common.artifacts import default_build_dir, write_json
 from compiler.common.metadata import read_package_metadata
+from tools.packages import validate_model_metadata
 from tools.validation.common import require_assertions
 
 
@@ -33,11 +34,8 @@ def main():
         model_type = pair["decode"]["model_type"]
         native = args.native or default_build_dir(model_type) / "xinfer_validate"
         require(native.is_file(), "Build xinfer_validate with XINFER_BUILD_VALIDATION=ON first")
-        validate_model = importlib.import_module(
-            f"compiler.{model_type}.packages"
-        ).validate_model_metadata
         for entry in pair.values():
-            validate_model(entry)
+            validate_model_metadata(entry)
         validate_shared_weights(args.packages, pair["prefill"], pair["decode"])
         load_packaged_attention_ops(args.packages)
         module = importlib.import_module(f"tools.validation.{model_type}.model")

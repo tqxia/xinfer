@@ -14,7 +14,7 @@ from transformers import AutoTokenizer
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
 from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
-from compiler.qwen35.packages import validate_model_metadata
+from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from compiler.common.weights import validate_shared_weights
 from tools.common import prompt_chunks, run
 from tools.prepare.common import encode_prompt

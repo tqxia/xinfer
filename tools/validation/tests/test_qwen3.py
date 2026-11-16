@@ -20,7 +20,7 @@ except importlib.metadata.PackageNotFoundError:
 if QWEN3_ENVIRONMENT:
     import torch
 
-    from compiler.qwen3.tests.test_packages import metadata
+    from tools.tests.test_packages import metadata
     from tools.validation.qwen3 import model
 
 

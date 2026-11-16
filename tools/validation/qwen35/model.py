@@ -11,7 +11,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from compiler.qwen35.config import TEXT_DIR
 from tools.prepare.qwen35 import REVISIONS
 from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs
-from compiler.qwen35.packages import validate_model_metadata
+from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts
 from tools.validation.common.runner import ExplicitRuntime, Stage, greedy

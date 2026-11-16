@@ -134,7 +134,7 @@ wrapper's relative runtime search path. `package_aoti` explicitly embeds the
 library; the standard AOTI loaders handle extraction and model loading. See
 [attention packaging](../../docs/flash-attention.md#build-and-deployment) for
 ownership and export-process details. Qwen3-specific package checks live in
-`packages.py`. Re-export retained external-library packages; a metadata-only
+`tools/packages.py`. Re-export retained external-library packages; a metadata-only
 conversion cannot add their missing implementation.
 
 ## Export the canonical package pair
@@ -252,9 +252,9 @@ Model loading and tensor cache support remain in `compiler/qwen3/model.py`.
 The runtime validator checks package metadata and shared-weight integrity,
 then loads the bundled attention implementation for eager execution and shape
 registration. Python AOTI and C++ load the dependency through their compiled
-wrappers. `compiler/qwen3/packages.py` retains the package ABI checks.
-Preparation and shared validation/benchmark tooling tests live under
-`tools/<area>/tests/`; see the shared
+wrappers. `tools/packages.py` shares the package ABI checks with benchmark tooling.
+The package ABI tests live under `tools/tests/`; preparation, validation and
+benchmark tooling tests live under `tools/<area>/tests/`. See the shared
 [CPU unit-test commands](../../docs/development-tools.md#cpu-unit-tests).
 Shared operator tests and Qwen3 adapter tests live in
 `compiler/common/tests/test_attention.py` and `compiler/qwen3/tests/test_attention.py`.

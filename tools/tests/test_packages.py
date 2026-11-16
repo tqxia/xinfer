@@ -3,7 +3,7 @@
 import unittest
 
 from compiler.common.metadata import make_metadata, state_spec, validate_metadata
-from compiler.qwen3.packages import validate_model_metadata
+from tools.packages import validate_model_metadata
 
 
 def metadata(*, cache_length=1024):

@@ -1,7 +1,6 @@
 """Shared state contracts and matched-input execution for validation stages."""
 
 from dataclasses import dataclass, field
-from importlib import import_module
 
 import torch
 
@@ -11,6 +10,7 @@ from compiler.common.metadata import read_package_metadata
 from compiler.common.tests.tensors import bits_equal, cpu_copy
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from tools.common import prompt_chunks
+from tools.packages import validate_model_metadata
 
 
 @dataclass
@@ -134,9 +134,6 @@ class ExplicitRuntime:
 def load_aoti_runtime(packages, *, model_type, specs):
     """Validate the bundle before loading its operators and shared GPU weights."""
     pair = read_package_metadata(packages, model_type=model_type)
-    validate_model_metadata = import_module(
-        f"compiler.{model_type}.packages"
-    ).validate_model_metadata
     for entry in pair.values():
         validate_model_metadata(entry)
     decode = pair["decode"]

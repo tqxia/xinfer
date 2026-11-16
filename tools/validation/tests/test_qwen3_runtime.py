@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from compiler.qwen3.tests.test_packages import metadata
+from tools.tests.test_packages import metadata
 
 
 class StopBeforeRuntime(Exception):
