@@ -269,6 +269,65 @@ class RequestRuntime:
 
 
 class ValidationPipeline(unittest.TestCase):
+    def test_stage_failures_release_runtimes_before_native_execution(self):
+        from tools.validation.common import pipeline
+
+        for failure in ("hf", "eager", "python_aoti", "contracts"):
+            with self.subTest(failure=failure):
+                events = []
+
+                def runtime(name):
+                    return SimpleNamespace(name=name, close=lambda: events.append("close:" + name))
+
+                def stages():
+                    try:
+                        for name in ("hf", "eager"):
+                            yield Stage(name, runtime(name))
+                    finally:
+                        events.append("stages_closed")
+
+                def execute(current, *args):
+                    events.append("run:" + current.name)
+                    if current.name == failure:
+                        raise RuntimeError("stage failed")
+                    return Trace(logits={("teacher", 0): torch.ones(1, 2)})
+
+                def load(*args, **kwargs):
+                    self.assertEqual(events[-2:], ["close:eager", "stages_closed"])
+                    return runtime("python_aoti")
+
+                suite = SimpleNamespace(
+                    specs=[],
+                    capacity=8,
+                    model_type="qwen3",
+                    eos=[],
+                    stages=stages,
+                    fixtures=lambda runtime: (
+                        [dict(name="teacher", steps=[[1, 2]])],
+                        [dict(name="chat", prompt=[1, 2], limit=1)],
+                    ),
+                    stage_cases=lambda name, cases: cases,
+                    capture_states=lambda case, step: False,
+                )
+                with (
+                    patch.object(pipeline, "sha256", return_value="digest"),
+                    patch.object(pipeline, "run_stage", side_effect=execute),
+                    patch.object(pipeline, "load_aoti_runtime", side_effect=load),
+                    patch.object(
+                        pipeline, "_contract_probes", side_effect=RuntimeError("stage failed")
+                    ),
+                    patch.object(pipeline, "run_native") as native,
+                    patch.object(pipeline.torch.cuda, "empty_cache") as empty,
+                    self.assertRaisesRegex(RuntimeError, "stage failed"),
+                ):
+                    validate_chain(suite, "packages", "native", "output", {}, new_report("qwen3"))
+                native.assert_not_called()
+                for event in events:
+                    if event.startswith("run:"):
+                        self.assertIn(event.replace("run:", "close:"), events)
+                self.assertIn("stages_closed", events)
+                self.assertEqual(empty.call_count, int(failure in ("python_aoti", "contracts")))
+
     def run_chain(self, model_type, *, state_drift=0, logit_scale=1, native_drift=0):
         from tools.validation.common import pipeline
 

@@ -12,40 +12,58 @@ from tools.packages import validate_model_metadata
 from tools.validation.common import require_assertions
 
 
-def main():
-    require_assertions()
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packages", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path)
     parser.add_argument("--native", type=Path)
     parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    return parser
+
+
+def prepare_validation(packages, model_dir, native):
+    from tools.validation.common.attention import load_packaged_attention_ops
+    from compiler.common.weights import validate_shared_weights
+    from compiler.common.artifacts import require
+
+    pair = read_package_metadata(packages)
+    model_type = pair["decode"]["model_type"]
+    native = native or default_build_dir(model_type) / "xinfer_validate"
+    require(native.is_file(), "Build xinfer_validate with XINFER_BUILD_VALIDATION=ON first")
+    for entry in pair.values():
+        validate_model_metadata(entry)
+    validate_shared_weights(packages, pair["prefill"], pair["decode"])
+    load_packaged_attention_ops(packages)
+    module = importlib.import_module(f"tools.validation.{model_type}.model")
+    suite = module.Suite(model_dir or module.default_model_dir(pair), pair)
+    return suite, pair, native
+
+
+def validate_packages(*, packages, output, model_dir=None, native=None):
+    """Run the numerical chain and persist its report, including partial failures."""
+    output.mkdir(parents=True, exist_ok=False)
     report = dict(passed=False)
     os.environ["AOTI_RUNTIME_CHECK_INPUTS"] = "1"
     try:
-        from tools.validation.common.attention import load_packaged_attention_ops
-        from compiler.common.weights import validate_shared_weights
-        from compiler.common.artifacts import require
         from tools.validation.common.chain import new_report
         from tools.validation.common.pipeline import validate_chain
 
-        pair = read_package_metadata(args.packages)
-        model_type = pair["decode"]["model_type"]
-        native = args.native or default_build_dir(model_type) / "xinfer_validate"
-        require(native.is_file(), "Build xinfer_validate with XINFER_BUILD_VALIDATION=ON first")
-        for entry in pair.values():
-            validate_model_metadata(entry)
-        validate_shared_weights(args.packages, pair["prefill"], pair["decode"])
-        load_packaged_attention_ops(args.packages)
-        module = importlib.import_module(f"tools.validation.{model_type}.model")
-        suite = module.Suite(args.model_dir or module.default_model_dir(pair), pair)
-        report = new_report(model_type, pair)
-        validate_chain(suite, args.packages, native, args.output, pair, report)
+        suite, pair, native = prepare_validation(packages, model_dir, native)
+        report = new_report(pair["decode"]["model_type"], pair)
+        validate_chain(suite, packages, native, output, pair, report)
     except Exception as error:
         report.update(passed=False, error=dict(type=type(error).__name__, message=str(error)))
         traceback.print_exc()
-    write_json(args.output / "summary.json", report)
+    write_json(output / "summary.json", report)
+    return report
+
+
+def main(argv=None):
+    require_assertions()
+    args = build_parser().parse_args(argv)
+    report = validate_packages(
+        packages=args.packages, output=args.output, model_dir=args.model_dir, native=args.native
+    )
     print(f"Passed: {report['passed']}; report: {args.output / 'summary.json'}")
     raise SystemExit(0 if report["passed"] else 1)
 

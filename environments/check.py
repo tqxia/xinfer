@@ -173,7 +173,7 @@ def validate(actual, profile, requirements):
     return issues
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("l20", "gb10"), required=True)
     parser.add_argument("--model", choices=("qwen3", "qwen35"), required=True)
@@ -183,26 +183,35 @@ def main(argv=None):
     parser.add_argument(
         "--output", type=Path, help="Save the same JSON printed to stdout, including failures"
     )
-    args = parser.parse_args(argv)
-    profile = json.loads((ROOT / "environments" / args.target / "profile.json").read_text())
-    requirements = model_requirements(args.target, args.model)
-    actual = collect(args.model, requirements, args.build)
+    return parser
+
+
+def check_environment(target, model, build=None):
+    """Collect and check the selected environment, returning its complete report."""
+    profile = json.loads((ROOT / "environments" / target / "profile.json").read_text())
+    requirements = model_requirements(target, model)
+    actual = collect(model, requirements, build)
     issues = validate(actual, profile, requirements)
-    report = dict(
-        target=args.target,
-        model=args.model,
+    return dict(
+        target=target,
+        model=model,
         expected=profile,
         requirements=requirements,
         actual=actual,
         issues=issues,
         passed=not issues,
     )
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    report = check_environment(args.target, args.model, args.build)
     text = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text)
     print(text, end="")
-    return int(bool(issues))
+    return int(bool(report["issues"]))
 
 
 if __name__ == "__main__":

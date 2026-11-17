@@ -546,19 +546,7 @@ def run_rounds(args, out, gpu, model_type, packages, eager, records, timeout):
             print(stem, "finished", flush=True)
 
 
-def run_benchmark(
-    args,
-    *,
-    model_type,
-    metadata,
-    packages,
-    eager,
-    reference,
-    prepare_tokens,
-    validate_model,
-    compare=None,
-    timeout=900,
-):
+def validate_benchmark_options(args, metadata):
     require(
         min(args.warmup, args.repeats, args.rounds, args.decode_steps) >= 1,
         "Counts must be positive",
@@ -580,42 +568,44 @@ def run_benchmark(
         and all(supported(length) for length in args.lengths),
         "Provide distinct prompt lengths within the prompt/context limits",
     )
-    require(not args.output.exists(), "Choose an absent output directory")
-    gpu = resolve_gpu(args.gpu)
-    out = args.output.resolve()
-    out.mkdir(parents=True)
-    records = []
-    try:
-        workload = make_workload(args, *prepare_tokens())
-        workload["cache_length"] = metadata["decode"]["cache_length"]
-        write_json(out / "workload.json", workload)
-        packages = {label: directory.resolve() for label, directory in packages.items()}
-        environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
-        if compare is not None:
-            compare(environment["packages"], environment["shared_weights"])
-        write_json(out / "environment.json", environment)
-        run_rounds(args, out, gpu, model_type, packages, eager, records, timeout)
-        summary = dict(
-            schema_version=1,
-            model_type=model_type,
-            status="provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked",
-            rounds=args.rounds,
-            warmup=args.warmup,
-            repeats=args.repeats,
-            decode_steps=args.decode_steps,
-            functional_checks_passed=True,
-            prefill_execution=dict(
-                native_chunk_tokens=metadata["prefill"]["token_range"][1],
-                hf="whole_prompt" if eager else None,
-            ),
-            profiles=summarize(records, workload, reference),
-        )
-        if eager:
-            summary["eager_baseline"] = EAGER_BASELINE
-        write_json(out / "summary.json", summary)
-    except Exception as error:
-        write_json(out / "failure.json", dict(error=str(error), completed_runs=len(records)))
-        raise
+
+
+def prepare_benchmark(
+    args, out, gpu, model_type, metadata, packages, prepare_tokens, validate_model, compare
+):
+    workload = make_workload(args, *prepare_tokens())
+    workload["cache_length"] = metadata["decode"]["cache_length"]
+    write_json(out / "workload.json", workload)
+    packages = {label: directory.resolve() for label, directory in packages.items()}
+    environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
+    if compare is not None:
+        compare(environment["packages"], environment["shared_weights"])
+    write_json(out / "environment.json", environment)
+    return workload, packages
+
+
+def benchmark_summary(args, model_type, metadata, eager, records, workload, reference):
+    summary = dict(
+        schema_version=1,
+        model_type=model_type,
+        status="provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked",
+        rounds=args.rounds,
+        warmup=args.warmup,
+        repeats=args.repeats,
+        decode_steps=args.decode_steps,
+        functional_checks_passed=True,
+        prefill_execution=dict(
+            native_chunk_tokens=metadata["prefill"]["token_range"][1],
+            hf="whole_prompt" if eager else None,
+        ),
+        profiles=summarize(records, workload, reference),
+    )
+    if eager:
+        summary["eager_baseline"] = EAGER_BASELINE
+    return summary
+
+
+def print_summary(summary):
     for label, profile in summary["profiles"].items():
         for name, metrics in profile["cases"].items():
             print(
@@ -627,4 +617,36 @@ def run_benchmark(
                 round(metrics["decode_ms_per_token"]["median"], 3),
                 flush=True,
             )
+
+
+def run_benchmark(
+    args,
+    *,
+    model_type,
+    metadata,
+    packages,
+    eager,
+    reference,
+    prepare_tokens,
+    validate_model,
+    compare=None,
+    timeout=900,
+):
+    validate_benchmark_options(args, metadata)
+    require(not args.output.exists(), "Choose an absent output directory")
+    gpu = resolve_gpu(args.gpu)
+    out = args.output.resolve()
+    out.mkdir(parents=True)
+    records = []
+    try:
+        workload, packages = prepare_benchmark(
+            args, out, gpu, model_type, metadata, packages, prepare_tokens, validate_model, compare
+        )
+        run_rounds(args, out, gpu, model_type, packages, eager, records, timeout)
+        summary = benchmark_summary(args, model_type, metadata, eager, records, workload, reference)
+        write_json(out / "summary.json", summary)
+    except Exception as error:
+        write_json(out / "failure.json", dict(error=str(error), completed_runs=len(records)))
+        raise
+    print_summary(summary)
     return summary

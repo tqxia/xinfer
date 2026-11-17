@@ -70,7 +70,7 @@ def run(args):
     )
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(prog="python -m tools.benchmark", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     gpu_help = (
@@ -108,12 +108,20 @@ def main(argv=None):
             action="store_true",
             help="Functional harness checks only; timings are provisional",
         )
-    args = parser.parse_args(argv)
+    return parser
+
+
+def check_idle(args):
+    require(not args.output.exists(), "Output already exists")
+    gpu = resolve_gpu(args.gpu)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    wait_idle(gpu, output=args.output)
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     if args.command == "check-idle":
-        require(not args.output.exists(), "Output already exists")
-        gpu = resolve_gpu(args.gpu)
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        wait_idle(gpu, output=args.output)
+        check_idle(args)
     elif args.command == "worker":
         eager_worker(args, model_hooks(args.model_type).eager_loader(), "hf")
     else:

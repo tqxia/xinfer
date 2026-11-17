@@ -30,7 +30,7 @@ def checkpoint_model(directory):
     return model
 
 
-def main(argv=None):
+def build_parser():
     parser = argparse.ArgumentParser(prog="python -m tools.prepare", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     download = commands.add_parser("download", help="Prepare one pinned checkpoint")
@@ -46,34 +46,54 @@ def main(argv=None):
     decode = commands.add_parser("decode", help="Decode token IDs offline")
     decode.add_argument("--model-dir", type=Path, required=True)
     decode.add_argument("--input", type=Path, required=True)
-    args = parser.parse_args(argv)
+    return parser
+
+
+def download_checkpoint(args):
+    hooks = model_hooks(args.model)
+    directory = args.output or hooks.default_model_dir(args.model)
+    manifest = hooks.prepare(directory, args.model, cache_dir=args.cache_dir)
+    print(json.dumps(manifest, indent=2))
+
+
+def verify_checkpoint(args):
+    model = checkpoint_model(args.model_dir)
+    manifest = model_hooks(model).verify_model(args.model_dir)
+    print(f"Verified {model} at {manifest['revision']}")
+
+
+def encode_inputs(args):
+    checkpoint_model(args.model_dir)
+    require(
+        not args.output.exists() and not args.output.is_symlink(),
+        "Output already exists",
+    )
+    ceiling = model_context_limit(read_json(args.model_dir / "config.json"))
+    tokenizer = load_tokenizer(args.model_dir)
+    ids = encode_prompt(tokenizer, args.prompt)
+    require(len(ids) <= ceiling, f"Expected 1..{ceiling} prompt tokens, got {len(ids)}")
+    write_ids(args.output, ids)
+    print(f"Wrote {len(ids)} tokens to {args.output}")
+
+
+def decode_outputs(args):
+    checkpoint_model(args.model_dir)
+    ids = [int(word) for word in args.input.read_text().split()]
+    tokenizer = load_tokenizer(args.model_dir)
+    require(
+        all(0 <= token < len(tokenizer) for token in ids),
+        "Token ID is outside the tokenizer vocabulary",
+    )
+    print(tokenizer.decode(ids, skip_special_tokens=True))
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     if args.command == "download":
-        hooks = model_hooks(args.model)
-        directory = args.output or hooks.default_model_dir(args.model)
-        manifest = hooks.prepare(directory, args.model, cache_dir=args.cache_dir)
-        print(json.dumps(manifest, indent=2))
+        download_checkpoint(args)
+    elif args.command == "verify":
+        verify_checkpoint(args)
+    elif args.command == "encode":
+        encode_inputs(args)
     else:
-        model = checkpoint_model(args.model_dir)
-        if args.command == "verify":
-            manifest = model_hooks(model).verify_model(args.model_dir)
-            print(f"Verified {model} at {manifest['revision']}")
-        else:
-            if args.command == "encode":
-                require(
-                    not args.output.exists() and not args.output.is_symlink(),
-                    "Output already exists",
-                )
-                ceiling = model_context_limit(read_json(args.model_dir / "config.json"))
-                tokenizer = load_tokenizer(args.model_dir)
-                ids = encode_prompt(tokenizer, args.prompt)
-                require(len(ids) <= ceiling, f"Expected 1..{ceiling} prompt tokens, got {len(ids)}")
-                write_ids(args.output, ids)
-                print(f"Wrote {len(ids)} tokens to {args.output}")
-            else:
-                ids = [int(word) for word in args.input.read_text().split()]
-                tokenizer = load_tokenizer(args.model_dir)
-                require(
-                    all(0 <= token < len(tokenizer) for token in ids),
-                    "Token ID is outside the tokenizer vocabulary",
-                )
-                print(tokenizer.decode(ids, skip_special_tokens=True))
+        decode_outputs(args)

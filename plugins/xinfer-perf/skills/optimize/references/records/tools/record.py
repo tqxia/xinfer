@@ -267,7 +267,7 @@ def check_files(record, directory):
     return counts
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     pack = commands.add_parser("bundle", help="Inventory finished files; print one artifact entry")
@@ -283,22 +283,31 @@ def main():
     view.add_argument(
         "target", nargs="?", metavar="COLLECTION/ID", help="Omit for the investigation overview"
     )
-    args = parser.parse_args()
-    try:
-        if args.command == "bundle":
-            result = bundle(args.output, args.files)
+    return parser
+
+
+def run(args):
+    """Execute one record command and return the result for JSON output."""
+    if args.command == "bundle":
+        result = bundle(args.output, args.files)
+    else:
+        record = read_json(args.record)
+        check_links(record)
+        if args.command == "show":
+            result = {"record_path": str(args.record.resolve()), **show(record, args.target)}
         else:
-            record = read_json(args.record)
-            check_links(record)
-            if args.command == "show":
-                result = {"record_path": str(args.record.resolve()), **show(record, args.target)}
-            else:
-                result = {"schema_and_links": "valid", "file_check": "not_requested"}
-                if args.files:
-                    result.update(check_files(record, args.record.resolve().parent))
-                    result["file_check"] = (
-                        "partial" if result["remote_files_unchecked"] else "complete"
-                    )
+            result = {"schema_and_links": "valid", "file_check": "not_requested"}
+            if args.files:
+                result.update(check_files(record, args.record.resolve().parent))
+                result["file_check"] = "partial" if result["remote_files_unchecked"] else "complete"
+    return result
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        result = run(args)
     except (OSError, ValueError) as error:
         parser.exit(1, f"{error}\n")
     print(json.dumps(result, indent=2))

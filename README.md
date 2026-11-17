@@ -21,9 +21,15 @@ artifact, metadata and weight helpers live in `compiler/common/`. Numerical vali
 and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
 and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
 offline tokenization use the shared `tools/prepare/` command.
-`tools/common.py` supplies logged subprocess execution and prompt partitioning.
+`tools/common.py` supplies logged subprocess execution, native process environments
+and prompt partitioning.
 `tools/packages.py` shares model-specific package ABI checks between benchmarks
 and validation. Focused numerical diagnostics live under `tools/diagnostics/`.
+Validation and benchmark entry points separate argument parsing from callable
+workflows. Phase helpers stay in their existing modules: numerical stages in
+`tools/validation/common/pipeline.py`, runtime/deployment checks in each model's
+`validate_runtime.py`, and benchmark preparation, rounds and reporting in
+`tools/benchmark/common.py`.
 `environments/` owns project setup, self-contained requirements files for each
 model/device, native-stack checks and hardware profiles. Its Bash entry points
 are `environments/l20/setup.sh`,

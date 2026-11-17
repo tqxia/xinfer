@@ -62,6 +62,7 @@ CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   tools.benchmark.tests.test_benchmark \
   tools.validation.tests.test_common tools.validation.tests.test_qwen3_runtime \
   tools.validation.tests.test_qwen3 tools.validation.tests.test_validation \
+  tools.validation.tests.test_validation_cli \
   tools.validation.tests.test_validation_chain \
   tools.validation.tests.test_validation_runtime \
   tools.validation.tests.test_validation_native \

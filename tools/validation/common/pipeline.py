@@ -89,10 +89,7 @@ def _greedy_anchors(suite, report, hf, compiled, specs, policy, chats):
         )
 
 
-@torch.inference_mode()
-def validate_chain(suite, packages, native, output, metadata, report):
-    specs = suite.specs
-    policy = Policy(state_rows=getattr(suite, "state_rows", None))
+def _describe_validation(suite, policy, native, report):
     report["reference_protocol"] = dict(
         dtype="bfloat16", cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
     )
@@ -116,6 +113,9 @@ def validate_chain(suite, packages, native, output, metadata, report):
         runtime_contracts="required",
     )
     report["native_sha256"] = sha256(native)
+
+
+def _run_eager_stages(suite, specs, policy, report):
     hf = eager = None
     cases = chats = None
     seen = set()
@@ -173,7 +173,10 @@ def validate_chain(suite, packages, native, output, metadata, report):
                 del runtime, stage
     require(hf is not None and eager is not None, "Missing HF/eager validation stage")
     require(cases and chats, "Empty validation fixtures")
+    return hf, eager, cases, chats
 
+
+def _run_python_aoti(suite, packages, cases, chats, specs, report):
     print("Stage: python_aoti", flush=True)
     runtime = load_aoti_runtime(packages, model_type=suite.model_type, specs=specs)
     try:
@@ -191,11 +194,12 @@ def validate_chain(suite, packages, native, output, metadata, report):
         runtime.close()
         del runtime
         torch.cuda.empty_cache()
-    compare_traces(report, "python_aoti", "eager", compiled, eager, specs, policy)
-    del eager
-    compare_traces(report, "python_aoti", "hf", compiled, hf, specs, policy)
-    report["stages"].append(_stage_summary("python_aoti", compiled))
+    return compiled
 
+
+def _compare_native(
+    suite, packages, native, output, metadata, cases, chats, compiled, specs, policy, report
+):
     print("Stage: cpp_aoti", flush=True)
     native_trace, native_report = run_native(
         native, packages, output, cases, chats, metadata, state_keys=suite.native_state_keys(cases)
@@ -225,6 +229,23 @@ def validate_chain(suite, packages, native, output, metadata, report):
         python_checkpoints=len(compiled.states), native_checkpoints=len(native_trace.states)
     )
     del native_trace
+
+
+@torch.inference_mode()
+def validate_chain(suite, packages, native, output, metadata, report):
+    specs = suite.specs
+    policy = Policy(state_rows=getattr(suite, "state_rows", None))
+    _describe_validation(suite, policy, native, report)
+    hf, eager, cases, chats = _run_eager_stages(suite, specs, policy, report)
+    compiled = _run_python_aoti(suite, packages, cases, chats, specs, report)
+    compare_traces(report, "python_aoti", "eager", compiled, eager, specs, policy)
+    del eager
+    compare_traces(report, "python_aoti", "hf", compiled, hf, specs, policy)
+    report["stages"].append(_stage_summary("python_aoti", compiled))
+
+    _compare_native(
+        suite, packages, native, output, metadata, cases, chats, compiled, specs, policy, report
+    )
 
     print("Control: HF logits on compiled greedy trajectories", flush=True)
     _greedy_anchors(suite, report, hf, compiled, specs, policy, chats)

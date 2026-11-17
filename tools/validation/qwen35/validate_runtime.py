@@ -4,7 +4,6 @@ import argparse
 import copy
 import gc
 import json
-import os
 from pathlib import Path
 import subprocess
 
@@ -16,7 +15,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sh
 from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from compiler.common.weights import validate_shared_weights
-from tools.common import prompt_chunks, run
+from tools.common import native_environment, prompt_chunks, run
 from tools.prepare.common import encode_prompt
 from compiler.qwen35.model import configure_text
 from tools.validation.qwen35.common import fixtures
@@ -28,10 +27,7 @@ from tools.validation.common.context import capture_long_state, long_context_cas
 from tools.validation.common.validation import compare_file
 
 
-def reject_invalid(args, env, metadata):
-    metadata = copy.deepcopy(metadata)
-    directory = args.output / "rejections"
-    directory.mkdir()
+def reject_inputs(args, env, metadata, directory):
     capacity = metadata["decode"]["cache_length"]
     cases = [
         ("empty", "", "1", f"Expected 1..{capacity}"),
@@ -83,6 +79,10 @@ def reject_invalid(args, env, metadata):
     )
     assert prompt.read_text() == "42\n"
     passed.append("overwrite")
+    return passed, prompt
+
+
+def metadata_mutations(metadata):
     mutations = [
         (
             "missing_schema_version",
@@ -304,6 +304,12 @@ def reject_invalid(args, env, metadata):
                 "Package metadata differs: model_specific",
             )
         )
+    return mutations
+
+
+def reject_metadata(args, env, metadata, directory, prompt):
+    passed = []
+    mutations = metadata_mutations(metadata)
     for name, mutate, error in mutations:
         packages = directory / name
         packages.mkdir()
@@ -323,6 +329,11 @@ def reject_invalid(args, env, metadata):
         )
         assert not output.exists()
         passed.append(name)
+    return passed
+
+
+def reject_archives(args, env, metadata, directory, prompt):
+    passed = []
     for name, error in (
         ("missing_weights_archive", "Shared weights archive is missing"),
         ("corrupt_weights_archive", "Shared weights archive checksum mismatch"),
@@ -354,8 +365,17 @@ def reject_invalid(args, env, metadata):
     return passed
 
 
-@torch.inference_mode()
-def main():
+def reject_invalid(args, env, metadata):
+    metadata = copy.deepcopy(metadata)
+    directory = args.output / "rejections"
+    directory.mkdir()
+    passed, prompt = reject_inputs(args, env, metadata, directory)
+    passed.extend(reject_metadata(args, env, metadata, directory, prompt))
+    passed.extend(reject_archives(args, env, metadata, directory, prompt))
+    return passed
+
+
+def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
@@ -364,8 +384,10 @@ def main():
     )
     parser.add_argument("--cli", type=Path, default=default_build_dir("qwen35") / "xinfer_aoti")
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "runtime-validation")
-    args = parser.parse_args()
-    args.output.mkdir(parents=True, exist_ok=False)
+    return parser
+
+
+def preflight(args):
     metadata = read_package_metadata(args.packages, model_type="qwen35")
     for entry in metadata.values():
         validate_model_metadata(entry)
@@ -378,6 +400,10 @@ def main():
         )
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
     assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
+    return metadata, tokenizer
+
+
+def runtime_cases(tokenizer, metadata):
     capacity = metadata["decode"]["cache_length"]
     cases = [case for case in fixtures(tokenizer) if sum(map(len, case["steps"])) <= capacity]
     seed = cases[1]["steps"][0]
@@ -427,22 +453,22 @@ def main():
             case["same_as"] = "mixed_dispatch"
     teacher = [case for case in cases if "steps" in case]
     chats = [case for case in cases if "prompt" in case]
+    return teacher, chats, capital, eos
 
-    def capture(case, step):
-        return capture_long_state(case, step) if case.get("long_context") else True
 
-    keys = {
-        (case["name"], step)
-        for case in teacher
-        for step in range(len(case["steps"]))
-        if capture(case, step)
-    }
+def capture_runtime_state(case, step):
+    return capture_long_state(case, step) if case.get("long_context") else True
+
+
+def run_python_reference(args, metadata, teacher, chats, capital, eos):
     runtime = load_aoti_runtime(
         args.packages, model_type="qwen35", specs=metadata["decode"]["state"]
     )
     print("Python AOTI reference", flush=True)
     try:
-        expected = run_stage(runtime, teacher, chats, metadata["decode"]["state"], capture, eos)
+        expected = run_stage(
+            runtime, teacher, chats, metadata["decode"]["state"], capture_runtime_state, eos
+        )
         capital_result = expected.greedy["capital"]
         forced = dict(capital, name="forced_eos", eos=[capital_result["ids"][0]])
         chats.append(forced)
@@ -454,12 +480,10 @@ def main():
         del runtime
         gc.collect()
         torch.cuda.empty_cache()
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
-    }
-    env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
+    return expected, capital_result
+
+
+def check_native_parity(args, metadata, teacher, chats, keys, capital, expected):
     print("Fresh native process", flush=True)
     actual, execution = run_native(
         args.binary, args.packages, args.output, teacher, chats, metadata, state_keys=keys
@@ -493,6 +517,10 @@ def main():
         state_snapshot_policy="complete functional state and populated KV prefix; future fill checked separately",
     )
     assert not report["failures"], report["failures"]
+    return report
+
+
+def check_cli(args, env, capital, capital_result):
     prompt_path, ids_path, trace_path = [
         args.output / name for name in ("prompt.ids", "generated.ids", "cli.f32")
     ]
@@ -517,8 +545,9 @@ def main():
         linked = subprocess.check_output(["ldd", str(binary.resolve())], env=env, text=True)
         (args.output / f"{binary.name}.ldd").write_text(linked)
         assert "libpython" not in linked and "libtorch_python" not in linked
-    print("Input/package rejection checks", flush=True)
-    report["rejections"] = reject_invalid(args, env, metadata)
+
+
+def write_report(output, report):
     report.update(
         passed=True,
         native_bitwise=True,
@@ -528,9 +557,7 @@ def main():
         cli_bitwise=True,
         dispatch_counts_checked=True,
     )
-    (args.output / "summary.json").write_text(
-        json.dumps(report, indent=2, ensure_ascii=False) + "\n"
-    )
+    (output / "summary.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(
         json.dumps(
             {
@@ -546,6 +573,33 @@ def main():
             indent=2,
         )
     )
+
+
+@torch.inference_mode()
+def validate_runtime(args):
+    """Check native parity, CLI deployment and rejection contracts in order."""
+    args.output.mkdir(parents=True, exist_ok=False)
+    metadata, tokenizer = preflight(args)
+    teacher, chats, capital, eos = runtime_cases(tokenizer, metadata)
+    keys = {
+        (case["name"], step)
+        for case in teacher
+        for step in range(len(case["steps"]))
+        if capture_runtime_state(case, step)
+    }
+    expected, capital_result = run_python_reference(args, metadata, teacher, chats, capital, eos)
+    env = native_environment()
+    report = check_native_parity(args, metadata, teacher, chats, keys, capital, expected)
+    check_cli(args, env, capital, capital_result)
+    print("Input/package rejection checks", flush=True)
+    report["rejections"] = reject_invalid(args, env, metadata)
+    write_report(args.output, report)
+    return report
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    validate_runtime(args)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 """Process execution and prompt partitioning shared by tooling."""
 
+import os
 import subprocess
 
 from compiler.common.artifacts import require
@@ -25,3 +26,14 @@ def run(command, env, log, success=True, error=None):
     require((result.returncode == 0) == success, output)
     if error:
         require(error in output, output)
+
+
+def native_environment():
+    """Run native tools without inherited Python or dynamic-library overrides."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
+    }
+    env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
+    return env

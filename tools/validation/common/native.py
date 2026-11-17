@@ -1,12 +1,11 @@
 """Run the shared native validator and normalize its model-specific trace layouts."""
 
 import math
-import os
 
 import torch
 
 from compiler.common.artifacts import read_json, require, write_json
-from tools.common import prompt_chunks, run
+from tools.common import native_environment, prompt_chunks, run
 from tools.validation.common.context import state_shape
 from tools.validation.common.runner import Trace
 
@@ -58,12 +57,7 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
     write_json(
         output / "cases.json", dict(cases=manifest, trace_format=2 if selected_states else 1)
     )
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME", "LD_LIBRARY_PATH")
-    }
-    env.update(PATH="/usr/bin:/bin", PYTHONHOME="/nonexistent-python-home")
+    env = native_environment()
     destination = output / "native"
     run(
         [

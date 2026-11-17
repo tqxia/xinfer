@@ -3,13 +3,15 @@
 import copy
 import os
 from pathlib import Path
-import runpy
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 from tools.tests.test_packages import metadata
+from compiler.common.artifacts import ROOT
+from tools.validation.qwen3 import validate_runtime as validator
 
 
 class StopBeforeRuntime(Exception):
@@ -29,9 +31,9 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
             patch.dict(os.environ, XINFER_ATTENTION_OPS_LIBRARY="unrelated-attention.so")
         )
         self.read = self.enterContext(
-            patch("compiler.common.metadata.read_package_metadata", return_value=self.pair)
+            patch.object(validator, "read_package_metadata", return_value=self.pair)
         )
-        self.weights = self.enterContext(patch("compiler.common.weights.validate_shared_weights"))
+        self.weights = self.enterContext(patch.object(validator, "validate_shared_weights"))
         self.load = self.enterContext(
             patch(
                 "tools.validation.common.attention.load_packaged_attention_ops",
@@ -39,24 +41,19 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
             )
         )
         self.manifest = self.enterContext(
-            patch("compiler.common.artifacts.read_json", side_effect=StopBeforeRuntime)
+            patch.object(validator, "read_json", side_effect=StopBeforeRuntime)
         )
         self.enterContext(
             patch("subprocess.check_output", return_value="libtorch.so => /native/libtorch.so\n")
         )
 
     def run_validator(self, name="validation"):
-        arguments = [
-            "validate_runtime",
-            "--native",
-            str(self.native),
-            "--packages",
-            str(self.packages),
-            "--output",
-            str(self.root / name),
-        ]
-        with patch.object(sys, "argv", arguments):
-            runpy.run_module("tools.validation.qwen3.validate_runtime", run_name="__main__")
+        return validator.validate_runtime(
+            native=self.native,
+            packages=self.packages,
+            model_dir=self.root / "checkpoint",
+            output=self.root / name,
+        )
 
     def test_valid_tensor_abi_needs_no_eager_operator_preload(self):
         with self.assertRaises(StopBeforeRuntime):
@@ -88,6 +85,24 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
             self.run_validator()
         self.load.assert_not_called()
         self.manifest.assert_not_called()
+
+
+class RuntimeImport(unittest.TestCase):
+    def test_import_does_not_parse_arguments_or_start_validation(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import tools.validation.qwen3.validate_runtime",
+                "--not-a-cli-argument",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":
