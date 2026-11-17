@@ -59,10 +59,10 @@ unknown headroom. A user-specified target can focus the comparison on
 interventions within it.
 
 Before editing, add a candidate linked to its baseline revision and motivating
-evidence. Record its origin and source or prior experiment: an existing option,
-a reused approach or a new implementation. Record its readiness, such as a
-scratch prototype, validated experiment or maintained implementation. In
-`hypothesis`, explain the mechanism and why this candidate is worth trying. In
+evidence. Record its origin and source or prior experiment: a reused approach or
+a new implementation. Record its readiness, such as a scratch prototype,
+validated experiment or maintained implementation. In `hypothesis`, explain the
+mechanism and why this candidate is worth trying. In
 `prediction`, state the expected change in launches, traffic, kernel behavior or
 native latency and what would refute it. Use qualitative expectations unless a
 numeric estimate has a stated basis.
@@ -83,12 +83,11 @@ When rewriting an existing kernel or implementing a custom fusion kernel, enter
 the [kernel inner loop](kernel-optimization-loop.md#kernel-inner-loop)
 inside this step. First calibrate the local baseline against the corresponding
 native operation or region. The design loop chooses or revises the architecture;
-the implementation loop builds, tunes and tests it, including targeted interaction
-experiments. Feed results back to the design loop when tuning stalls or
-measurements suggest a structural limit. Both loops share the remaining budget
-and existing candidate, revision, evidence and decision records. Return to step 3
-with the selected implementation. Ordinary compiler-option comparisons can remain
-in the outer loop.
+the implementation loop builds and evaluates it, including targeted interaction
+experiments. Feed results back to the design loop when local revisions stop
+improving or measurements suggest a structural limit. Both loops share the
+remaining budget and existing candidate, revision, evidence and decision records.
+Return to step 3 with the selected implementation.
 
 ## 3. Export
 

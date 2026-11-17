@@ -1,18 +1,18 @@
 # Kernel optimization loop
 
-Improve the implementation of a required operation through compiler/library
-selection, tuning, layout/scheduling changes or rewriting. Use the observed cost
-to choose a focused experiment, then iterate from its measured result.
+Design and implement new kernels or rewrite existing ones. Use the measured
+bottleneck to guide decomposition, dataflow, memory layout, scheduling and
+instruction use, then iterate from the result.
 
 ## Implementation choices
 
-Choose among Triton, CUDA C++, targeted PTX and existing library kernels using
-the measured bottleneck, integration effort and target support. Consult the
-[hardware guidance](hardware.md#feature-dependent-mechanisms) when a hypothesis
-depends on architecture-specific instructions or resources.
+Choose among Triton, CUDA C++ and targeted PTX using the measured bottleneck,
+integration effort and target support. Consult matching
+[hardware recipes](hardware.md#hardware-recipes) when a hypothesis depends on
+specific instructions or resources.
 
 Use CUDA intrinsics or inline PTX when the evidence identifies a specific
-instruction-level opportunity. Check the target SM and toolchain, inspect
+instruction-level opportunity. Check the target SM and toolchain support, inspect
 generated PTX/SASS and resource use, and validate numerical and memory behavior.
 See NVIDIA's
 [inline PTX guide](https://docs.nvidia.com/cuda/inline-ptx-assembly/index.html)
@@ -22,17 +22,14 @@ and
 ## Kernel inner loop
 
 Use this inside outer step 2, **Implement the change**, when rewriting an
-existing kernel or building a custom kernel for fusion. Ordinary compiler-option
-comparisons can stay in the outer loop. The design loop chooses the kernel's
-structure; the implementation loop realizes and tunes it, returning evidence
-for the next design decision.
+existing kernel or building a custom kernel for fusion. The design loop chooses
+the kernel's structure; the implementation loop builds and evaluates it,
+returning evidence for the next design decision.
 
-Define the operator or fused-region boundary, reference and baseline once. Reuse
-existing component fixtures and declared tolerances. Cover actual shapes,
-strides, dtypes, representative values and supported boundaries, including
-nonzero/carried state for stateful operators. Use captured values for
-data-dependent execution. A fusion baseline is the complete original region.
-Keep the local baseline and reference intact while revising the implementation.
+Define the operation or fused region, correctness reference and performance
+baseline before iterating. Reuse representative fixtures and existing tolerances.
+For fusion, benchmark the complete original region. Keep the reference and
+baseline fixed across revisions.
 
 **Calibrate the baseline before choosing kernel revisions.** Establish
 unprofiled local timings and a matching NCU baseline capture, then compare local
@@ -50,13 +47,16 @@ remain unchanged.
    relevant decomposition, work partitioning, data/state residence and
    synchronization, with resource costs, dependent changes and expected effects.
    A small adjustment needs only a brief statement of the retained architecture.
+   Consult relevant [kernel cases](hardware.md#kernel-cases) for prior
+   designs and measured outcomes.
 2. **Implement and evaluate.** Run the implementation loop below within the
    chosen structure, testing whether its intended mechanisms are realized.
 3. **Reassess from evidence.** Distinguish an unrealized mechanism needing repair,
-   useful local tuning and a structural limit requiring a revised design. When
-   repeated tuning brings no material gain or measurements suggest a structural
-   limit, revisit the design before another sweep. Use a small probe when needed
-   to distinguish the leading explanations, then revise, continue tuning or stop.
+   useful local implementation changes and a structural limit requiring a revised
+   design. When repeated revisions bring no material gain or measurements suggest
+   a structural limit, revisit the design before another edit. Use a small probe
+   when needed to distinguish the leading explanations, then refine the
+   implementation, redesign or stop.
 
 ### Implementation loop
 
@@ -72,12 +72,13 @@ remain unchanged.
    contribution.
 2. **Edit and compile.** Make a focused revision using a suitable implementation
    language. For a new operator or packaging boundary, prove export/AOTI and C++
-   execution with the first correct implementation before extensive tuning.
+   execution with the first correct implementation before further kernel revisions.
    Reuse that integration path for ordinary local revisions.
-3. **Check correctness.** Compare all outputs using the existing acceptance
-   limits. Exercise the operator's applicable aliasing, mutation, masking and
-   boundary contracts; for stateful operators, include carried state, reset and
-   continuations. Retain failures.
+3. **Check correctness.** Compare all outputs using the existing acceptance limits.
+   Cover actual shapes, strides, dtypes and representative values; use captured
+   inputs for data-dependent execution. Exercise applicable aliasing, mutation,
+   masking and boundary contracts. For stateful operators, include nonzero carried
+   state, reset and continuations. Retain failures.
 4. **Microbenchmark.** Time the complete replacement, including required
    preparation, copies, dispatch and workspace work. Keep fixture generation,
    input checking and reference comparisons outside timing. Separate compilation

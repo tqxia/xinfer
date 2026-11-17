@@ -1,14 +1,15 @@
 ---
 name: optimize
-description: Profile and optimize compiled LLM inference in xinfer through fusion and GPU kernel optimization. Use for performance investigations, compiler/kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
+description: Profile and optimize compiled LLM inference in xinfer on NVIDIA GB10 through fusion and GPU kernel optimization. Use for performance investigations, fusion and kernel experiments, or continuing an existing xinfer optimization. Profile the baseline before choosing candidates. The default objective is native decode latency per token; runtime implementation changes are outside this skill.
 ---
 
 # Optimize xinfer compilation
 
-Start from baseline profiling and iterate on fusion and kernel optimization.
-Compiler options, graph passes, inference adapters and custom operators are
-implementation mechanisms for these goals. Preserve the current exported
-interface and C++ runtime contract.
+Optimize for NVIDIA GB10 (SM 12.1). Start from baseline profiling and iterate on
+fusion and kernel optimization.
+Xinfer's custom graph passes, inference adapters and custom operators are
+implementation mechanisms for these goals.
+Preserve the current exported interface and C++ runtime contract.
 
 ## Establish the task
 
@@ -35,9 +36,8 @@ identify unfinished work before launching another job.
 
 ## Profile the baseline
 
-Consult the relevant
-[hardware notes](references/hardware.md#target-notes) before
-autotuning or timing; use target-specific load-health observations.
+Consult the [hardware gotchas](references/hardware.md#gotchas) before collecting
+performance measurements.
 
 Establish baseline measurements with the existing benchmark, then profile the
 native execution before choosing optimization candidates. Follow
@@ -73,18 +73,12 @@ optimization.
 Choose the next candidate from the remaining measured costs:
 
 - **Fusion:** combine related operations to reduce launches, intermediate memory
-  traffic or repeated loads. Check existing compiler/pass coverage; consider
-  compiler fusion/combo options and packing independent projections that share
-  an input. Measure the whole replacement, including preparation, copies and
-  workspace work. Account for register pressure and validate changes to rounding
-  boundaries.
-- **Kernel optimization:** improve a required operation through tuning, library
-  selection, layout/scheduling changes or rewriting its implementation. See
+  traffic or repeated loads. Measure the whole replacement, including
+  preparation, copies and workspace work. Account for register pressure and
+  validate changes to rounding boundaries.
+- **Kernel optimization:** design and implement new kernels or rewrite existing
+  ones, improving dataflow, layout, scheduling and instruction use. See
   [kernel optimization](references/kernel-optimization-loop.md).
-
-These goals can overlap. Choose compiler options, graph passes, adapters or
-custom operators according to the measured opportunity and implementation
-effort.
 
 For each candidate, complete the experiment loop.
 [experiment-loop.md](references/experiment-loop.md) expands these seven steps with the
@@ -108,13 +102,13 @@ existing commands and evidence to retain:
    [kernel inner loop](references/kernel-optimization-loop.md#kernel-inner-loop)
    before full-model export, starting with baseline calibration against
    native execution. Its design loop chooses or revises the architecture; its
-   implementation loop builds, tunes and tests it, including plausible
-   interactions. Feed results back to the design loop when tuning stalls or
+   implementation loop builds and evaluates it, including plausible interactions.
+   Feed results back to the design loop when local revisions stop improving or
    measurements suggest a structural limit.
    Consider Triton, CUDA C++ and targeted PTX according to the measured bottleneck.
    Commits and publishing require the user's instruction.
 3. **Export.** Use the project's existing export interface. Verify that the
-   intended code or compiler setting reaches the measured compiled artifact.
+   intended code reaches the measured compiled artifact.
 4. **Validate.** Run affected local/operator checks and project numerical/native
    validation, applying the correctness criteria below.
 5. **Benchmark.** Compare the candidate with the current baseline using

@@ -1,9 +1,9 @@
 # xinfer-perf
 
-A shared `optimize` skill for compiler and kernel performance investigations in
-xinfer. It defaults to native decode latency per token and uses existing xinfer
-commands, `nsys` and `ncu` directly. The coding agent chooses hypotheses and
-edits; the existing validators and benchmarks supply evidence.
+A shared `optimize` skill for fusion and kernel performance investigations in
+xinfer on NVIDIA GB10. It defaults to native decode latency per token and uses
+existing xinfer commands, `nsys` and `ncu` directly. The coding agent chooses
+hypotheses and edits; the existing validators and benchmarks supply evidence.
 
 The [optimize skill](skills/optimize/SKILL.md) starts with baseline profiling,
 selects candidates from measured opportunities, and evaluates them through
@@ -19,7 +19,8 @@ see the record guide for its commands.
 ## Optimization loops
 
 The [model loop](skills/optimize/references/experiment-loop.md) selects measured
-opportunities and establishes native performance. Kernel work enters the nested
+opportunities and establishes native performance. Kernel implementation work
+enters the nested
 [design and implementation loops](skills/optimize/references/kernel-optimization-loop.md):
 
 ![Model loop containing kernel design and implementation loops, with design above implementation.](assets/optimization-loops.svg)
@@ -28,6 +29,23 @@ All loops share the investigation budget and existing records. Local kernel
 improvements require full-model validation and native measurement before
 model acceptance. Keep or reject the candidate using that evidence; stop when
 the evidence or remaining budget does not support another trial.
+
+## Hardware knowledge
+
+[hardware.md](skills/optimize/references/hardware.md) holds hardware gotchas and
+indexes hardware recipes and kernel cases as they are added:
+
+- **Gotchas:** execution, tuning and measurement issues to check before experiments.
+- **Hardware recipes:** code examples for hardware instructions/features, stored
+  by feature. Start from the
+  [recipe template](skills/optimize/references/hardware-recipes/TEMPLATE.md).
+- **Kernel cases:** self-contained optimization examples with measured results,
+  stored by kernel or optimization. Start from the
+  [case template](skills/optimize/references/kernel-cases/TEMPLATE.md).
+
+Keep these directories flat and create entries when useful content is ready.
+Toolchain and workload details belong in each entry. Recipes and cases contain
+their essential explanation and evidence without links to temporary reports.
 
 ## Load the plugin
 
@@ -38,7 +56,7 @@ one session:
 claude --plugin-dir "$PWD/plugins/xinfer-perf"
 ```
 
-Invoke `/xinfer-perf:optimize`, or describe a compiler/kernel optimization task.
+Invoke `/xinfer-perf:optimize`, or describe a fusion or kernel optimization task.
 
 For Codex, the repository's `.agents/plugins/marketplace.json` exposes the
 plugin through the `xinfer-local` marketplace without automatically enabling it.
@@ -65,7 +83,7 @@ checkpoint, build or experiment files inside the installed plugin.
 ## Example requests
 
 > Use xinfer-perf to investigate decode latency for this compiled model. Start
-> by profiling the existing baseline, then try at most three compiler-side
+> by profiling the existing baseline, then try at most three fusion or kernel
 > candidates supported by that profile in two hours. Keep numerical failures
 > visible.
 
@@ -73,12 +91,11 @@ checkpoint, build or experiment files inside the installed plugin.
 > results and finish the pending comparison before trying another change.
 
 The default budget is three model-level candidate attempts or two hours,
-whichever comes first. Select the model and hardware from the target xinfer
-checkout.
+whichever comes first. Select the model from the target xinfer checkout and use
+its matching environment.
 
 Runtime optimization is deferred to a separate future skill. CodeBuddy packaging
 and discovery are also future work; this version supports Codex and Claude Code.
-A self-contained casebook for selected optimization examples is deferred.
 
 ## Check the package
 

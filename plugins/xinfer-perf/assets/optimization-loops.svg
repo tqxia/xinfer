@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="900" viewBox="0 0 820 900" role="img" aria-labelledby="title description">
   <title id="title">Xinfer optimization loops</title>
-  <desc id="description">The model loop profiles native execution and selects a candidate. Kernel work enters the design loop, which chooses an architecture before entering the implementation loop below it. Implementation checks correctness, measures performance and profiles with NCU. Evidence can trigger local revision or architectural reassessment. A local winner returns to model export, validation and native measurement. Compiler-only changes bypass the kernel loops.</desc>
+  <desc id="description">The model loop profiles native execution and selects a candidate. Kernel work enters the design loop, which chooses an architecture before entering the implementation loop below it. Implementation checks correctness, measures performance and profiles with NCU. Evidence can trigger local revision or architectural reassessment. A local winner returns to model export, validation and native measurement. Fusion changes that require no kernel implementation work proceed directly to export.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#52647a"/>
@@ -43,7 +43,7 @@
   <text class="label" x="520" y="466">Compare with prediction</text>
   <path class="edge" d="M350 437 H405"/>
   <path class="edge feedback" d="M520 475 V525 H270 V468"/>
-  <text class="label" x="395" y="516">Repair or tune</text>
+  <text class="label" x="395" y="516">Revise kernel</text>
 
   <path class="edge" d="M410 555 V590"/>
   <rect class="node" x="260" y="590" width="300" height="58" rx="8"/>
@@ -61,8 +61,8 @@
   <text x="410" y="811">Native profiling</text>
 
   <path class="edge" d="M260 104 H60 V782 H260"/>
-  <text class="label" x="142" y="712">Compiler-only</text>
-  <text class="label" x="142" y="731">change</text>
+  <text class="label" x="142" y="712">Fusion without</text>
+  <text class="label" x="142" y="731">kernel changes</text>
   <path class="edge feedback" d="M560 782 H770 V104 H560"/>
   <text class="label" x="688" y="712">Next candidate</text>
   <text class="label" x="410" y="860">Shared budget · linked records · native model acceptance</text>
