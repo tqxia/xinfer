@@ -3,25 +3,23 @@
 import argparse
 import gc
 from pathlib import Path
-import re
 import traceback
 
 import torch
 
 from compiler.common.artifacts import (
-    MODEL_MANIFEST_NAME,
-    json_sha256,
-    read_json,
     require,
     sha256,
     write_json,
 )
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen36.config import TEXT_DIR
-from tools.validation.common.chain import Policy, compare_traces, new_report
+from tools.validation.common.chain import new_report
 from tools.validation.common.native import run_native
 from tools.validation.common.runner import Trace, greedy, load_aoti_runtime, teacher_trace
-from tools.validation.qwen36.eager import (
+from tools.validation.qwen36.common import (
+    compare_output,
+    reference_info,
     ObservedRuntime,
     case_trace,
     load_trace,
@@ -29,134 +27,6 @@ from tools.validation.qwen36.eager import (
     request_guards,
     save_trace,
 )
-
-
-def reference_info(reference, stage, pair, model_dir):
-    """Bind a completed stage's CPU traces to the same checkpoint and package ABI."""
-    summary = read_json(reference / "summary.json")
-    protocol = read_json(reference / "protocol.json")
-    expected = "adapted" if stage == "python" else "python_aoti"
-    require(
-        summary.get("model_type") == "qwen36"
-        and summary.get("stage") == expected
-        and summary.get("execution_passed") is True
-        and not summary.get("error"),
-        f"Expected a completed {expected} reference",
-    )
-    decode = pair["decode"]
-    manifest_path = model_dir / MODEL_MANIFEST_NAME
-    require(
-        sha256(manifest_path) == protocol["identity"]["manifest_sha256"]
-        and read_json(manifest_path) == decode["checkpoint"]["manifest"],
-        "Reference and package checkpoint manifests differ",
-    )
-    require(
-        protocol["identity"]["layers"] == 40
-        and protocol["identity"]["capacity"] == decode["cache_length"]
-        and protocol["state"] == decode["state"]
-        and protocol["eos_token_ids"] == decode["eos_token_ids"],
-        "Reference state or execution bounds differ from package",
-    )
-    require(
-        pair["prefill"]["token_range"] == [2, 512] and decode["token_range"] == [1, 1],
-        "Unexpected package entry bounds",
-    )
-    names = [case["name"] for group in protocol["groups"] for case in group] + [
-        case["name"] for case in protocol["chats"]
-    ]
-    require(
-        len(names) == len(set(names))
-        and names
-        and all(re.fullmatch(r"[A-Za-z0-9_]+", name) for name in names),
-        "Invalid or duplicate trace case names",
-    )
-    require(
-        protocol["input_sha256"]
-        == json_sha256(dict(groups=protocol["groups"], chats=protocol["chats"])),
-        "Reference input checksum differs",
-    )
-    require(
-        protocol["identity"]["profile"] == "matrix"
-        and {
-            "length_2",
-            "length_96",
-            "length_98",
-            "length_512",
-            "nonzero_prefill",
-            "multicall_513",
-            "repeat_98",
-            "poison_98",
-        }
-        <= set(names),
-        "A complete current matrix reference is required",
-    )
-    cases = [case for group in protocol["groups"] for case in group]
-    require(
-        summary.get("teacher_steps") == sum(len(case["steps"]) for case in cases)
-        and summary.get("state_checkpoints")
-        == sum(len({case["prompt_steps"] - 1, len(case["steps"]) - 1}) for case in cases)
-        and summary.get("greedy_cases") == len(protocol["chats"]),
-        "Reference execution coverage differs from protocol",
-    )
-    require(
-        all((reference / "traces" / f"{name}.pt").is_file() for name in names),
-        "Missing reference trace",
-    )
-    hashes = {kind: item["package_sha256"] for kind, item in pair.items()}
-    if stage == "native":
-        require(summary.get("package_sha256") == hashes, "Python reference packages differ")
-        hf = summary["hf_numerical_reference"]
-    else:
-        hf = dict(
-            passed=summary.get("comparison_passed") is True,
-            failures=len(summary.get("failures", [])),
-            source=str((reference / "summary.json").resolve()),
-            summary_sha256=sha256(reference / "summary.json"),
-        )
-    return protocol, summary, hf
-
-
-def compare_output(report, actual, expected, specs, *, exact):
-    """Compiler checks retain the existing limits; native checks are always exact."""
-    policy = Policy(state_required=True, tokens_required=True)
-    matching = {
-        name
-        for name, value in actual.greedy.items()
-        if value["ids"] == expected.greedy[name]["ids"]
-        and value["position"] == expected.greedy[name]["position"]
-    }
-    compare_traces(
-        report,
-        "cpp_aoti" if exact else "python_aoti",
-        "python_aoti" if exact else "adapted_eager",
-        actual,
-        expected,
-        specs,
-        policy,
-        exact=exact,
-        greedy_state_names=matching,
-    )
-    if not exact:
-        for name, value in actual.greedy.items():
-            other = expected.greedy[name]
-            count = 0
-            for token, reference_token in zip(value["ids"], other["ids"]):
-                count += 1
-                if token != reference_token:
-                    break
-            left = Trace(logits={(name, i): row for i, row in enumerate(value["rows"][:count])})
-            right = Trace(logits={(name, i): row for i, row in enumerate(other["rows"][:count])})
-            compare_traces(
-                report,
-                "python_aoti",
-                "adapted_eager_greedy_prefix",
-                left,
-                right,
-                specs,
-                policy,
-                state_keys=set(),
-                greedy_names=set(),
-            )
 
 
 def python_stage(args, protocol, pair, report):

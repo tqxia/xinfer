@@ -1,7 +1,6 @@
 """AOT-compile the complete Qwen3.6 FP8 text model with shared prefill/decode weights."""
 
-import argparse
-import importlib.metadata
+from functools import partial
 import json
 from pathlib import Path
 import time
@@ -15,13 +14,20 @@ from compiler.common.attention import (
     attention_library,
     attention_c_shims,
 )
-from compiler.common.context import model_context_limit, resolve_context_length
-from compiler.common.fp8 import KERNEL_REPO, KERNEL_REVISION
+from compiler.common.context import resolve_context_length
+from compiler.common.export import (
+    ExportInputError,
+    check_symbolic_config,
+    export_parser,
+    prepare_export,
+    report_export,
+)
+from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_REVISION
 from compiler.common.metadata import make_metadata
 from compiler.patches.triton_access import ANALYZER_SHA256, memoize_triton_reads
 from compiler.common.weights import compile_shared
 from compiler.qwen35.adapters.delta import install_delta
-from compiler.qwen35.export import DELTA_OPERATORS
+from compiler.qwen35.config import DELTA_OPERATORS
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD
 from compiler.qwen36.adapters import install_fp8
@@ -115,152 +121,103 @@ def model_specific():
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
-    parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "text")
-    parser.add_argument(
-        "--max-context-length",
-        type=int,
-        help="Compiled KV-cache capacity; defaults to model max_position_embeddings",
-    )
-    parser.add_argument(
-        "--enable-inductor-optimization",
-        action="store_true",
-        help="Enable optional Inductor optimizations (currently combo kernels)",
-    )
-    args = parser.parse_args()
-    if args.output.is_symlink() or (
-        args.output.exists() and (not args.output.is_dir() or any(args.output.iterdir()))
-    ):
-        parser.error(f"Output must be a new or empty directory: {args.output}")
-    try:
-        document = read_json(args.model_dir / "config.json")
-        capacity = resolve_context_length(document, args.max_context_length)
-        ceiling = model_context_limit(document)
-    except ValueError as error:
-        parser.error(str(error))
-    print(
-        json.dumps(
-            dict(
-                event="context",
-                cache_length=capacity,
-                model_max_position_embeddings=ceiling,
-                max_prefill_tokens=MAX_PREFILL,
-            )
+def entry_metadata(model, kind, checkpoint, capacity):
+    from torch._inductor.runtime.triton_helpers import get_backend_options
+
+    return make_metadata(
+        model_type="qwen36",
+        entry_point=kind,
+        token_range=[2, MAX_PREFILL] if kind == "prefill" else [1, 1],
+        checkpoint=dict(
+            model_id=checkpoint["model"],
+            revision=checkpoint["revision"],
+            manifest=checkpoint,
         ),
+        torch_version=torch.__version__,
+        cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
+        cuda_compute_capability=torch.cuda.get_device_capability(),
+        cache_length=capacity,
+        vocab_size=model.config.vocab_size,
+        eos_token_ids=model.generation_config.eos_token_id,
+        state=state_specs(model.config, capacity),
+        triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
+        model_specific=model_specific(),
+    )
+
+
+def model_diagnostics(model, adapters, enable_inductor_optimization):
+    return dict(
+        fp8_adapters=adapters,
+        checkpoint_storage=model.checkpoint_storage,
+        parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
+        rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
+        tied_embeddings=False,
+        linear_packing=False,
+        enable_inductor_optimization=enable_inductor_optimization,
+        hf_numerical_acceptance="unresolved; export does not establish HF accuracy",
+    )
+
+
+def export_entry(
+    kind, staging_directory, *, model, checkpoint, capacity, adapters, enable_inductor_optimization
+):
+    start = time.perf_counter()
+    exported = export_step(model, kind, capacity)
+    export_seconds = time.perf_counter() - start
+    (staging_directory / f"{kind}.graph.txt").write_text(
+        exported.graph_module.print_readable(print_output=False) + "\n"
+    )
+    print(
+        f"Exported {kind}: {len(list(exported.graph.nodes))} nodes; "
+        f"ranges {exported.range_constraints}",
         flush=True,
     )
-    configure()
-    from torch.fx.experimental import _config as symbolic_config
+    compile_start = time.perf_counter()
 
-    require(
-        not symbolic_config.backed_size_oblivious,
-        "Flash must export with backed_size_oblivious disabled",
-    )
-    model = load_model(args.model_dir)
+    def metadata_factory(compiled_path):
+        metadata = entry_metadata(model, kind, checkpoint, capacity)
+        report_export(
+            "qwen36",
+            kind,
+            strict=True,
+            extra_dependencies=("kernels",),
+            package_bytes=compiled_path.stat().st_size,
+            diagnostics=dict(
+                range_constraints=str(exported.range_constraints),
+                graph_nodes=len(list(exported.graph.nodes)),
+                export_seconds=export_seconds,
+                compile_seconds=time.perf_counter() - compile_start,
+                **model_diagnostics(model, adapters, enable_inductor_optimization),
+            ),
+        )
+        return metadata
+
+    return exported, metadata_factory
+
+
+def export_model(*, model_dir, output, max_context_length=None, enable_inductor_optimization=False):
+    """Load the complete FP8 model and publish its paired shared-weight bundle."""
+    model_dir, output = Path(model_dir), Path(output)
+    capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
+    configure()
+    check_symbolic_config()
+    model = load_model(model_dir)
     check_model(model)
     adapters = install_fp8(model)
     require(adapters == dict(linear=250, experts=40), "Incomplete FP8 model adaptation")
     install_delta(model)
-    load_attention_ops(model="qwen36")
-    config = model.config
-    checkpoint = read_json(args.model_dir / MODEL_MANIFEST_NAME)
+    checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)
     options = {"emulate_precision_casts": True}
-    if args.enable_inductor_optimization:
+    if enable_inductor_optimization:
         options.update(combo_kernels=True, benchmark_combo_kernel=True)
-
-    def export_entry(kind, staging_directory):
-        start = time.perf_counter()
-        exported = export_step(model, kind, capacity)
-        export_seconds = time.perf_counter() - start
-        require(
-            not exported.graph_signature.buffers_to_mutate, "Unexpected exported buffer mutation"
-        )
-        targets = [node.target for node in exported.graph.nodes if node.op == "call_function"]
-        full_layers = config.layer_types.count("full_attention")
-        require(
-            targets.count(torch.ops.xinfer.flash_attention.default) == full_layers
-            and targets.count(torch.ops.aten.index_copy_.default) == 2 * full_layers
-            and torch.ops.aten.index_copy.default not in targets
-            and torch.ops.aten.scaled_dot_product_attention.default not in targets,
-            "Unexpected attention/cache graph",
-        )
-        (staging_directory / f"{kind}.graph.txt").write_text(
-            exported.graph_module.print_readable(print_output=False) + "\n"
-        )
-        print(
-            f"Exported {kind}: {len(list(exported.graph.nodes))} nodes; ranges {exported.range_constraints}",
-            flush=True,
-        )
-        start = time.perf_counter()
-
-        def metadata_factory(compiled_path):
-            from torch._inductor.runtime.triton_helpers import get_backend_options
-
-            metadata = make_metadata(
-                model_type="qwen36",
-                entry_point=kind,
-                token_range=[2, MAX_PREFILL] if kind == "prefill" else [1, 1],
-                checkpoint=dict(
-                    model_id=checkpoint["model"],
-                    revision=checkpoint["revision"],
-                    manifest=checkpoint,
-                ),
-                torch_version=torch.__version__,
-                cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
-                cuda_compute_capability=torch.cuda.get_device_capability(),
-                cache_length=capacity,
-                vocab_size=config.vocab_size,
-                eos_token_ids=model.generation_config.eos_token_id,
-                state=state_specs(config, capacity),
-                triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-                model_specific=model_specific(),
-            )
-            print(
-                json.dumps(
-                    dict(
-                        event="export",
-                        model_type="qwen36",
-                        entry_point=kind,
-                        package_bytes=compiled_path.stat().st_size,
-                        build=dict(
-                            strict_export=True,
-                            torch_cuda_version=torch.version.cuda,
-                            versions={
-                                name: importlib.metadata.version(name)
-                                for name in (
-                                    "transformers",
-                                    "triton",
-                                    "kernels",
-                                    "safetensors",
-                                    "huggingface-hub",
-                                    "tokenizers",
-                                )
-                            },
-                        ),
-                        diagnostics=dict(
-                            range_constraints=str(exported.range_constraints),
-                            graph_nodes=len(list(exported.graph.nodes)),
-                            export_seconds=export_seconds,
-                            compile_seconds=time.perf_counter() - start,
-                            fp8_adapters=adapters,
-                            checkpoint_storage=model.checkpoint_storage,
-                            parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
-                            rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
-                            tied_embeddings=False,
-                            linear_packing=False,
-                            enable_inductor_optimization=args.enable_inductor_optimization,
-                            hf_numerical_acceptance="unresolved; export does not establish HF accuracy",
-                        ),
-                    )
-                ),
-                flush=True,
-            )
-            return metadata
-
-        return exported, metadata_factory
-
+    prepare_entry = partial(
+        export_entry,
+        model=model,
+        checkpoint=checkpoint,
+        capacity=capacity,
+        adapters=adapters,
+        enable_inductor_optimization=enable_inductor_optimization,
+    )
     with torch.inference_mode(), memoize_triton_reads():
         print(
             json.dumps(
@@ -272,15 +229,30 @@ def main():
             ),
             flush=True,
         )
+        load_attention_ops(model="qwen36")
         compile_shared(
-            args.output,
-            export_entry,
+            output,
+            prepare_entry,
             identity=dict(model="qwen3.6", checkpoint=checkpoint),
             inductor_configs=options,
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),
         )
-    print(f"Saved prefill/decode bundle to {args.output}", flush=True)
+    print(f"Saved prefill/decode bundle to {output}", flush=True)
+
+
+def main(argv=None):
+    parser = export_parser(__doc__, model_dir=TEXT_DIR, output=ARTIFACT_DIR / "text")
+    parser.add_argument(
+        "--enable-inductor-optimization",
+        action="store_true",
+        help="Enable optional Inductor optimizations (currently combo kernels)",
+    )
+    args = parser.parse_args(argv)
+    try:
+        export_model(**vars(args))
+    except ExportInputError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":

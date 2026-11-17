@@ -10,8 +10,8 @@ import torch
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, json_sha256, sha256, write_json
 from tools.validation.common.chain import new_report
 from tools.validation.common.runner import Trace
-from tools.validation.qwen36.aoti import compare_output, reference_info
-from tools.validation.qwen36.eager import fixtures
+from tools.validation.qwen36.common import compare_output, reference_info
+from tools.validation.qwen36.common import fixtures
 
 
 class AOTIValidation(unittest.TestCase):

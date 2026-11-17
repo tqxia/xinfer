@@ -16,6 +16,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.qwen35 import export
+from compiler.qwen35.tests.graphs import assert_hybrid_graph
 
 
 class ExportContextLength(unittest.TestCase):
@@ -130,51 +131,17 @@ class ExportGraph(unittest.TestCase):
     def tearDownClass(cls):
         del cls.model
 
-    def assert_delta_dispatch(self, exported, kind):
-        counts = dict(cond=0, short=0, long=0)
-
-        def visit(module):
-            # Count call sites, even when multiple layers share a branch module.
-            for node in module.graph.nodes:
-                if node.target == torch.ops.higher_order.cond:
-                    predicate = node.args[0]
-                    self.assertIsInstance(predicate, torch.fx.Node)
-                    value = predicate.meta.get("val")
-                    self.assertIsInstance(value, torch.SymBool)
-                    self.assertNotIn(str(value), ("True", "False"))
-                    counts["cond"] += 1
-                    for branch in node.args[1:3]:
-                        visit(module.get_submodule(branch.target))
-                else:
-                    for branch, operator in export.DELTA_OPERATORS.items():
-                        counts[branch] += str(node.target) == operator
-
-        visit(exported.graph_module)
-        layers = self.model.config.layer_types.count("linear_attention")
-        conditions = layers if kind == "prefill" else 0
-        self.assertEqual(
-            sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), conditions
-        )
-        self.assertEqual(counts, dict(cond=conditions, short=layers, long=conditions))
-
     @torch.inference_mode()
     def test_production_export_preserves_dispatch_attention_and_cache_updates(self):
         for kind in ("prefill", "decode"):
             with self.subTest(kind=kind):
                 exported, packing = export.export_step(self.model, kind, capacity=512)
                 self.assertGreater(packing["saved_linears"], 0)
-                self.assertFalse(exported.graph_signature.buffers_to_mutate)
-                targets = [
-                    node.target for node in exported.graph.nodes if node.op == "call_function"
-                ]
-                layers = self.model.config.layer_types.count("full_attention")
-                self.assertEqual(targets.count(torch.ops.xinfer.flash_attention.default), layers)
-                self.assertEqual(targets.count(torch.ops.aten.index_copy_.default), 2 * layers)
-                self.assertNotIn(torch.ops.aten.index_copy.default, targets)
-                self.assertNotIn(torch.ops.aten.scaled_dot_product_attention.default, targets)
+                targets = assert_hybrid_graph(
+                    self, exported, kind, self.model.config.layer_types, export.DELTA_OPERATORS
+                )
                 if kind == "decode":
                     self.assertIn(torch.ops.xinfer.projection_gemv.default, targets)
-                self.assert_delta_dispatch(exported, kind)
 
 
 if __name__ == "__main__":

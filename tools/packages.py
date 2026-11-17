@@ -43,7 +43,7 @@ def validate_qwen35_metadata(metadata):
 
 def validate_qwen36_metadata(metadata):
     """Check the pinned FP8 model after shared schema and hybrid-state checks."""
-    from compiler.common.fp8 import KERNEL_REPO, KERNEL_REVISION
+    from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_REVISION
     from compiler.qwen36.config import MODEL_ID, REVISION
 
     validate_qwen35_metadata(metadata)

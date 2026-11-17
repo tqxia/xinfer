@@ -8,6 +8,9 @@ from pathlib import Path
 TEXT_DIR = Path("work/qwen35/0.8b/text")
 ARTIFACT_DIR = Path("artifacts/qwen35/0.8b")
 MAX_PREFILL = 512
+DELTA_OPERATORS = dict(
+    short="xinfer.delta_cond_short.default", long="xinfer.delta_cond_long.default"
+)
 
 
 def deltanet_state_shapes(config):

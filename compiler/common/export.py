@@ -58,7 +58,7 @@ def check_symbolic_config():
         raise ValueError("Flash must export with backed_size_oblivious disabled")
 
 
-def report_export(model_type, kind, *, strict, diagnostics, **fields):
+def report_export(model_type, kind, *, strict, diagnostics, extra_dependencies=(), **fields):
     """Keep build diagnostics in export logs, separate from deployment metadata."""
     print(
         json.dumps(
@@ -78,6 +78,7 @@ def report_export(model_type, kind, *, strict, diagnostics, **fields):
                             "safetensors",
                             "tokenizers",
                             "huggingface-hub",
+                            *extra_dependencies,
                         )
                     },
                 ),

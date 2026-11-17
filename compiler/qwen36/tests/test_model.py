@@ -205,7 +205,7 @@ class PinnedHFDependency(unittest.TestCase):
                 self.subTest(mode=mode),
                 patch.object(config, "configure"),
                 patch.object(hf_fp8, "is_kernels_available", return_value=True),
-                patch("compiler.common.fp8.load_fp8_kernels", return_value=kernel),
+                patch("compiler.common.kernels.fp8.load_fp8_kernels", return_value=kernel),
             ):
                 effect = (
                     official_load

@@ -69,7 +69,7 @@ void measure(const std::filesystem::path &packages, const Spec &spec, Json &repo
     std::cout << row.dump() << std::endl;
   };
   sample("before_runtime");
-  auto runtime = std::make_unique<Runtime>(packages, spec, sample);
+  auto runtime = std::make_unique<Runtime>(packages, spec);
   // Both calls to SharedWeights::load checked every borrowed constant pointer,
   // dtype, shape, stride and device against this one retained canonical pool.
   report["loader_pairs"] = 1;

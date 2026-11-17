@@ -10,7 +10,7 @@ from compiler.common.tests.tensors import bits_equal
 from compiler.common.artifacts import write_json
 from tools.validation.common.chain import new_report
 from tools.validation.common.runner import Trace
-from tools.validation.qwen36.eager import (
+from tools.validation.qwen36.common import (
     compare_case,
     fixtures,
     load_trace,

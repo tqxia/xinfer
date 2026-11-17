@@ -12,12 +12,14 @@ PyTorch AOTInductor compilation with Python-free C++ inference.
 - [Plan and deferred work](PLAN.md).
 
 `compiler/<model>/` owns HF loading, tensor/state adapters, kernels and export settings.
-For Qwen3 and Qwen3.5, `export.py` keeps CLI handling, paired-export orchestration, graph
-construction, transformations and checks in separate functions. Qwen3.5 eager
+Each model's `export.py` separates CLI handling, paired-export orchestration,
+graph construction, metadata and diagnostics. Graph structure checks live in
+export integration tests. Qwen3.5 eager
 validation imports the same graph builder from that module. Shared export
 preflight and build reporting live in `compiler/common/export.py`.
-Shared native kernels and C shims live in `compiler/common/kernels/`, including
-attention. `runtime/<model>/` owns model-specific package ABI checks. Shared compiler
+Shared native/Triton kernels live in `compiler/common/kernels/`, including
+attention, FP8 projections and projection GEMV; native C shims live beside them.
+`runtime/<model>/` owns model-specific package ABI checks. Shared compiler
 artifact, metadata and weight helpers live in `compiler/common/`. Guarded PyTorch
 compiler compatibility workarounds live in [`compiler/patches/`](compiler/patches/README.md).
 Numerical validation
@@ -43,8 +45,11 @@ Unit tests follow code ownership: shared tooling tests live under `tools/tests/`
 and area-specific tests under `tools/<area>/tests/`,
 while compiler/model/operator tests remain beside their code.
 See the [CPU unit-test commands](docs/development-tools.md#cpu-unit-tests).
-The common numerical CLI is `tools.validation.validate`; model-specific
-CLI/deployment contract tools remain under `tools/validation/{qwen3,qwen35,qwen36}/`. Detailed results live
+The common BF16 numerical CLI is `tools.validation.validate`. Qwen3.6 uses
+isolated HF, adapted-eager, Python AOTI and native workers to bound memory use;
+its commands share fixtures/reference checks in `tools/validation/qwen36/common.py`
+and reuse the common execution/comparison helpers. Model-specific CLI/deployment
+contract tools remain under `tools/validation/{qwen3,qwen35,qwen36}/`. Detailed results live
 in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
 generated native builds belong in `build/<model>/`; venvs and scratch scripts
 belong in `work/`. These directories are ignored.
@@ -54,7 +59,7 @@ Use the pinned Ruff and clang-format tools with the repository settings; see
 
 All model exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
 Model-specific extras live under `model_specific`; common fields have identical
-names and validation for both families. Schema 5 records compiled capacity and
+names and validation for all three families. Schema 5 records compiled capacity and
 per-call bounds. Request prompts and output budgets share that capacity. It retains
 `runtime_abi_version: 1`. Retained schema 1 through schema 4 and unversioned
 sidecars need conversion or re-export before use with the current runtime.
@@ -90,14 +95,15 @@ Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your
 
 Create each model's independent environment with its target setup script, following
 the [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
-compilation profile. Both exporters embed the native attention library in each
+compilation profile. All exporters embed the native attention library in each
 `.pt2`; the standard Python and C++ AOTI loaders load it with the compiled wrapper.
 Build the compiler's `xinfer_attention_ops` target from the repository root
 before export. The default CMake build includes compiler kernels and runtime
 executables; explicit runtime targets build independently. Each model retains
-its own compiler environment; both share the same full-model numerical policy.
+its own compiler environment. Qwen3 and Qwen3.5 share the BF16 numerical policy;
+Qwen3.6 retains its FP8 reference and required state/token comparisons.
 Python export and standalone operator tests select the attention library from
-`build/qwen3/` or `build/qwen35/`; `XINFER_ATTENTION_OPS_LIBRARY` can select another
+`build/qwen3/`, `build/qwen35/` or `build/qwen36/`; `XINFER_ATTENTION_OPS_LIBRARY` can select another
 build. Package inference and
 validation use the bundled implementation. Existing executable-path options
 select another native runtime.
@@ -111,7 +117,7 @@ Numerical validation follows HF → eager → Python AOTI → C++ AOTI. The eage
 stage includes adapters and any linear packing selected by package metadata.
 Package metadata selects the model hooks. The shared runner uses identical
 teacher-forced inputs, checks adjacent stages and retains a direct
-Python-AOTI/HF comparison. Both models generate HF references during validation;
+Python-AOTI/HF comparison. Qwen3 and Qwen3.5 generate HF references during validation;
 Qwen3 also cross-checks manual HF greedy decoding against HF `generate()`. No
 saved-reference preparation is required. Both models require bounded matched-input
 logit error and exact native/Python AOTI parity; full-model state and HF token
@@ -124,7 +130,7 @@ CPU portability remains a known limitation: AOTI package wrappers inherit the bu
 host's instruction set (including AVX-512 on L20), and the project does not enforce
 CPU compatibility. Use a compatible CPU or re-export on the destination host.
 
-Both exporters now produce weightless prefill/decode packages and one shared
+All exporters produce weightless prefill/decode packages and one shared
 `weights.pt` archive containing the constant mappings. Both package metadata
 files record its checksum. Each `.pt2` also contains the same attention library,
 covered by its package checksum. Deploy the complete five-file package directory.
@@ -132,7 +138,7 @@ The Python and C++ runtimes retain one weight pool and lend its storage to both
 loaders with `user_managed`; rebuild with Torch 2.13 or newer
 and re-export existing embedded-weight packages before using the current runtime.
 
-`python -m tools.benchmark` selects the model from package metadata. Both models
+`python -m tools.benchmark` selects the model from package metadata. Qwen3 and Qwen3.5
 support `run`, paired package `compare` and standalone `check-idle`. Workloads are
 tokenized by the benchmark itself, with context capacity read from metadata.
 Benchmarks split reset, complete-prompt prefill, decode and whole-request timing.

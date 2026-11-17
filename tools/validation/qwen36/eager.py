@@ -1,7 +1,6 @@
 """Run one isolated HF/FP8-adapter/full-adapter eager validation stage."""
 
 import argparse
-from collections import Counter
 from importlib.metadata import version
 import os
 from pathlib import Path
@@ -17,329 +16,20 @@ from compiler.common.artifacts import (
     sha256,
     write_json,
 )
-from compiler.common.tests.tensors import bits_equal, cpu_copy
-from tools.common import prompt_chunks
-from tools.validation.common.chain import Policy, compare_traces, new_report
+from tools.validation.common.chain import new_report
 from tools.validation.common.runner import ExplicitRuntime, Trace, greedy, teacher_trace
-from tools.validation.common.validation import tensor_metrics, within_limits
-
-
-def fixtures(seed, prompt, profile, capacity):
-    """Keep every graph-call partition explicit and group only exact reset controls."""
-    require(seed and prompt, "Missing prepared token IDs")
-    stream = (seed * (max(capacity, 515) // len(seed) + 1))[: max(capacity, 515)]
-    groups = []
-    lengths = (1, 2, 96, 97, 98, 511, 512) if profile == "matrix" else (2,)
-    for length in lengths:
-        require(length + 2 <= capacity, "Validation profile exceeds context capacity")
-        case = dict(
-            name=f"length_{length}",
-            steps=[stream[:length], [stream[length]], [stream[length + 1]]],
-            prompt_steps=1,
-        )
-        group = [case]
-        if profile == "matrix" and length == 98:
-            group += [
-                dict(case, name="repeat_98", same_as=case["name"]),
-                dict(case, name="poison_98", same_as=case["name"], poison_kv=3),
-            ]
-        groups.append(group)
-    if profile == "matrix":
-        require(capacity >= 515, "The matrix profile needs at least 515 context slots")
-        groups.append(
-            [
-                dict(
-                    name="nonzero_prefill",
-                    steps=[stream[:96], stream[96:194], [stream[194]]],
-                    prompt_steps=2,
-                )
-            ]
-        )
-        groups.append(
-            [
-                dict(
-                    name="multicall_513",
-                    steps=prompt_chunks(stream[:513], 512) + [[stream[513]], [stream[514]]],
-                    prompt_steps=2,
-                )
-            ]
-        )
-    require(len(prompt) + 3 <= capacity, "Chat and output budget exceed context capacity")
-    chats = [
-        dict(name="capital", prompt=prompt, limit=3),
-        dict(name="limit_one", prompt=prompt, limit=1),
-    ]
-    return groups, chats
-
-
-def storage_inventory(model):
-    """Registered checkpoint storage only; temporary/global allocations are separate."""
-    storages = {}
-    for tensor in model.state_dict(keep_vars=True).values():
-        storage = tensor.untyped_storage()
-        key = (str(tensor.device), str(tensor.dtype), storage.data_ptr(), storage.nbytes())
-        storages[key] = storage.nbytes()
-    sizes, counts = Counter(), Counter()
-    for (_, dtype, _, _), size in storages.items():
-        sizes[dtype.removeprefix("torch.")] += size
-        counts[dtype.removeprefix("torch.")] += 1
-    return dict(
-        unique_storages=len(storages),
-        bytes=sum(storages.values()),
-        bytes_by_dtype=dict(sizes),
-        storages_by_dtype=dict(counts),
-    )
-
-
-def tensor_identity(model):
-    return Counter(
-        (id(value), value.data_ptr(), str(value.dtype), tuple(value.shape))
-        for value in (*model.parameters(), *model.buffers())
-    )
-
-
-def memory(label):
-    torch.cuda.synchronize()
-    free, total = torch.cuda.mem_get_info()
-    process = {}
-    status = Path("/proc/self/status")
-    if status.is_file():
-        for line in status.read_text().splitlines():
-            if line.startswith(("VmRSS:", "VmHWM:")):
-                key, value, _ = line.split()
-                process[key.rstrip(":") + "_bytes"] = int(value) * 1024
-    available = None
-    meminfo = Path("/proc/meminfo")
-    if meminfo.is_file():
-        available = next(
-            int(line.split()[1]) * 1024
-            for line in meminfo.read_text().splitlines()
-            if line.startswith("MemAvailable:")
-        )
-    return dict(
-        label=label,
-        allocated_bytes=torch.cuda.memory_allocated(),
-        reserved_bytes=torch.cuda.memory_reserved(),
-        peak_allocated_bytes=torch.cuda.max_memory_allocated(),
-        peak_reserved_bytes=torch.cuda.max_memory_reserved(),
-        cuda_free_bytes=free,
-        cuda_total_bytes=total,
-        system_available_bytes=available,
-        **process,
-    )
-
-
-class ObservedRuntime:
-    def __init__(self, runtime, model, layers, report):
-        self.runtime, self.report = runtime, report
-        self.case, self.step_index = "", 0
-        self.case_names = None
-        self.blocks, self.handles = {}, []
-        for index in layers:
-            self.handles.append(model.model.layers[index].register_forward_hook(self.hook(index)))
-
-    def hook(self, index):
-        def capture(module, inputs, output):
-            value = output[0] if isinstance(output, tuple) else output
-            self.blocks[self.case, self.step_index, index] = cpu_copy((value,))[0]
-
-        return capture
-
-    def __getattr__(self, name):
-        return getattr(self.runtime, name)
-
-    def reset(self, fill=0):
-        if self.case_names is not None:
-            self.case = next(self.case_names)
-        self.step_index = 0
-        return self.runtime.reset(fill)
-
-    def step(self, tokens):
-        incoming = (
-            [value.data_ptr() for value in self.runtime.state]
-            if isinstance(self.runtime, ExplicitRuntime)
-            else []
-        )
-        result = self.runtime.step(tokens)
-        require(
-            result.shape == (1, self.runtime.vocab_size) and result.dtype == torch.bfloat16,
-            "Incorrect logit shape or dtype",
-        )
-        require(bool(torch.isfinite(result).all()), "Nonfinite logits")
-        state = self.runtime.state
-        require(len(state) == len(self.runtime.specs), "Incorrect state count")
-        for value, spec in zip(state, self.runtime.specs):
-            require(list(value.shape) == spec["shape"], "Incorrect state shape")
-            require(value.dtype == getattr(torch, spec["dtype"]), "Incorrect state dtype")
-        if isinstance(self.runtime, ExplicitRuntime):
-            for before, value, spec in zip(incoming, self.runtime.state, self.runtime.specs):
-                if spec["update"] == "replace":
-                    require(value.data_ptr() != before, "Functional state output aliases its input")
-        self.report["memory"].append(memory(f"{self.case}:{self.step_index}:t{len(tokens)}"))
-        self.step_index += 1
-        return result
-
-    def close(self):
-        for handle in self.handles:
-            handle.remove()
-        self.handles.clear()
-        self.runtime.close()
-
-
-def case_trace(trace, name):
-    result = Trace(compact_states=trace.compact_states)
-    for field in ("logits", "raw_logits", "states", "positions"):
-        setattr(
-            result,
-            field,
-            {key: value for key, value in getattr(trace, field).items() if key[0] == name},
-        )
-    result.greedy = {key: value for key, value in trace.greedy.items() if key == name}
-    return result
-
-
-def save_trace(path, trace, blocks):
-    torch.save(dict(trace=vars(trace), blocks=blocks), path)
-
-
-def load_trace(path):
-    data = torch.load(path, map_location="cpu", weights_only=True)
-    return Trace(**data["trace"]), data["blocks"]
-
-
-def load_reference_protocol(directory, identity):
-    """Accept only a completed HF stage before consuming its traces or loading weights."""
-    summary_path = directory / "summary.json"
-    require(summary_path.is_file(), "HF reference is incomplete: missing summary.json")
-    summary = read_json(summary_path)
-    require(
-        isinstance(summary, dict)
-        and summary.get("model_type") == "qwen36"
-        and summary.get("stage") == "hf"
-        and summary.get("execution_passed") is True
-        and summary.get("passed") is True
-        and summary.get("failures") == [],
-        "Reference must be a completed passing Qwen3.6 HF stage",
-    )
-    protocol = read_json(directory / "protocol.json")
-    require(protocol["identity"] == identity, "HF reference profile/checkpoint differs")
-    return protocol
-
-
-def compare_case(report, stage, actual, blocks, reference, specs):
-    expected, expected_blocks = load_trace(reference)
-    exact = stage == "fp8"
-    matching_generations = {
-        name
-        for name, value in actual.greedy.items()
-        if value["ids"] == expected.greedy[name]["ids"]
-        and value["position"] == expected.greedy[name]["position"]
-    }
-    compare_traces(
-        report,
-        stage,
-        "hf_fp8",
-        actual,
-        expected,
-        specs,
-        Policy(state_required=True, tokens_required=True),
-        exact=exact,
-        greedy_state_names=matching_generations,
-    )
-    if not exact:
-        for name, value in actual.greedy.items():
-            other = expected.greedy[name]
-            count = 0
-            for token, reference_token in zip(value["ids"], other["ids"]):
-                count += 1
-                if token != reference_token:
-                    break
-            # Inputs still match at the first differing prediction. Subsequent
-            # logits/state follow different token histories and cannot be compared.
-            left = Trace(
-                logits={(name, index): row for index, row in enumerate(value["rows"][:count])}
-            )
-            right = Trace(
-                logits={(name, index): row for index, row in enumerate(other["rows"][:count])}
-            )
-            compare_traces(
-                report,
-                stage,
-                "hf_fp8_greedy_prefix",
-                left,
-                right,
-                specs,
-                Policy(state_required=True, tokens_required=True),
-                state_keys=set(),
-                greedy_names=set(),
-            )
-    require(blocks.keys() == expected_blocks.keys(), "Decoder hook coverage differs")
-    for key in sorted(blocks):
-        left, right = blocks[key], expected_blocks[key]
-        metrics = tensor_metrics(
-            left,
-            right,
-            rows=(
-                left.float().reshape(-1, left.shape[-1]),
-                right.float().reshape(-1, right.shape[-1]),
-            ),
-        )
-        row = dict(
-            comparison=f"{stage}_vs_hf_fp8",
-            case=key[0],
-            step=key[1],
-            tensor=f"decoder_{key[2]}",
-            required=True,
-            exact=exact,
-            **metrics,
-        )
-        report["comparisons"].append(row)
-        if not (metrics["bitwise_equal"] if exact else within_limits(metrics)):
-            report["failures"].append(row)
-            report.setdefault("first_block_divergence", row)
-
-
-def request_guards(runtime):
-    """Check rejection before mutation, without evaluating a full context window."""
-    position = runtime.position
-    before = cpu_copy(runtime.state)
-    pointers = [value.data_ptr() for value in runtime.state]
-
-    def reject(tokens):
-        try:
-            runtime.step(tokens)
-        except (ValueError, RuntimeError):
-            pass
-        else:
-            raise ValueError("Invalid input request was accepted")
-        require(
-            [value.data_ptr() for value in runtime.state] == pointers,
-            "Rejected request changed state ownership",
-        )
-        require(
-            all(
-                bits_equal(value.cpu(), original) for value, original in zip(runtime.state, before)
-            ),
-            "Rejected request changed state bytes",
-        )
-
-    reject([])
-    require(runtime.position == position, "Empty request changed position")
-    reject([0] * 513)
-    require(runtime.position == position, "Oversized step changed position")
-    try:
-        runtime.position = runtime.capacity
-        reject([0])
-        require(runtime.position == runtime.capacity, "Overflow changed position")
-    finally:
-        runtime.position = position
-    return dict(
-        empty_and_oversized_step=True,
-        overflow_preflight=True,
-        overflow_used_synthetic_position=True,
-        full_context_window_executed=False,
-        rejected_requests_preserve_state_bytes_and_pointers=True,
-    )
+from tools.validation.qwen36.common import (
+    ObservedRuntime,
+    case_trace,
+    compare_case,
+    fixtures,
+    load_reference_protocol,
+    memory,
+    request_guards,
+    save_trace,
+    storage_inventory,
+    tensor_identity,
+)
 
 
 def run(args, report):
@@ -349,7 +39,7 @@ def run(args, report):
     from compiler.common.context import resolve_context_length
     from tools.prepare.common import encode_prompt
     from tools.validation.common.prompts import PARAGRAPH
-    from tools.validation.qwen35.model import HFStage
+    from tools.validation.common.hybrid import HybridHFStage
 
     require(torch.cuda.is_available(), "CUDA is required")
     report["environment"] = dict(
@@ -437,7 +127,7 @@ def run(args, report):
             require_write=True,
         )
     else:
-        runtime = HFStage(model, specs, args.capacity)
+        runtime = HybridHFStage(model, specs, args.capacity)
     require(
         tensor_identity(model) == before, "Adapters changed registered tensors or storage pointers"
     )

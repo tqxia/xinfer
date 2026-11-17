@@ -26,7 +26,7 @@ def configure_hf_fp8():
     configure()
     from transformers.integrations import finegrained_fp8 as hf_fp8
 
-    from compiler.common.fp8 import load_fp8_kernels
+    from compiler.common.kernels.fp8 import load_fp8_kernels
 
     require(hf_fp8.is_kernels_available(), "HF FP8 requires the configured kernels package")
     kernel = load_fp8_kernels()

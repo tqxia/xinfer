@@ -9,7 +9,7 @@ import torch
 from tools.validation.common.runner import Trace
 from tools.validation.common.validation import raw_bytes
 from tools.validation.qwen36.cli import fixtures
-from tools.validation.qwen36.eager import save_trace
+from tools.validation.qwen36.common import save_trace
 
 
 class CLIFixtures(unittest.TestCase):

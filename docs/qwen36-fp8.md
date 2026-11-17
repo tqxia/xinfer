@@ -18,6 +18,44 @@ reported separately from HF numerical acceptance. See the
 The HF architecture is `qwen3_5_moe`; checkpoint preparation preserves its
 quantization metadata and does not load a model or execute GPU kernels.
 
+The implementation follows the shared export workflow: `compiler/qwen36/export.py`
+separates CLI parsing, model export, per-entry export, metadata and diagnostics,
+using `compiler/common/export.py` for preflight and build reporting. Structural
+FP8/DeltaNet/attention/cache assertions live in GPU export integration tests.
+`compiler/common/kernels/fp8.py` owns reusable FP8 launch wrappers; Qwen3.6's
+adapters retain the HF parameter objects. Guarded Torch fixes stay in
+`compiler/patches/`, and model package ABI checks stay in `tools/packages.py`.
+
+FP8 validation intentionally runs stages in separate processes and saves CPU
+references to avoid retaining multiple model banks. Its eager/AOTI/CLI commands
+share fixtures, trace I/O, provenance and comparisons in
+`tools/validation/qwen36/common.py`; the HF hybrid-cache adapter and execution,
+state and comparison engines are shared with Qwen3.5. The BF16 default numerical
+policy does not replace the existing required FP8 state/token checks. Historical
+numerical results and unresolved failures remain unchanged by this reorganization.
+
+Run the export workflow and shared validation contracts on CPU, then the actual
+FP8 prefill/decode graph checks on CUDA after building the attention library:
+
+```bash
+Q36_PY=work/gb10/qwen36-venv/bin/python
+CUDA_VISIBLE_DEVICES='' "$Q36_PY" -m unittest -v \
+  compiler.common.tests.test_export compiler.qwen36.tests.test_export \
+  tools.validation.tests.test_hybrid \
+  tools.validation.tests.test_qwen36_eager \
+  tools.validation.tests.test_qwen36_aoti tools.validation.tests.test_qwen36_cli
+XINFER_ATTENTION_OPS_LIBRARY="$PWD/build/qwen36/libxinfer_attention_ops.so" \
+  HF_HUB_OFFLINE=1 "$Q36_PY" -m unittest -v \
+  compiler.qwen36.tests.test_export.ExportGraph
+```
+
+The CUDA test uses a small random three-layer MoE model with the production
+export function. It checks FP8 operators and parameter dtypes, dynamic bounds,
+DeltaNet branches, FlashAttention dispatch and in-place KV updates. It uses the
+pinned FP8 kernel dependency (set `KERNELS_CACHE` if stored outside its default
+cache), but no checkpoint weights or AOTI compilation. It does not establish
+full-model numerical acceptance.
+
 ## Prepare on a CPU host or Mac
 
 Use Python 3.12 and the dedicated preparation requirements. The Bash entry point
@@ -494,12 +532,14 @@ and the `python-aoti-fixed-r1/` and `native-aoti-fixed-r1/` summaries under that
 same directory. The successful production CLI report is
 `artifacts/qwen36/step4/cli-fixed-r1/summary.json`.
 
-The load observer is an optional synchronous constructor callback. It is not
-retained after construction. Ordinary CLI/library construction supplies no
-observer and emits no phase samples; the memory probe opts into sampling.
-`qwen_runtime_contract` separately checks caller-independent `Spec` ownership,
-observer release, thread/TF32 setup and preflight ordering. Its `--files-only`
-mode checks fresh file-integrity preflight without allocating a GPU weight pool.
+The retained internal load-phase samples above came from the historical
+instrumented runtime. Current memory instrumentation stays in
+`runtime/common/tests/weight_memory.cpp`, sampling before/after construction,
+first prefill/decode and destruction. Production constructors no longer expose
+an observer callback; current reports omit the internal archive/pool and binding
+phases. `qwen_runtime_contract` checks caller-independent `Spec` ownership,
+thread/TF32 setup and preflight ordering. Its `--files-only` mode checks fresh
+file-integrity preflight without allocating a GPU weight pool.
 
 The production CLI checker consumes only saved Python AOTI traces and the small
 model manifest in its controller. Use the copied/renamed installed runtime

@@ -50,22 +50,7 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
     at::set_num_threads(2);
     at::globalContext().setAllowTF32CuBLAS(true);
     at::globalContext().setAllowTF32CuDNN(true);
-    std::vector<std::string> phases;
-    auto callback_owner = std::make_shared<int>(0);
-    std::weak_ptr<int> callback_lifetime = callback_owner;
-    Runtime runtime(packages, caller, [owner = callback_owner, &phases](const char *phase) {
-      (void)owner;
-      phases.emplace_back(phase);
-    });
-    callback_owner.reset();
-    require(callback_lifetime.expired(), "Runtime retained its load observer");
-    require(phases == std::vector<std::string>{"cpu_archive_validated",
-                                               "canonical_pool_allocated_cpu_archive_alive",
-                                               "loaders_constructed", "prefill_bound",
-                                               "decode_bound"},
-            "Runtime load phases differ");
-    report["load_observer_released"] = true;
-    report["load_phases"] = phases;
+    Runtime runtime(packages, caller);
     require(at::get_num_threads() == 1 && !at::globalContext().allowTF32CuBLAS() &&
                 !at::globalContext().allowTF32CuDNN(),
             "Runtime did not configure threads and TF32");

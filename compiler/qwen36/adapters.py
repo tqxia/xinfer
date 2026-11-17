@@ -6,7 +6,7 @@ from transformers.integrations.finegrained_fp8 import (
     FP8Linear as HFLinear,
 )
 
-from compiler.common import fp8
+from compiler.common.kernels import fp8
 from compiler.common.artifacts import require
 
 

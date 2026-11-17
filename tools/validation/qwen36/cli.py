@@ -16,8 +16,8 @@ from compiler.common.metadata import read_package_metadata
 from compiler.qwen36.config import TEXT_DIR
 from tools.packages import validate_model_metadata
 from tools.validation.common.validation import raw_bytes, read_ids
-from tools.validation.qwen36.aoti import reference_info
-from tools.validation.qwen36.eager import load_trace
+from tools.validation.qwen36.common import reference_info
+from tools.validation.qwen36.common import load_trace
 
 
 def fixtures(protocol, reference):

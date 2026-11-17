@@ -11,7 +11,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import resolve_context_length
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.passes.projection_gemv import replace_projection_gemv
-from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR, DELTA_OPERATORS
 from compiler.common.weights import compile_shared
 from compiler.common.attention import (
     cache_extent,
@@ -31,11 +31,6 @@ from compiler.qwen35.model import TextStep, configure_text, load_model, state_sp
 from compiler.qwen35.adapters.delta import install_delta
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD
-
-
-DELTA_OPERATORS = dict(
-    short="xinfer.delta_cond_short.default", long="xinfer.delta_cond_long.default"
-)
 
 
 def export_step(model, kind, capacity=None):

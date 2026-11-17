@@ -11,7 +11,7 @@ historical evidence; their commands and results may describe retired code.
 
 - `compiler/<model>/` owns model loading, adapters, kernels and export.
   `compiler/common/` owns shared compilation, metadata and weight helpers;
-  `compiler/common/kernels/` owns shared native kernels and their C shims.
+  `compiler/common/kernels/` owns shared native/Triton kernels and native C shims.
   `compiler/patches/` owns guarded PyTorch compiler compatibility patches.
 - `runtime/common/` owns shared native loading, state, generation and measurement.
   Model-specific runtime headers validate their model's ABI.

@@ -1,4 +1,4 @@
-"""CPU export contracts without a checkpoint download or CUDA allocations."""
+"""CPU workflow contracts and CUDA FP8 hybrid-graph integration tests."""
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
@@ -146,6 +146,56 @@ class ExportContract(unittest.TestCase):
                 )
             self.assertEqual(export.model_specific()["linear_packing"], dict(enabled=False))
 
+    def test_workflow_errors_are_not_converted_to_usage_errors(self):
+        with (
+            patch.object(export, "export_model", side_effect=ValueError("graph export failed")),
+            self.assertRaisesRegex(ValueError, "graph export failed"),
+        ):
+            export.main([])
+
+    def test_entry_metadata_and_build_reporting_stay_separate(self):
+        from tools.tests.test_qwen36_packages import metadata
+
+        expected = metadata()
+        model = SimpleNamespace(
+            config=SimpleNamespace(),
+            checkpoint_storage={"source_bytes": 123},
+            parameters=lambda: iter([torch.ones(2, dtype=torch.bfloat16)]),
+            model=SimpleNamespace(rotary_emb=SimpleNamespace(inv_freq=torch.ones(2))),
+        )
+        graph = SimpleNamespace(
+            graph=SimpleNamespace(nodes=[object()]),
+            range_constraints={"tokens": "2..512"},
+            graph_module=SimpleNamespace(print_readable=lambda **kwargs: "graph fixture"),
+        )
+        with TemporaryDirectory() as temporary:
+            output = Path(temporary)
+            compiled = output / "decode.pt2"
+            compiled.write_bytes(b"package")
+            with (
+                patch.object(export, "export_step", return_value=graph) as trace,
+                patch.object(export, "entry_metadata", return_value=expected),
+                patch.object(export, "report_export") as report,
+                redirect_stdout(io.StringIO()),
+            ):
+                actual, factory = export.export_entry(
+                    "decode",
+                    output,
+                    model=model,
+                    checkpoint={},
+                    capacity=1024,
+                    adapters=dict(linear=250, experts=40),
+                    enable_inductor_optimization=False,
+                )
+                self.assertIs(actual, graph)
+                self.assertEqual(factory(compiled), expected)
+            trace.assert_called_once_with(model, "decode", 1024)
+            self.assertEqual(report.call_args.kwargs["extra_dependencies"], ("kernels",))
+            self.assertEqual(report.call_args.kwargs["package_bytes"], 7)
+            self.assertEqual((output / "decode.graph.txt").read_text(), "graph fixture\n")
+            self.assertNotIn("diagnostics", expected)
+            self.assertFalse(report.call_args.kwargs["diagnostics"]["linear_packing"])
+
     def test_strict_cpu_fixture_preserves_fp8_and_independent_dynamic_extents(self):
         model = SimpleNamespace(
             config=SimpleNamespace(vocab_size=1024, max_position_embeddings=262144),
@@ -182,6 +232,111 @@ class ExportContract(unittest.TestCase):
                     outputs = program.module()(*inputs)
                     self.assertEqual(outputs[0].shape, (1, 1))
                     self.assertEqual(outputs[0].dtype, torch.bfloat16)
+
+
+@unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
+class ExportGraph(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from transformers import FineGrainedFP8Config, Qwen3_5MoeForCausalLM
+        from transformers.integrations.finegrained_fp8 import replace_with_fp8_linear
+        from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+            Qwen3_5MoeTextConfig,
+            Qwen3_5MoeTextRotaryEmbedding,
+        )
+
+        export.configure()
+        torch.manual_seed(36)
+        config = Qwen3_5MoeTextConfig(
+            vocab_size=128,
+            hidden_size=128,
+            num_hidden_layers=3,
+            layer_types=["linear_attention", "full_attention", "linear_attention"],
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=256,
+            linear_num_key_heads=16,
+            linear_num_value_heads=32,
+            linear_key_head_dim=128,
+            linear_value_head_dim=128,
+            linear_conv_kernel_dim=4,
+            num_experts=2,
+            num_experts_per_tok=1,
+            moe_intermediate_size=128,
+            shared_expert_intermediate_size=128,
+            max_position_embeddings=1024,
+            tie_word_embeddings=False,
+        )
+        config._attn_implementation = "sdpa"
+        with torch.device("meta"):
+            model = Qwen3_5MoeForCausalLM(config)
+            replace_with_fp8_linear(
+                model,
+                modules_to_not_convert=[
+                    "lm_head",
+                    "gate",
+                    "shared_expert_gate",
+                    "in_proj_a",
+                    "in_proj_b",
+                ],
+                quantization_config=FineGrainedFP8Config(
+                    activation_scheme="dynamic",
+                    weight_block_size=(128, 128),
+                    dequantize=False,
+                ),
+                pre_quantized=True,
+            )
+        for name, parameter in list(model.named_parameters()):
+            if parameter.dtype == torch.float8_e4m3fn:
+                value = (torch.randn(parameter.shape, device="cuda") * 0.02).to(parameter.dtype)
+            elif name.endswith("weight_scale_inv") or name.endswith("proj_scale_inv"):
+                value = torch.ones(parameter.shape, device="cuda", dtype=torch.bfloat16)
+            else:
+                value = torch.randn(parameter.shape, device="cuda", dtype=torch.bfloat16) * 0.02
+            parent, _, field = name.rpartition(".")
+            model.get_submodule(parent).register_parameter(
+                field, torch.nn.Parameter(value, requires_grad=False)
+            )
+        model.model.rotary_emb = Qwen3_5MoeTextRotaryEmbedding(config).to("cuda")
+        cls.model = model.eval().requires_grad_(False)
+        export.install_fp8(cls.model)
+        export.install_delta(cls.model)
+        export.load_attention_ops(model="qwen36")
+
+    @classmethod
+    def tearDownClass(cls):
+        del cls.model
+
+    @torch.inference_mode()
+    def test_production_export_preserves_fp8_dispatch_attention_and_cache_updates(self):
+        from compiler.qwen35.tests.graphs import assert_hybrid_graph
+
+        with export.memoize_triton_reads():
+            for kind in ("prefill", "decode"):
+                with self.subTest(kind=kind):
+                    exported = export.export_step(self.model, kind, capacity=512)
+                    targets = assert_hybrid_graph(
+                        self,
+                        exported,
+                        kind,
+                        self.model.config.layer_types,
+                        export.DELTA_OPERATORS,
+                    )
+                    self.assertIn(torch.ops.xinfer.fp8_linear.default, targets)
+                    self.assertIn(torch.ops.xinfer.fp8_grouped.default, targets)
+                    self.assertFalse(
+                        any(str(t) == "xinfer.projection_gemv.default" for t in targets)
+                    )
+                    self.assertEqual(
+                        {p.dtype for _, p in exported.named_parameters()},
+                        {torch.float8_e4m3fn, torch.bfloat16},
+                    )
+                    bounds = {
+                        (int(r.lower), int(r.upper)) for r in exported.range_constraints.values()
+                    }
+                    self.assertIn((2, 513), bounds)
+                    if kind == "prefill":
+                        self.assertIn((2, 512), bounds)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from compiler.common.export import ExportInputError, check_symbolic_config, prepare_export
+from compiler.common.export import (
+    ExportInputError,
+    check_symbolic_config,
+    prepare_export,
+    report_export,
+)
 
 
 class ExportPreflight(unittest.TestCase):
@@ -67,6 +72,24 @@ class ExportPreflight(unittest.TestCase):
             (root / "config.json").unlink()
             with self.assertRaises(FileNotFoundError):
                 prepare_export(root, root / "output", None, 512)
+
+    def test_optional_dependency_versions_are_reported_only_when_requested(self):
+        for extras in ((), ("kernels",)):
+            log = io.StringIO()
+            with (
+                patch(
+                    "compiler.common.export.importlib.metadata.version",
+                    side_effect=lambda name: name + "-version",
+                ),
+                redirect_stdout(log),
+            ):
+                report_export(
+                    "fixture", "decode", strict=True, diagnostics={}, extra_dependencies=extras
+                )
+            event = json.loads(log.getvalue())
+            self.assertEqual("kernels" in event["build"]["versions"], bool(extras))
+            self.assertEqual(event["diagnostics"], {})
+            self.assertTrue(event["build"]["strict_export"])
 
     def test_symbolic_configuration_error_is_not_a_usage_error(self):
         from torch.fx.experimental import _config

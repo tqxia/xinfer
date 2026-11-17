@@ -83,6 +83,7 @@ CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   tools.validation.tests.test_validation_modes tools.validation.tests.test_context
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
+  tools.validation.tests.test_hybrid \
   tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
   compiler.qwen35.tests.test_text_cache compiler.qwen35.tests.test_export
 ```
@@ -203,16 +204,17 @@ NATIVE_CHECKS="$PWD/artifacts/$MODEL/native-checks-new"
 "$BUILD/qwen_runtime_contract" "$MODEL" "$PACKAGES" "$NATIVE_CHECKS/contract.json"
 ```
 
-The memory probe records synchronized load, first-prefill/decode and destruction
-boundaries, including the temporary CPU-archive/GPU-pool overlap and separate
-binding of both loaders. It reports CUDA device use, ATen allocator counters,
-process RSS/high-water RSS and system available memory. Boundary samples are
-not an exact global CUDA peak, and allocator peaks exclude raw AOTI allocations.
-On unified-memory devices those figures overlap; do not add them. It executes
-only eight prefill tokens and one decode, not a full-context accuracy test or
-benchmark. The optional synchronous load observer exists only during runtime
-construction; production calls omit it, retain no callback and emit no phase
-samples. The runtime contract checks descriptor ownership, observer release,
+The memory probe records synchronized boundaries before/after runtime loading,
+first prefill/decode and runtime destruction. Instrumentation lives in the probe's
+test translation unit; production runtime constructors expose no diagnostic
+callbacks. It reports CUDA device use, ATen allocator counters, process
+RSS/high-water RSS and system available memory. Boundary samples do not expose
+internal archive/pool overlap or individual loader binding phases, and are not an
+exact global CUDA peak; allocator peaks exclude raw AOTI allocations. Earlier
+Qwen3.6 reports retain those internal samples from the historical instrumented
+runtime. On unified-memory devices these figures overlap; do not add them.
+The probe executes only eight prefill tokens and one decode, not a full-context
+accuracy test or benchmark. The runtime contract checks descriptor ownership,
 runtime settings and preflight ordering. Its `--files-only` form checks fresh
 file-integrity rejection without allocating GPU weights.
 
