@@ -23,6 +23,7 @@ StateSpec descriptor(const std::string &kind, bool inplace, std::optional<size_t
     stride[i] = step;
     step *= shape[i];
   }
+
   return {
       "layer_0." + kind, kind,  0, shape, stride, kind == "recurrent" ? at::kFloat : at::kBFloat16,
       inplace,           output};
@@ -60,6 +61,7 @@ void unchanged(const Tensors &actual, const Tensors &expected) {
                 actual[i].strides() == expected[i].strides() && at::equal(actual[i], expected[i]),
             "State was adopted before all outputs were validated");
 }
+
 } // namespace
 
 int main() {
@@ -82,11 +84,13 @@ int main() {
       const auto before = state.tensors();
       state.accept({at::zeros({1})});
       unchanged(state.tensors(), before);
+
       state.reset(-4);
       for (size_t i = 0; i < before.size(); ++i)
         require(state.tensors()[i].const_data_ptr() == before[i].const_data_ptr() &&
                     state.tensors()[i].eq(-4).all().item<bool>(),
                 "KV reset did not preserve storage or fill value");
+
       reject([&] { state.accept({}); });
       reject([&] { state.accept({at::zeros({1}), state.tensors()[0]}); });
     });
@@ -95,6 +99,7 @@ int main() {
       StatePolicy state(mixed_specs(), cpu);
       state.reset(7);
       const auto before = state.tensors();
+
       auto outputs = valid_outputs(state);
       // A returned KV view may be a different Tensor object with identical storage/layout.
       outputs[3] = outputs[3].view(outputs[3].sizes());
@@ -105,6 +110,7 @@ int main() {
       for (size_t i = 2; i < before.size(); ++i)
         require(state.tensors()[i].const_data_ptr() == before[i].const_data_ptr(),
                 "Returned KV changed caller-owned storage");
+
       state.reset(-4);
       for (size_t i = 0; i < before.size(); ++i) {
         const bool inplace = i >= 2;
@@ -144,6 +150,7 @@ int main() {
         StatePolicy state(mixed_specs(), cpu);
         state.reset();
         const auto before = state.tensors();
+
         auto outputs = valid_outputs(state);
         mutate(outputs);
         reject([&] { state.accept(outputs); });

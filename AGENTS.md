@@ -67,6 +67,18 @@ and documentation together. Follow the documented migration/re-export contract
 for retained packages. Keep metadata focused on runtime and artifact contracts; put build
 diagnostics in export logs.
 
+## C++ spacing
+
+Use blank lines as paragraphs: one blank line between function definitions and
+between distinct logical phases within a function, such as validation,
+preparation, execution and reporting. Keep related statements together, including
+a declaration and its immediate use or an operation and its error check. Related
+one-line accessors may stay grouped without blank lines between them.
+
+Avoid blank lines immediately inside function bodies and multiple consecutive
+blank lines. Apply this grouping deliberately; clang-format limits excess blank
+lines but does not identify logical phases within a function.
+
 ## Verification and measurement
 
 Use the pinned Ruff and clang-format tools with the repository configurations.

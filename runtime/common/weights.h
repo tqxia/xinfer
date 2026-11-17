@@ -1,4 +1,5 @@
 #pragma once
+
 #include "io.h"
 #include "sha256.h"
 
@@ -37,6 +38,7 @@ public:
               "Package checksum mismatch: " + kind);
       package_digests.emplace(kind, digest);
     }
+
     require(prefill.contains("shared_weights") && decode.contains("shared_weights"),
             "Shared weights metadata is required; re-export both packages");
     require(prefill.at("shared_weights") == decode.at("shared_weights"),
@@ -49,6 +51,7 @@ public:
                   options.at("always_keep_tensor_constants") == true,
               "Shared weights require weightless package compiler options");
     }
+
     const auto &contract = decode.at("shared_weights");
     require(contract.is_object() && contract.value("format", 0) == 2 &&
                 contract.value("file", std::string()) == "weights.pt" &&
@@ -56,11 +59,13 @@ public:
                 contract.contains("bytes") && contract.at("bytes").is_number_integer() &&
                 contract.contains("sha256") && contract.at("sha256").is_string(),
             "Shared weights metadata is required; re-export both packages");
+
     const auto path = root / "weights.pt";
     require(fs::is_regular_file(path), "Shared weights archive is missing");
     require(fs::file_size(path) == contract.at("bytes").get<uintmax_t>() &&
                 sha256_file(path) == contract.at("sha256").get<std::string>(),
             "Shared weights archive checksum mismatch");
+
     Json data;
     try {
       caffe2::serialize::PyTorchStreamReader reader(path.string());
@@ -74,6 +79,7 @@ public:
     require(data.is_object() && data.value("format", 0) == 2 &&
                 data.at("identity_sha256") == contract.at("identity"),
             "Shared weights identity mismatch");
+
     const auto &entries = data.at("entries");
     require(entries.is_object() && entries.size() == 2 && entries.contains("prefill") &&
                 entries.contains("decode"),
@@ -87,6 +93,7 @@ public:
         require(data.at("tensors").contains(name.get<std::string>()),
                 "Shared weights constant mapping is incomplete");
     }
+
     return ValidatedBundle(root, contract, std::move(data));
   }
 
@@ -94,6 +101,7 @@ public:
 
 private:
   friend class SharedWeights;
+
   ValidatedBundle(fs::path directory, Json contract, Json manifest)
       : directory_(std::move(directory)), contract_(std::move(contract)),
         manifest_(std::move(manifest)) {}
@@ -130,15 +138,18 @@ class SharedWeights {
 public:
   SharedWeights(ValidatedBundle bundle, const Json &contract) : bundle_(std::move(bundle)) {
     require(bundle_.contract_ == contract, "Shared weights contracts differ");
+
     auto archive =
         torch::jit::load((bundle_.directory_ / "weights.pt").string(), c10::Device(at::kCPU));
     require(archive.attr("identity").toStringRef() == contract.at("identity").get<std::string>(),
             "Shared weights archive identity mismatch");
+
     std::unordered_map<std::string, at::Tensor> cpu;
     for (const auto &buffer : archive.named_buffers())
       cpu.emplace(buffer.name, buffer.value);
     require(cpu.size() == bundle_.manifest_.at("storages").size(),
             "Shared weights archive buffer set mismatch");
+
     // Validate every CPU buffer before allocating the canonical device pool.
     for (const auto &[name, descriptor] : bundle_.manifest_.at("storages").items()) {
       require(cpu.contains(name), "Shared weights archive buffer set mismatch");
@@ -163,11 +174,13 @@ public:
                                  descriptor.at("stride").get<std::vector<int64_t>>(),
                                  descriptor.at("offset").get<int64_t>());
     }
+
     for (const auto &[name, descriptor] : bundle_.manifest_.at("storages").items()) {
       const auto type = descriptor.at("device").get<std::string>();
       storages_.emplace(name,
                         cpu.at(name).to(c10::Device(type == "cuda" ? at::kCUDA : at::kCPU, 0)));
     }
+
     for (const auto &[name, descriptor] : bundle_.manifest_.at("tensors").items()) {
       const auto shape = descriptor.at("shape").get<std::vector<int64_t>>();
       const auto stride = descriptor.at("stride").get<std::vector<int64_t>>();
@@ -192,12 +205,15 @@ public:
     require(names.size() == mapping.size() &&
                 std::unordered_set<std::string>(names.begin(), names.end()).size() == names.size(),
             "Shared weights constant FQNs differ: " + kind);
+
     std::unordered_map<std::string, at::Tensor> constants;
     for (const auto &name : names) {
       require(mapping.contains(name), "Shared weights constant FQNs differ: " + kind);
       constants.emplace(name, tensors_.at(mapping.at(name).get<std::string>()));
     }
+
     loader.load_constants(constants, false, true, true);
+
     const auto actual = loader.get_runner()->extract_constants_map(false);
     require(actual.size() == constants.size(), "Shared weights native constant map is incomplete");
     for (const auto &[name, value] : actual) {

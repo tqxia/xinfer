@@ -1,4 +1,5 @@
 #include "common/model.h"
+
 #include <chrono>
 #include <iostream>
 
@@ -23,12 +24,14 @@ Options parse_options(int argc, char **argv) {
     else
       throw std::runtime_error("Unknown option: " + option);
   }
+
   return options;
 }
 
 std::vector<int64_t> validate_request(const Options &options, const SpecBase &spec) {
   const auto prompt = read_ids(options.input, spec);
   spec.check_request(prompt, options.limit);
+
   require(!fs::exists(options.output), "Output already exists");
   const auto input_path = fs::weakly_canonical(options.input);
   const auto canonical_output = fs::weakly_canonical(options.output);
@@ -37,6 +40,7 @@ std::vector<int64_t> validate_request(const Options &options, const SpecBase &sp
                                     fs::weakly_canonical(options.trace) != canonical_output),
           "Trace path must differ from input and output");
   require(options.trace.empty() || !fs::exists(options.trace), "Trace path already exists");
+
   return prompt;
 }
 
@@ -45,6 +49,7 @@ void write_generated_ids(const fs::path &path, const std::vector<int64_t> &gener
   for (auto id : generated)
     output << id << ' ';
   output << '\n';
+
   output.close();
   require(bool(output), "Failed to write generated IDs");
 }
@@ -68,22 +73,27 @@ void run_generation(const Options &options) {
   with_model(options.packages, [&](const auto &spec, auto make_runtime) {
     const auto prompt = validate_request(options, spec);
     c10::InferenceMode inference;
+
     const auto load_start = Clock::now();
     auto runtime = make_runtime();
     torch::cuda::synchronize();
+
     const auto run_start = Clock::now();
     std::ofstream trace;
     if (!options.trace.empty())
       trace = output_file(options.trace, true);
+
     auto generated =
         runtime->generate(prompt, options.limit, options.trace.empty() ? nullptr : &trace);
     torch::cuda::synchronize();
     const auto run_end = Clock::now();
+
     write_generated_ids(options.output, generated);
     if (trace.is_open()) {
       trace.close();
       require(bool(trace), "Failed to write logits trace");
     }
+
     const auto ms = [](auto start, auto end) {
       return std::chrono::duration<double, std::milli>(end - start).count();
     };
@@ -92,6 +102,7 @@ void run_generation(const Options &options) {
     report_generation(options, spec, prompt.size(), result);
   });
 }
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -101,6 +112,7 @@ int main(int argc, char **argv) {
                    "[--trace LOGITS_F32]\n";
       return argc == 2 && std::string(argv[1]) == "--help" ? 0 : 1;
     }
+
     run_generation(parse_options(argc, argv));
     return 0;
   } catch (const std::exception &error) {

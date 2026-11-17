@@ -1,4 +1,5 @@
 #pragma once
+
 #include "spec.h"
 #include "generation.h"
 #include "state.h"
@@ -27,6 +28,7 @@ public:
     spec_.check_step_tokens(tokens);
     const auto length = static_cast<int64_t>(tokens.size());
     require(length <= spec_.capacity - position_, "Context capacity exceeded");
+
     const auto options = at::TensorOptions().device(device_).dtype(at::kLong);
     const auto ids = length == 1 ? at::full({1, 1}, tokens.front(), options)
                                  : at::tensor(tokens, at::kLong).view({1, length}).to(options);
@@ -35,10 +37,12 @@ public:
     inputs.insert(inputs.end(), tensors.begin(), tensors.end());
     // Prefix length comes from CPU shape metadata, never CUDA tensor data.
     inputs.push_back(extent_.narrow(0, 0, position_ + length + 1));
+
     auto outputs = (length == 1 ? decode_ : prefill_).run(inputs);
     require(!outputs.empty() && outputs[0].sizes() == at::IntArrayRef({1, spec_.vocab}) &&
                 outputs[0].scalar_type() == at::kBFloat16 && outputs[0].device() == device_,
             "Unexpected compiled output");
+
     state_.accept(outputs);
     position_ += length;
     ++(length == 1 ? decode_calls_ : prefill_calls_);
@@ -50,6 +54,7 @@ public:
     spec_.check_tokens(prompt);
     require(static_cast<int64_t>(prompt.size()) <= spec_.capacity - position_,
             "Context capacity exceeded");
+
     return xinfer::prefill(*this, prompt, spec_.max_prefill);
   }
 
@@ -74,6 +79,7 @@ private:
         decode_(weights_.package_path("decode").string()), state_(spec_.state, device_) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
+
     extent_ =
         at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();
@@ -81,6 +87,7 @@ private:
 
   const Spec spec_;
   const c10::Device device_;
+
   // Borrowing loaders are destroyed before their canonical weight owner.
   SharedWeights weights_;
   Loader prefill_, decode_;

@@ -1,6 +1,8 @@
 #pragma once
+
 #include <ATen/ATen.h>
 #include <nlohmann/json.hpp>
+
 #include <charconv>
 #include <filesystem>
 #include <fstream>
@@ -33,6 +35,7 @@ inline Json read_json(const fs::path &path, const std::string &prefix = "Cannot 
 inline std::ofstream output_file(const fs::path &path, bool binary = false) {
   if (path.has_parent_path())
     fs::create_directories(path.parent_path());
+
   std::ofstream file(path, std::ios::out | (binary ? std::ios::binary : std::ios::openmode{}));
   require(file.is_open(), "Cannot open output: " + path.string());
   return file;

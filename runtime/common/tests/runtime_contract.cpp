@@ -31,6 +31,7 @@ template <class Runtime> Trace trace(Runtime &runtime) {
     for (const auto &tensor : state(runtime))
       result.push_back(tensor.cpu());
   }
+
   require(runtime.position() == 3, "Incorrect position after prefill and decode");
   for (const auto &tensor : result)
     require(at::isfinite(tensor).all().template item<bool>(), "Non-finite runtime output");
@@ -53,13 +54,16 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
     at::set_num_threads(2);
     at::globalContext().setAllowTF32CuBLAS(true);
     at::globalContext().setAllowTF32CuDNN(true);
+
     Runtime runtime(packages, caller);
     require(at::get_num_threads() == 1 && !at::globalContext().allowTF32CuBLAS() &&
                 !at::globalContext().allowTF32CuDNN(),
             "Runtime did not configure threads and TF32");
     report["runtime_settings_applied"] = true;
+
     expected = trace(runtime);
     expected_ids = runtime.generate({42, 13}, 3, nullptr);
+
     // This fails deterministically with the old borrowed Spec, before the
     // temporary/scoped cases below can encounter a dangling reference.
     mutate(caller);
@@ -68,6 +72,7 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
             "Caller Spec mutation changed generation");
     report["cases"].push_back({{"name", "caller_spec_mutation"}, {"passed", true}});
   }
+
   {
     Runtime runtime(packages, Spec(validated));
     compare(trace(runtime), expected);
@@ -75,6 +80,7 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
             "Temporary Spec changed generation");
     report["cases"].push_back({{"name", "temporary_spec"}, {"passed", true}});
   }
+
   {
     auto runtime = [&] {
       Spec local(validated);
@@ -85,6 +91,7 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
             "Scoped Spec changed generation");
     report["cases"].push_back({{"name", "scoped_spec_destroyed"}, {"passed", true}});
   }
+
   report["trace_tensors_per_case"] = expected.size();
   report["generated_ids"] = expected_ids;
 }
@@ -93,6 +100,7 @@ template <class Spec>
 void check_package_payloads(const std::filesystem::path &fixture, const Spec &validated,
                             const Json &manifest, Json &report) {
   namespace fs = std::filesystem;
+
   // File verification treats operator payloads as opaque. These archives are
   // checked only against their recorded digests, never loaded as models.
   fs::remove(fixture / "weights.pt"); // Remove the fixture symlink, not its target.
@@ -117,6 +125,7 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
         }
         writer.writeEndOfFile();
       }
+
       const auto digest = xinfer::sha256_file(path);
       auto &metadata =
           std::string(kind) == "prefill" ? descriptor.prefill_metadata : descriptor.metadata;
@@ -124,6 +133,7 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
       metadata["package_sha256"] = digest;
       data["entries"][kind]["package_sha256"] = digest;
     }
+
     const auto weights = fixture / "weights.pt";
     {
       caffe2::serialize::PyTorchStreamWriter writer(weights.string());
@@ -131,11 +141,13 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
       writer.writeRecord("extra/weights.json", payload.data(), payload.size());
       writer.writeEndOfFile();
     }
+
     auto contract = validated.shared_weights;
     contract["bytes"] = fs::file_size(weights);
     contract["sha256"] = xinfer::sha256_file(weights);
     descriptor.shared_weights = descriptor.prefill_metadata["shared_weights"] =
         descriptor.metadata["shared_weights"] = contract;
+
     auto verified = descriptor.validate_files(fixture);
     (void)verified;
     report["cases"].push_back({{"name", "opaque_package_" + variant}, {"passed", true}});
@@ -150,6 +162,7 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
   const auto fixture = output.parent_path() / (output.filename().string() + ".bundle");
   require(!fs::exists(fixture), "Preflight fixture already exists");
   fs::create_directories(fixture);
+
   struct Cleanup {
     fs::path directory;
     ~Cleanup() {
@@ -157,16 +170,19 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
       fs::remove_all(directory, ignored);
     }
   } cleanup{fixture};
+
   for (const auto *name : {"prefill.json", "decode.json", "prefill.pt2", "decode.pt2"})
     fs::copy_file(packages / name, fixture / name);
   // The large archive is immutable; only the copied packages are modified.
   fs::create_symlink(fs::absolute(packages / "weights.pt"), fixture / "weights.pt");
+
   const Spec reused(fixture);
   Json manifest;
   {
     auto verified = reused.validate_files(fixture);
     manifest = verified.manifest();
   }
+
   auto corrupt = [&](const char *kind) {
     std::fstream file(fixture / (std::string(kind) + ".pt2"),
                       std::ios::in | std::ios::out | std::ios::binary);
@@ -180,6 +196,7 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
     file.close();
     require(bool(file), "Cannot corrupt preflight fixture");
   };
+
   auto reject = [&](const Spec &descriptor, const char *kind, const char *name) {
     bool rejected = false;
     try {
@@ -190,13 +207,16 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
     require(rejected, std::string("File preflight was bypassed: ") + name);
     report["cases"].push_back({{"name", name}, {"passed", true}});
   };
+
   corrupt("prefill");
   reject(reused, "prefill", "changed_after_spec");
   reject(validated, "prefill", "different_package_directory");
+
   fs::copy_file(packages / "prefill.pt2", fixture / "prefill.pt2",
                 fs::copy_options::overwrite_existing);
   corrupt("decode");
   reject(reused, "decode", "reused_spec_after_verification");
+
   check_package_payloads(fixture, validated, manifest, report);
 }
 
@@ -207,6 +227,7 @@ void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec
   // Loading this descriptor would fail. The architecture error must win,
   // proving that rejection occurs before weight construction/package loading.
   wrong_gpu.shared_weights = Json();
+
   bool rejected = false;
   try {
     qwen::Runtime runtime(packages, wrong_gpu);
@@ -215,6 +236,7 @@ void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec
   }
   require(rejected, "GPU architecture was not checked before loading weights");
 }
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -223,12 +245,14 @@ int main(int argc, char **argv) {
             "Usage: qwen_runtime_contract qwen3|qwen35 PACKAGE_DIR OUTPUT_JSON [--files-only]");
     const bool files_only = argc == 5;
     c10::InferenceMode inference;
+
     const std::string model(argv[1]);
     Json report = {{"model", model},
                    {"packages", std::filesystem::absolute(argv[2]).string()},
                    {"torch", TORCH_VERSION},
                    {"cases", Json::array()},
                    {"passed", false}};
+
     if (model == "qwen3") {
       const qwen::Spec spec(argv[2]);
       if (files_only) {
@@ -249,6 +273,7 @@ int main(int argc, char **argv) {
     } else {
       throw std::runtime_error("Unknown model: " + model);
     }
+
     report["passed"] = true;
     auto file = xinfer::output_file(argv[3]);
     file << report.dump(2) << '\n';

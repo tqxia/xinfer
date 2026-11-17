@@ -1,4 +1,5 @@
 #pragma once
+
 #include "io.h"
 
 #include <algorithm>
@@ -14,6 +15,7 @@ namespace xinfer {
 inline std::string sha256_file(const fs::path &path) {
   std::ifstream file(path, std::ios::binary);
   require(file.is_open(), "Shared weights cannot open file for checksum: " + path.string());
+
   constexpr std::array<uint32_t, 64> k{
       0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
       0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
@@ -27,16 +29,19 @@ inline std::string sha256_file(const fs::path &path) {
       0xc67178f2};
   std::array<uint32_t, 8> h{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
                             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+
   auto transform = [&](const unsigned char *block) {
     std::array<uint32_t, 64> w{};
     for (size_t i = 0; i < 16; ++i)
       w[i] = uint32_t(block[4 * i]) << 24 | uint32_t(block[4 * i + 1]) << 16 |
              uint32_t(block[4 * i + 2]) << 8 | uint32_t(block[4 * i + 3]);
+
     for (size_t i = 16; i < 64; ++i) {
       const uint32_t s0 = std::rotr(w[i - 15], 7) ^ std::rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
       const uint32_t s1 = std::rotr(w[i - 2], 17) ^ std::rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
       w[i] = w[i - 16] + s0 + w[i - 7] + s1;
     }
+
     auto a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], z = h[7];
     for (size_t i = 0; i < 64; ++i) {
       const uint32_t s1 = std::rotr(e, 6) ^ std::rotr(e, 11) ^ std::rotr(e, 25);
@@ -45,6 +50,7 @@ inline std::string sha256_file(const fs::path &path) {
       const uint32_t s0 = std::rotr(a, 2) ^ std::rotr(a, 13) ^ std::rotr(a, 22);
       const uint32_t majority = (a & b) ^ (a & c) ^ (b & c);
       const uint32_t t2 = s0 + majority;
+
       z = g;
       g = f;
       f = e;
@@ -54,6 +60,7 @@ inline std::string sha256_file(const fs::path &path) {
       b = a;
       a = t1 + t2;
     }
+
     h[0] += a;
     h[1] += b;
     h[2] += c;
@@ -63,6 +70,7 @@ inline std::string sha256_file(const fs::path &path) {
     h[6] += g;
     h[7] += z;
   };
+
   std::array<unsigned char, 65536> buffer{};
   uint64_t bytes = 0;
   size_t tail = 0;
@@ -77,6 +85,7 @@ inline std::string sha256_file(const fs::path &path) {
       std::copy_n(buffer.data() + count - tail, tail, buffer.data());
   }
   require(file.eof(), "Shared weights checksum read failed");
+
   buffer[tail++] = 0x80;
   if (tail > 56) {
     std::fill(buffer.begin() + tail, buffer.begin() + 64, 0);
@@ -88,6 +97,7 @@ inline std::string sha256_file(const fs::path &path) {
   for (size_t i = 0; i < 8; ++i)
     buffer[63 - i] = static_cast<unsigned char>(bits >> (8 * i));
   transform(buffer.data());
+
   std::ostringstream result;
   result << std::hex << std::setfill('0');
   for (auto word : h)

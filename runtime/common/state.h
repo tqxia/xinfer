@@ -1,4 +1,5 @@
 #pragma once
+
 #include "spec.h"
 
 namespace xinfer {
@@ -20,6 +21,7 @@ public:
   void reset(double fill = 0) {
     if (tensors_.empty())
       tensors_.resize(specs_.size());
+
     for (size_t i = 0; i < specs_.size(); ++i) {
       const auto &item = specs_[i];
       auto &tensor = tensors_[i];
@@ -38,11 +40,13 @@ public:
 
   void accept(const std::vector<at::Tensor> &outputs) {
     require(outputs.size() == output_count_, "Incorrect package output count");
+
     // Validate the complete return before replacing any functional state.
     for (size_t i = 0; i < specs_.size(); ++i) {
       const auto &item = specs_[i];
       if (!item.output_index)
         continue;
+
       const auto &next = outputs[*item.output_index];
       require(next.defined() && next.sizes() == at::IntArrayRef(item.shape) &&
                   next.scalar_type() == item.dtype && next.device() == device_ &&
@@ -53,6 +57,7 @@ public:
                     next.strides() == tensors_[i].strides(),
                 "KV outputs must alias caller-owned buffers");
     }
+
     for (size_t i = 0; i < specs_.size(); ++i)
       if (!specs_[i].inplace)
         tensors_[i] = outputs[*specs_[i].output_index];

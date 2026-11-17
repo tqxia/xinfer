@@ -1,4 +1,5 @@
 #pragma once
+
 #include "io.h"
 #include "settings.h"
 #include "weights.h"
@@ -65,6 +66,7 @@ inline bool metadata_integer(const Json &value, int64_t minimum = 0) {
 inline bool metadata_digest(const Json &value) {
   if (!value.is_string())
     return false;
+
   const auto text = value.get<std::string>();
   return text.size() == 64 && std::all_of(text.begin(), text.end(), [](char c) {
            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
@@ -126,11 +128,13 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
               (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
           "Unsupported model type");
+
   const auto &fields = metadata_fields();
   for (const auto &field : fields)
     metadata_check(metadata.contains(field), field);
   for (const auto &[field, _] : metadata.items())
     metadata_check(std::find(fields.begin(), fields.end(), field) != fields.end(), field);
+
   const auto &m = metadata;
   metadata_check(m.at("entry_point") == entry, "entry_point");
   // The shape-only extent input has capacity + 1 elements.
@@ -144,6 +148,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                      metadata_integer(tokens[1], 1) && tokens == expected_tokens &&
                      tokens[1].get<int64_t>() <= m.at("cache_length").get<int64_t>(),
                  "token_range");
+
   metadata_check(m.at("torch_version").is_string() &&
                      !m.at("torch_version").get<std::string>().empty(),
                  "torch_version");
@@ -152,12 +157,14 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   metadata_check(sm.is_array() && sm.size() == 2 && metadata_integer(sm[0], 1) &&
                      metadata_integer(sm[1]),
                  "cuda_compute_capability");
+
   const auto &eos = m.at("eos_token_ids");
   metadata_check(eos.is_array() && !eos.empty(), "eos_token_ids");
   for (const auto &token : eos)
     metadata_check(metadata_integer(token) &&
                        token.get<int64_t>() < m.at("vocab_size").get<int64_t>(),
                    "eos_token_ids");
+
   const auto &checkpoint = m.at("checkpoint");
   metadata_check(metadata_keys(checkpoint, {"model_id", "revision", "manifest"}), "checkpoint");
   for (const auto *field : {"model_id", "revision"})
@@ -165,6 +172,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                        !checkpoint.at(field).get<std::string>().empty(),
                    "checkpoint");
   metadata_check(checkpoint.at("manifest").is_object(), "checkpoint");
+
   metadata_check(metadata_equal(m.at("export_options"), Json({{"backed_size_oblivious", false}})),
                  "export_options");
   metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
@@ -173,6 +181,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                          {"aot_inductor.package_constants_in_so", false},
                          {"always_keep_tensor_constants", true}};
   metadata_check(metadata_equal(m.at("inductor_configs"), compiler), "inductor_configs");
+
   const auto &states = m.at("state");
   metadata_check(states.is_array() && !states.empty(), "state");
   std::unordered_set<std::string> names;
@@ -184,6 +193,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
     metadata_check(kv || kind == "conv" || kind == "recurrent", "state");
     const auto name = "layer_" + std::to_string(item.at("layer").get<int64_t>()) + "." + kind;
     metadata_check(names.insert(name).second, "state");
+
     const auto &shape = item.at("shape");
     metadata_check(shape.is_array() && shape.size() == (kind == "conv" ? 3 : 4), "state");
     int64_t elements = 1;
@@ -199,6 +209,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
     if (kv)
       metadata_check(shape[2] == m.at("cache_length"), "state");
   }
+
   metadata_check(metadata_integer(m.at("package_bytes"), 1), "package_bytes");
   metadata_check(metadata_digest(m.at("package_sha256")), "package_sha256");
   const auto &weights = m.at("shared_weights");
@@ -208,6 +219,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
           weights.at("file") == "weights.pt" && metadata_integer(weights.at("bytes"), 1) &&
           metadata_digest(weights.at("identity")) && metadata_digest(weights.at("sha256")),
       "shared_weights");
+
   metadata_check(m.at("model_specific").is_object(), "model_specific");
 }
 
@@ -216,12 +228,14 @@ inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
   check_metadata_schema(decode);
   check_runtime_abi(prefill);
   check_runtime_abi(decode);
+
   require(prefill.value("model_type", Json()) == decode.value("model_type", Json()),
           "Package model types differ");
   for (const auto *m : {&prefill, &decode})
     require(m->contains("model_type") && m->at("model_type").is_string() &&
                 (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
             "Unsupported model type");
+
   static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",
                                                             "package_bytes", "package_sha256"};
   for (const auto &field : metadata_fields())
@@ -229,6 +243,7 @@ inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
       require(prefill.contains(field) == decode.contains(field) &&
                   (!prefill.contains(field) || metadata_equal(prefill.at(field), decode.at(field))),
               "Package metadata differs: " + field);
+
   validate_metadata(prefill, "prefill");
   validate_metadata(decode, "decode");
 }
@@ -248,6 +263,7 @@ struct SpecBase {
     prefill_metadata = read_json(directory / "prefill.json");
     metadata = read_json(directory / "decode.json");
     validate_metadata_pair(prefill_metadata, metadata);
+
     model_type = parse_model_type(metadata.at("model_type").get<std::string>());
     capacity = metadata.at("cache_length");
     max_prefill = prefill_metadata.at("token_range").at(1);
@@ -255,9 +271,11 @@ struct SpecBase {
     eos = metadata.at("eos_token_ids").get<std::vector<int64_t>>();
     compute_capability = metadata.at("cuda_compute_capability").get<std::vector<int64_t>>();
     shared_weights = metadata.at("shared_weights");
+
     const auto version = metadata.at("torch_version").get<std::string>();
     require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
+
     for (const auto &item : metadata.at("state")) {
       const auto kind = item.at("kind").get<std::string>();
       const auto layer = item.at("layer").get<int64_t>();
@@ -268,6 +286,7 @@ struct SpecBase {
         stride[i] = step;
         step *= shape[i];
       }
+
       state.push_back({"layer_" + std::to_string(layer) + "." + kind, kind, layer, std::move(shape),
                        std::move(stride),
                        item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
@@ -331,12 +350,14 @@ inline c10::Device configured_device(const SpecBase &spec) {
 inline std::vector<int64_t> read_ids(const fs::path &path, const SpecBase &spec) {
   std::ifstream file(path);
   require(file.is_open(), "Cannot open token IDs: " + path.string());
+
   std::vector<int64_t> ids;
   for (std::string word; file >> word;) {
     ids.push_back(integer(word));
     require(static_cast<int64_t>(ids.size()) <= spec.capacity,
             "Expected 1.." + std::to_string(spec.capacity) + " input tokens");
   }
+
   require(file.eof(), "Failed to read token IDs: " + path.string());
   spec.check_tokens(ids);
   return ids;

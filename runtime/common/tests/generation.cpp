@@ -22,6 +22,7 @@ struct Bundle {
                 ("xinfer-generation-" +
                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     require(xinfer::fs::create_directory(directory), "Cannot create test metadata directory");
+
     const Json state = Json::array({
         {{"layer", 0},
          {"kind", "key"},
@@ -63,6 +64,7 @@ struct Bundle {
           {"sha256", std::string(64, 'c')}}},
         {"model_specific", Json::object()},
     };
+
     for (const auto *kind : {"prefill", "decode"}) {
       metadata["entry_point"] = kind;
       metadata["token_range"] = std::string(kind) == "prefill" ? Json{2, 512} : Json{1, 1};
@@ -86,6 +88,7 @@ struct Logits {
     selections->push_back(position);
     return tensor.argmax(dim);
   }
+
   operator const at::Tensor &() const { return tensor; }
 };
 
@@ -104,10 +107,12 @@ struct Runtime {
     spec.check_step_tokens(tokens);
     require(static_cast<int64_t>(tokens.size()) <= spec.capacity - position,
             "Context capacity exceeded");
+
     calls.emplace_back(position, tokens.size());
     consumed.insert(consumed.end(), tokens.begin(), tokens.end());
     position += static_cast<int64_t>(tokens.size());
     ++(tokens.size() == 1 ? decode_calls : prefill_calls);
+
     auto logits = at::zeros({1, spec.vocab});
     logits.select(0, 0).select(0, position % 7).fill_(1);
     return {logits, &selections, position};
@@ -117,6 +122,7 @@ struct Runtime {
     spec.check_tokens(prompt);
     require(static_cast<int64_t>(prompt.size()) <= spec.capacity - position,
             "Context capacity exceeded");
+
     return xinfer::prefill(*this, prompt, spec.max_prefill);
   }
 
@@ -136,6 +142,7 @@ void reject_without_mutation(Runtime &runtime, const std::function<void()> &oper
   const auto position = runtime.position, resets = runtime.resets;
   const auto calls = runtime.calls;
   const auto consumed = runtime.consumed, selections = runtime.selections;
+
   bool rejected = false;
   try {
     operation();
@@ -147,6 +154,7 @@ void reject_without_mutation(Runtime &runtime, const std::function<void()> &oper
               runtime.consumed == consumed && runtime.selections == selections,
           "Rejected request changed state or executed a chunk");
 }
+
 } // namespace
 
 int main() {
@@ -155,6 +163,7 @@ int main() {
     Bundle bundle;
     const xinfer::SpecBase spec(bundle.directory);
     Runtime runtime(spec);
+
     Json report = {{"device", "cpu"}, {"cases", Json::array()}, {"passed", false}};
     auto check = [&](const char *name, const std::function<void()> &operation) {
       try {
@@ -170,6 +179,7 @@ int main() {
               "Compiled context and per-call bounds differ from the metadata");
       const auto metadata = xinfer::read_json(bundle.directory / "prefill.json");
       xinfer::validate_metadata(metadata, "prefill");
+
       for (const auto *kind : {"prefill", "decode"}) {
         auto small = xinfer::read_json(bundle.directory / (std::string(kind) + ".json"));
         small["cache_length"] = 511;
@@ -180,11 +190,13 @@ int main() {
           rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
         }
         require(rejected, "Sub-512 capacity was not rejected as a capacity error");
+
         small["cache_length"] = 512;
         for (auto &state : small["state"])
           state["shape"][2] = 512;
         xinfer::validate_metadata(small, kind);
       }
+
       for (const auto version : {3, 4}) {
         auto old = metadata;
         old["schema_version"] = version;
@@ -197,6 +209,7 @@ int main() {
         }
         require(rejected, "Retired metadata schema was accepted");
       }
+
       auto retired_field = metadata;
       retired_field["max_prompt_length"] = 8192;
       bool rejected = false;
@@ -215,9 +228,11 @@ int main() {
       require(runtime.position == 8193 && runtime.calls.size() == 17 &&
                   runtime.calls.back().second == 1,
               "Request validation retained an 8192-token cap");
+
       runtime.generate(std::vector<int64_t>(spec.capacity - 1, 2), 1);
       require(runtime.position == spec.capacity - 1,
               "Prompt plus one generated token did not fit the exact budget");
+
       reject_without_mutation(runtime,
                               [&] { runtime.generate(std::vector<int64_t>(spec.capacity, 2), 1); });
       // Even a prompt that predicts EOS immediately must reserve the full budget.
@@ -232,6 +247,7 @@ int main() {
         require(selected.capacity == spec.capacity && selected.max_prefill == 512,
                 "Shared API changed compiled context or per-call bounds");
         selected.check_request(std::vector<int64_t>(8193, 2), 1);
+
         bool rejected = false;
         try {
           selected.check_request(std::vector<int64_t>(selected.capacity, 2), 1);
@@ -249,11 +265,14 @@ int main() {
       runtime.reset();
       spec.check_tokens(std::vector<int64_t>(513, 2));
       reject_without_mutation(runtime, [&] { runtime.step(std::vector<int64_t>(513, 2)); });
+
       runtime.prefill(std::vector<int64_t>(513, 2));
       require(runtime.position == 513 && runtime.calls.size() == 2,
               "A legal request was constrained to a single compiled call");
+
       runtime.step(std::vector<int64_t>(512, 2));
       require(runtime.position == 1025, "A legal appended compiled call was rejected");
+
       std::vector<int64_t> invalid(512, 2);
       invalid.back() = spec.vocab;
       reject_without_mutation(runtime, [&] { runtime.step(invalid); });
@@ -265,10 +284,12 @@ int main() {
       Bundle small_bundle(512);
       const xinfer::SpecBase small_spec(small_bundle.directory);
       Runtime small(small_spec);
+
       small.generate(std::vector<int64_t>(511, 2), 1);
       require(small.position == 511, "Exact minimum-context request budget was rejected");
       reject_without_mutation(small, [&] { small.generate(std::vector<int64_t>(511, 2), 2); });
       reject_without_mutation(small, [&] { small.generate(std::vector<int64_t>(512, 2), 1); });
+
       small.reset();
       small.prefill(std::vector<int64_t>(512, 2));
       require(small.position == small_spec.capacity && small.prefill_calls == 1,
@@ -289,10 +310,12 @@ int main() {
         std::vector<int64_t> prompt;
         for (int64_t i = 0; i < length; ++i)
           prompt.push_back(i % spec.vocab);
+
         runtime.prefill(prompt);
         require(runtime.consumed == prompt && runtime.position == length,
                 "Prompt partition lost, reordered or repeated tokens");
         require(runtime.calls.size() == sizes.size(), "Incorrect compiled call count");
+
         int64_t position = 0, prefill = 0, decode = 0;
         for (size_t i = 0; i < sizes.size(); ++i) {
           require(runtime.calls[i] == std::pair(position, sizes[i]),
@@ -314,6 +337,7 @@ int main() {
                   runtime.calls[2] == std::pair<int64_t, int64_t>(515, 1) &&
                   runtime.position == 516,
               "Chunking discarded the existing prefix");
+
       runtime.reset();
       const std::vector<int64_t> prompt(8192, 2);
       runtime.prefill(prompt);
@@ -334,11 +358,13 @@ int main() {
               "Generation performed an intermediate prompt argmax");
       require(trace.str().size() == ids.size() * spec.vocab * sizeof(float),
               "Trace contains intermediate prompt rows");
+
       const auto calls = runtime.calls;
       const auto resets = runtime.resets;
       require(runtime.generate(prompt, 3) == ids && runtime.calls == calls &&
                   runtime.resets == resets + 1,
               "Reset/reuse changed chunked generation");
+
       require(runtime.generate(std::vector<int64_t>(512, 2), 3) == std::vector<int64_t>{1} &&
                   runtime.position == 512,
               "EOS stopping performed an extra decode");
@@ -347,6 +373,7 @@ int main() {
     check("whole_request_validation_precedes_state_changes", [&] {
       runtime.reset();
       runtime.step({3, 4, 5});
+
       std::vector<int64_t> prompt(8192, 2);
       spec.check_request(prompt, 8192); // Exactly the advertised 16K budget.
       reject_without_mutation(runtime, [&] { runtime.generate(prompt, 8193); });
@@ -354,6 +381,7 @@ int main() {
       reject_without_mutation(runtime, [&] { runtime.generate({}, 1); });
       reject_without_mutation(
           runtime, [&] { runtime.generate(std::vector<int64_t>(spec.capacity + 1, 2), 1); });
+
       prompt.back() = spec.vocab;
       reject_without_mutation(runtime, [&] { runtime.prefill(prompt); });
       reject_without_mutation(runtime, [&] { runtime.generate(prompt, 1); });
