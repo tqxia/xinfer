@@ -37,7 +37,10 @@ are `environments/l20/setup.sh`,
 `runtime/common/` owns the runner, state storage, device and package preflight,
 positions, prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
 One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
-both models, selected from package metadata. One state policy retains persistent
+both models, selected from package metadata. Their entry points handle arguments
+and errors; workflow and reporting helpers stay in the corresponding `.cpp` files.
+The validator separates greedy and explicit-step cases from state/overflow checks.
+One state policy retains persistent
 KV buffers and replaces functional conv/recurrent state using metadata update
 rules and the runtime ABI's output order. Generation stops at EOS or the token
 budget. Benchmark requests

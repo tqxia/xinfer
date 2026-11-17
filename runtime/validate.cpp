@@ -6,6 +6,19 @@
 using namespace xinfer;
 
 namespace {
+struct Options {
+  fs::path packages, cases, output;
+};
+
+Options parse_options(int argc, char **argv) {
+  require(argc == 4, "Usage: xinfer_validate PACKAGE_DIR CASES_JSON OUTPUT_DIR");
+  return {argv[1], argv[2], argv[3]};
+}
+
+struct TraceLayout {
+  bool qwen3, selected_states, compact;
+};
+
 struct Case {
   std::string name;
   bool greedy, dump_cache, check_overflow;
@@ -140,153 +153,188 @@ void check_native_libraries(Json &report) {
   report["no_python_library"] = true;
   report["attention_library"] = true;
 }
+
+template <class Runtime>
+void check_persistent(const Runtime &runtime, const std::vector<const void *> &persistent) {
+  for (size_t i = 0; i < persistent.size(); ++i)
+    if (runtime.spec().state[i].inplace)
+      require(runtime.state()[i].const_data_ptr() == persistent[i], "KV cache storage changed");
+}
+
+template <class Runtime> void check_reset(const Runtime &runtime, double fill) {
+  for (size_t i = 0; i < runtime.spec().state.size(); ++i) {
+    const double expected = runtime.spec().state[i].inplace ? fill : 0;
+    require(runtime.state()[i].eq(expected).all().template item<bool>(),
+            "State reset left stale data");
+  }
+}
+
+void check_state_update(const StateSpec &spec, const at::Tensor &input, const at::Tensor &before,
+                        const at::Tensor &after, int64_t start, int64_t end, bool qwen3) {
+  if (spec.inplace) {
+    require(input.const_data_ptr() == after.const_data_ptr() && input.strides() == after.strides(),
+            "KV output lost caller-owned storage");
+    require(at::equal(before.slice(2, 0, start), after.slice(2, 0, start)), "Past KV overwritten");
+    require(at::equal(before.slice(2, end), after.slice(2, end)), "Future KV overwritten");
+    if (qwen3)
+      require(!at::equal(before.slice(2, start, end), after.slice(2, start, end)),
+              "Cache update missing");
+  } else {
+    require(at::equal(input, before), "Functional input state mutated");
+  }
+  require(at::isfinite(after).all().item<bool>(), "Non-finite state");
+}
+
+template <class Runtime> void check_overflow(Runtime &runtime) {
+  const auto capacity = runtime.spec().capacity;
+  require(runtime.position() == capacity, "Context not full");
+  const auto inputs = runtime.state();
+  const auto before = snapshot(runtime);
+  bool rejected = false;
+  try {
+    runtime.step({1});
+  } catch (const std::runtime_error &error) {
+    rejected = std::string(error.what()) == "Context capacity exceeded";
+  }
+  require(rejected && runtime.position() == capacity, "Overflow not rejected");
+  for (size_t i = 0; i < before.size(); ++i)
+    require(inputs[i].const_data_ptr() == runtime.state()[i].const_data_ptr() &&
+                at::equal(before[i], runtime.state()[i]),
+            "Overflow changed state");
+}
+
+template <class Runtime>
+void run_greedy_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
+                     std::ofstream &logits, std::ofstream &states, Json &row) {
+  const auto ids = c.override_eos ? xinfer::generate(runtime, c.prompt, c.limit, c.eos, &logits)
+                                  : runtime.generate(c.prompt, c.limit, &logits);
+  row["ids"] = ids;
+  row["rows"] = ids.size();
+  row["stop"] = std::find(c.eos.begin(), c.eos.end(), ids.back()) != c.eos.end() ? "eos" : "limit";
+  if (!layout.qwen3)
+    write_state(states, runtime, layout.compact, 0);
+}
+
+template <class Runtime>
+void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
+                    const fs::path &output, const std::vector<const void *> &persistent,
+                    std::ofstream &logits, std::ofstream &states, Json &row) {
+  runtime.reset(c.fill);
+  check_reset(runtime, c.fill);
+  for (size_t step = 0; step < c.steps.size(); ++step) {
+    const auto &tokens = c.steps[step];
+    const auto inputs = runtime.state();
+    const auto before = snapshot(runtime);
+    const int64_t start = runtime.position(), end = start + tokens.size();
+    const auto score = runtime.step(tokens);
+    require(at::isfinite(score).all().template item<bool>(), "Non-finite logits");
+    require(runtime.position() == end, "Incorrect position advance");
+    if (layout.qwen3)
+      write_logits(logits, score);
+    else
+      write_tensor(states, score);
+    require(runtime.state().size() == runtime.spec().state.size(), "Incorrect state count");
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      const auto &after = runtime.state()[i];
+      check_state_update(runtime.spec().state[i], inputs[i], before[i], after, start, end,
+                         layout.qwen3);
+      if (!layout.qwen3 && !layout.selected_states)
+        write_tensor(states, after);
+    }
+    check_persistent(runtime, persistent);
+    if (layout.selected_states &&
+        std::find(c.state_steps.begin(), c.state_steps.end(), step) != c.state_steps.end()) {
+      auto checkpoint =
+          output_file(output / (c.name + "." + std::to_string(step) + ".states"), true);
+      write_state(checkpoint, runtime, layout.compact, c.fill);
+      finish(checkpoint, "Failed to write state checkpoint");
+    }
+  }
+  row["rows"] = c.steps.size();
+  row["steps"] = c.steps.size();
+  row["write_region_checks"] = row["reset_check"] = true;
+  row["kv_inputs_updated_in_place"] = row["non_kv_inputs_unchanged"] =
+      row["kv_write_regions_preserved"] = true;
+  if (layout.qwen3 && c.dump_cache && !layout.selected_states) {
+    auto cache = output_file(output / (c.name + ".kv.bf16"), true);
+    for (const auto &tensor : runtime.state())
+      write_tensor(cache, tensor);
+    finish(cache, "Failed to write cache dump");
+  }
+}
+
+template <class Runtime>
+Json run_case(Runtime &runtime, const Case &c, const TraceLayout &layout, const fs::path &output,
+              const std::vector<const void *> &persistent) {
+  Json row = {{"name", c.name}};
+  if (layout.selected_states) {
+    row["state_steps"] = c.state_steps;
+    row["state_prefix"] = layout.compact;
+  }
+  std::ofstream logits, states;
+  if (layout.qwen3 || c.greedy)
+    logits = output_file(output / (c.name + ".f32"), true);
+  if (!layout.qwen3)
+    states = output_file(output / (c.name + ".states"), true);
+  if (c.greedy)
+    run_greedy_case(runtime, c, layout, logits, states, row);
+  else
+    run_trace_case(runtime, c, layout, output, persistent, logits, states, row);
+  if (c.check_overflow) {
+    check_overflow(runtime);
+    row["overflow_rejected"] = row["overflow_rejected_without_mutation"] = true;
+  }
+  finish(logits, "Failed to write logits trace");
+  finish(states, "Failed to write state dump");
+  check_persistent(runtime, persistent);
+  row["position"] = runtime.position();
+  if (layout.qwen3)
+    row["stable_storage"] = true;
+  row["stable_kv_storage"] = true;
+  row["prefill_calls"] = runtime.prefill_calls();
+  row["decode_calls"] = runtime.decode_calls();
+  return row;
+}
+
+void write_report(const fs::path &output, const Json &report) {
+  auto file = output_file(output / "native.json");
+  file << report.dump(2) << '\n';
+  finish(file, "Failed to write native validation report");
+}
+
+void run_validation(const Options &options) {
+  const auto manifest = read_json(options.cases);
+  const auto trace_format = manifest.value("trace_format", 1);
+  require(trace_format == 1 || trace_format == 2, "Unsupported validation trace format");
+  const bool selected_states = trace_format == 2;
+  with_model(options.packages, [&](const auto &spec, auto make_runtime) {
+    const auto cases = parse_cases(manifest, spec, options.output);
+    const TraceLayout layout{spec.model_type == ModelType::Qwen3, selected_states,
+                             selected_states && spec.capacity > 1024};
+    c10::InferenceMode inference;
+    auto runtime = make_runtime();
+    fs::create_directories(options.output);
+    std::vector<const void *> persistent;
+    for (const auto &tensor : runtime->state())
+      persistent.push_back(tensor.const_data_ptr());
+    Json report = {
+        {"cases", Json::array()}, {"loader_pairs", 1}, {"state_tensors", spec.state.size()}};
+    if (layout.qwen3)
+      report["cache_buffers"] = persistent.size();
+    for (const auto &c : cases) {
+      report["cases"].push_back(run_case(*runtime, c, layout, options.output, persistent));
+      std::cerr << c.name << ": position " << runtime->position() << '\n';
+    }
+    check_native_libraries(report);
+    write_report(options.output, report);
+  });
+}
 } // namespace
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 4, "Usage: xinfer_validate PACKAGE_DIR CASES_JSON OUTPUT_DIR");
-    const auto manifest = read_json(argv[2]);
-    const auto trace_format = manifest.value("trace_format", 1);
-    require(trace_format == 1 || trace_format == 2, "Unsupported validation trace format");
-    const bool selected_states = trace_format == 2;
-    const fs::path output(argv[3]);
-    return with_model(argv[1], [&](const auto &spec, auto make_runtime) {
-      const auto cases = parse_cases(manifest, spec, output);
-      const bool qwen3 = spec.model_type == ModelType::Qwen3;
-      const bool compact = selected_states && spec.capacity > 1024;
-      c10::InferenceMode inference;
-      auto runtime = make_runtime();
-      fs::create_directories(output);
-      std::vector<const void *> persistent;
-      for (const auto &tensor : runtime->state())
-        persistent.push_back(tensor.const_data_ptr());
-      const auto check_persistent = [&] {
-        for (size_t i = 0; i < persistent.size(); ++i)
-          if (spec.state[i].inplace)
-            require(runtime->state()[i].const_data_ptr() == persistent[i],
-                    "KV cache storage changed");
-      };
-      Json report = {
-          {"cases", Json::array()}, {"loader_pairs", 1}, {"state_tensors", spec.state.size()}};
-      if (qwen3)
-        report["cache_buffers"] = persistent.size();
-      for (const auto &c : cases) {
-        Json row = {{"name", c.name}};
-        if (selected_states) {
-          row["state_steps"] = c.state_steps;
-          row["state_prefix"] = compact;
-        }
-        std::ofstream logits, states;
-        if (qwen3 || c.greedy)
-          logits = output_file(output / (c.name + ".f32"), true);
-        if (!qwen3)
-          states = output_file(output / (c.name + ".states"), true);
-        if (c.greedy) {
-          const auto ids = c.override_eos
-                               ? xinfer::generate(*runtime, c.prompt, c.limit, c.eos, &logits)
-                               : runtime->generate(c.prompt, c.limit, &logits);
-          row["ids"] = ids;
-          row["rows"] = ids.size();
-          row["stop"] =
-              std::find(c.eos.begin(), c.eos.end(), ids.back()) != c.eos.end() ? "eos" : "limit";
-          if (!qwen3)
-            write_state(states, *runtime, compact, 0);
-        } else {
-          runtime->reset(c.fill);
-          for (size_t i = 0; i < spec.state.size(); ++i) {
-            const double fill = spec.state[i].inplace ? c.fill : 0;
-            require(runtime->state()[i].eq(fill).all().template item<bool>(),
-                    "State reset left stale data");
-          }
-          for (size_t step = 0; step < c.steps.size(); ++step) {
-            const auto &tokens = c.steps[step];
-            const auto inputs = runtime->state();
-            const auto before = snapshot(*runtime);
-            const int64_t start = runtime->position(), end = start + tokens.size();
-            const auto score = runtime->step(tokens);
-            require(at::isfinite(score).all().template item<bool>(), "Non-finite logits");
-            require(runtime->position() == end, "Incorrect position advance");
-            if (qwen3)
-              write_logits(logits, score);
-            else
-              write_tensor(states, score);
-            require(runtime->state().size() == spec.state.size(), "Incorrect state count");
-            for (size_t i = 0; i < inputs.size(); ++i) {
-              const auto &after = runtime->state()[i];
-              if (spec.state[i].inplace) {
-                require(inputs[i].const_data_ptr() == after.const_data_ptr() &&
-                            inputs[i].strides() == after.strides(),
-                        "KV output lost caller-owned storage");
-                require(at::equal(before[i].slice(2, 0, start), after.slice(2, 0, start)),
-                        "Past KV overwritten");
-                require(at::equal(before[i].slice(2, end), after.slice(2, end)),
-                        "Future KV overwritten");
-                if (qwen3)
-                  require(!at::equal(before[i].slice(2, start, end), after.slice(2, start, end)),
-                          "Cache update missing");
-              } else {
-                require(at::equal(inputs[i], before[i]), "Functional input state mutated");
-              }
-              require(at::isfinite(after).all().template item<bool>(), "Non-finite state");
-              if (!qwen3 && !selected_states)
-                write_tensor(states, after);
-            }
-            check_persistent();
-            if (selected_states && std::find(c.state_steps.begin(), c.state_steps.end(), step) !=
-                                       c.state_steps.end()) {
-              auto checkpoint =
-                  output_file(output / (c.name + "." + std::to_string(step) + ".states"), true);
-              write_state(checkpoint, *runtime, compact, c.fill);
-              finish(checkpoint, "Failed to write state checkpoint");
-            }
-          }
-          row["rows"] = c.steps.size();
-          row["steps"] = c.steps.size();
-          row["write_region_checks"] = row["reset_check"] = true;
-          row["kv_inputs_updated_in_place"] = row["non_kv_inputs_unchanged"] =
-              row["kv_write_regions_preserved"] = true;
-          if (qwen3 && c.dump_cache && !selected_states) {
-            auto cache = output_file(output / (c.name + ".kv.bf16"), true);
-            for (const auto &tensor : runtime->state())
-              write_tensor(cache, tensor);
-            finish(cache, "Failed to write cache dump");
-          }
-        }
-        if (c.check_overflow) {
-          require(runtime->position() == spec.capacity, "Context not full");
-          const auto inputs = runtime->state();
-          const auto before = snapshot(*runtime);
-          bool rejected = false;
-          try {
-            runtime->step({1});
-          } catch (const std::runtime_error &error) {
-            rejected = std::string(error.what()) == "Context capacity exceeded";
-          }
-          require(rejected && runtime->position() == spec.capacity, "Overflow not rejected");
-          for (size_t i = 0; i < before.size(); ++i)
-            require(inputs[i].const_data_ptr() == runtime->state()[i].const_data_ptr() &&
-                        at::equal(before[i], runtime->state()[i]),
-                    "Overflow changed state");
-          row["overflow_rejected"] = row["overflow_rejected_without_mutation"] = true;
-        }
-        finish(logits, "Failed to write logits trace");
-        finish(states, "Failed to write state dump");
-        check_persistent();
-        row["position"] = runtime->position();
-        if (qwen3)
-          row["stable_storage"] = true;
-        row["stable_kv_storage"] = true;
-        row["prefill_calls"] = runtime->prefill_calls();
-        row["decode_calls"] = runtime->decode_calls();
-        report["cases"].push_back(row);
-        std::cerr << c.name << ": position " << runtime->position() << '\n';
-      }
-      check_native_libraries(report);
-      auto file = output_file(output / "native.json");
-      file << report.dump(2) << '\n';
-      finish(file, "Failed to write native validation report");
-      return 0;
-    });
+    run_validation(parse_options(argc, argv));
+    return 0;
   } catch (const std::exception &error) {
     std::cerr << "error: " << error.what() << '\n';
     return 1;
