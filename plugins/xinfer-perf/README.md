@@ -16,6 +16,19 @@ The [record helper](skills/optimize/references/records/tools/record.py) shows
 selective record views, bundles supporting files and checks links and identities;
 see the record guide for its commands.
 
+## Optimization loops
+
+The [model loop](skills/optimize/references/experiment-loop.md) selects measured
+opportunities and establishes native performance. Kernel work enters the nested
+[design and implementation loops](skills/optimize/references/kernel-optimization-loop.md):
+
+![Model loop containing kernel design and implementation loops, with design above implementation.](assets/optimization-loops.svg)
+
+All loops share the investigation budget and existing records. Local kernel
+improvements require full-model validation and native measurement before
+model acceptance. Keep or reject the candidate using that evidence; stop when
+the evidence or remaining budget does not support another trial.
+
 ## Load the plugin
 
 Run these commands from a xinfer checkout. For Claude Code, load the plugin for

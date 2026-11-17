@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="900" viewBox="0 0 820 900" role="img" aria-labelledby="title description">
+  <title id="title">Xinfer optimization loops</title>
+  <desc id="description">The model loop profiles native execution and selects a candidate. Kernel work enters the design loop, which chooses an architecture before entering the implementation loop below it. Implementation checks correctness, measures performance and profiles with NCU. Evidence can trigger local revision or architectural reassessment. A local winner returns to model export, validation and native measurement. Compiler-only changes bypass the kernel loops.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#52647a"/>
+    </marker>
+    <style>
+      text { font-family: system-ui, -apple-system, sans-serif; font-size: 16px; fill: #23364d; text-anchor: middle; }
+      .heading { font-size: 18px; font-weight: 600; }
+      .label { font-size: 14px; fill: #52647a; }
+      .node { fill: #fff; stroke: #9aaec3; stroke-width: 1.5; }
+      .edge { fill: none; stroke: #52647a; stroke-width: 1.6; marker-end: url(#arrow); }
+      .feedback { stroke-dasharray: 6 5; }
+    </style>
+  </defs>
+
+  <rect width="820" height="900" fill="#fff"/>
+  <rect x="16" y="16" width="788" height="868" rx="14" fill="#f7f9fc" stroke="#bac7d5"/>
+  <text class="heading" x="410" y="47">Model loop</text>
+
+  <rect class="node" x="260" y="72" width="300" height="64" rx="8"/>
+  <text x="410" y="99">Profile native baseline</text>
+  <text x="410" y="122">Choose candidate</text>
+  <path class="edge" d="M410 136 V185"/>
+  <text class="label" x="463" y="166">Kernel work</text>
+
+  <rect x="100" y="185" width="620" height="490" rx="12" fill="#edf4fc" stroke="#92aecf"/>
+  <text class="heading" x="410" y="216">Kernel design loop</text>
+  <rect class="node" x="250" y="240" width="320" height="64" rx="8"/>
+  <text x="410" y="267">Choose or revise architecture</text>
+  <text class="label" x="410" y="289">Partitioning, dataflow and resources</text>
+  <path class="edge" d="M410 304 V355"/>
+
+  <rect x="170" y="355" width="490" height="200" rx="10" fill="#eaf5f0" stroke="#8ab7a1"/>
+  <text class="heading" x="415" y="384">Kernel implementation loop</text>
+  <rect class="node" x="190" y="406" width="160" height="62" rx="8"/>
+  <text x="270" y="432">Edit and compile</text>
+  <text class="label" x="270" y="454">Focused revision</text>
+  <rect class="node" x="405" y="399" width="230" height="76" rx="8"/>
+  <text x="520" y="423">Check correctness</text>
+  <text x="520" y="446">Microbenchmark and NCU</text>
+  <text class="label" x="520" y="466">Compare with prediction</text>
+  <path class="edge" d="M350 437 H405"/>
+  <path class="edge feedback" d="M520 475 V525 H270 V468"/>
+  <text class="label" x="395" y="516">Repair or tune</text>
+
+  <path class="edge" d="M410 555 V590"/>
+  <rect class="node" x="260" y="590" width="300" height="58" rx="8"/>
+  <text x="410" y="614">Assess design against evidence</text>
+  <text class="label" x="410" y="636">Continue, redesign or integrate</text>
+  <path class="edge feedback" d="M260 619 H125 V272 H250"/>
+  <text class="label" x="162" y="327">Revise</text>
+  <text class="label" x="162" y="345">design</text>
+
+  <path class="edge" d="M410 675 V740"/>
+  <text class="label" x="469" y="711">Local winner</text>
+  <rect class="node" x="260" y="740" width="300" height="85" rx="8"/>
+  <text x="410" y="765">Export and validate</text>
+  <text x="410" y="788">Paired C++ timing</text>
+  <text x="410" y="811">Native profiling</text>
+
+  <path class="edge" d="M260 104 H60 V782 H260"/>
+  <text class="label" x="142" y="712">Compiler-only</text>
+  <text class="label" x="142" y="731">change</text>
+  <path class="edge feedback" d="M560 782 H770 V104 H560"/>
+  <text class="label" x="688" y="712">Next candidate</text>
+  <text class="label" x="410" y="860">Shared budget · linked records · native model acceptance</text>
+</svg>
