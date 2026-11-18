@@ -1,159 +1,126 @@
 # xinfer
 
-PyTorch AOTInductor compilation with Python-free C++ inference.
+Compile Hugging Face Qwen models with PyTorch AOTInductor and run them in C++
+without Python. xinfer provides batch-one BF16 inference, paired prefill/decode
+packages, shared weights and explicit model state.
 
-- [Qwen3-0.6B](compiler/qwen3/README.md): export, generation, validation and benchmarks.
-- [Qwen3.5](compiler/qwen35/README.md): text-only 0.8B export, native generation and functional benchmarks; HF numerical acceptance remains open.
-- [L20 and GB10 environments](environments/README.md): target setup, build/export paths and validation matrix.
-- [Development tools](docs/development-tools.md) and [FlashAttention adapter](docs/flash-attention.md).
-- [Performance optimization plugin](plugins/xinfer-perf/README.md): fusion/kernel
-  investigations in Codex and Claude Code, with native decode as the default objective.
-- [Plan and deferred work](PLAN.md).
+The model pipelines cover [Qwen3-0.6B](compiler/qwen3/README.md) and
+[Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) (text only). Device-specific
+setup and validation status are documented for [L20 and GB10](environments/README.md).
+Numerical acceptance depends on the model, package and workload; see
+[validation and limitations](#validation-and-limitations).
 
-`compiler/<model>/` owns HF loading, tensor/state adapters, kernels and export settings.
-Each model's `export.py` keeps CLI handling, paired-export orchestration, graph
-construction, transformations and checks in separate functions. Qwen3.5 eager
-validation imports the same graph builder from that module. Shared export
-preflight and build reporting live in `compiler/common/export.py`.
-Shared native kernels and C shims live in `compiler/common/kernels/`, including
-attention. `runtime/<model>/` owns model-specific package ABI checks. Shared compiler
-artifact, metadata and weight helpers live in `compiler/common/`. Numerical validation
-and its model hooks live in `tools/validation/`; benchmark orchestration, measurement
-and model hooks live in `tools/benchmark/`. Checkpoint download, verification and
-offline tokenization use the shared `tools/prepare/` command.
-`tools/common.py` supplies logged subprocess execution, native process environments
-and prompt partitioning.
-`tools/packages.py` shares model-specific package ABI checks between benchmarks
-and validation. Focused numerical diagnostics live under `tools/diagnostics/`.
-Validation and benchmark entry points separate argument parsing from callable
-workflows. Phase helpers stay in their existing modules: numerical stages in
-`tools/validation/common/pipeline.py`, runtime/deployment checks in each model's
-`validate_runtime.py`, and benchmark preparation, rounds and reporting in
-`tools/benchmark/common.py`.
-`environments/` owns project setup, self-contained requirements files for each
-model/device, native-stack checks and hardware profiles. Its Bash entry points
-are `environments/l20/setup.sh`,
-`environments/gb10/setup.sh` and `environments/check.sh`.
-`runtime/common/` owns the runner, state storage, device and package preflight,
-positions, prefill/decode dispatch, greedy generation and fixed-token benchmark loops.
-One `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` executable supports
-both models, selected from package metadata. Their entry points handle arguments
-and errors; workflow and reporting helpers stay in the corresponding `.cpp` files.
-The validator separates greedy and explicit-step cases from state/overflow checks.
-One state policy retains persistent
-KV buffers and replaces functional conv/recurrent state using metadata update
-rules and the runtime ABI's output order. Generation stops at EOS or the token
-budget. Benchmark requests
-consume all supplied tokens, including EOS, with argmax/host reads timed.
-Unit tests follow code ownership: shared tooling tests live under `tools/tests/`
-and area-specific tests under `tools/<area>/tests/`,
-while compiler/model/operator tests remain beside their code.
-See the [CPU unit-test commands](docs/development-tools.md#cpu-unit-tests).
-The common numerical CLI is `tools.validation.validate`; model-specific
-CLI/deployment contract tools remain under `tools/validation/{qwen3,qwen35}/`. Detailed results live
-in `docs/experiments/`. Generated packages/results belong in `artifacts/`;
-generated native builds belong in `build/<model>/`; venvs and scratch scripts
-belong in `work/`. These directories are ignored.
+## Compiler architecture
 
-Use the pinned Ruff and clang-format tools with the repository settings; see
-[formatting commands](docs/development-tools.md#formatting).
+Python prepares the checkpoint, adapts the model to an explicit tensor/state
+interface, and exports both entry points in one invocation. Model-specific graph
+passes run before AOTInductor compilation. Shared helpers collect tensor constants,
+package native dependencies and write versioned metadata.
 
-Both exporters and runtimes use the [versioned package metadata format](docs/package-metadata.md).
-Model-specific extras live under `model_specific`; common fields have identical
-names and validation for both families. Schema 5 records compiled capacity and
-per-call bounds. Request prompts and output budgets share that capacity. It retains
-`runtime_abi_version: 1`. Retained schema 1 through schema 4 and unversioned
-sidecars need conversion or re-export before use with the current runtime.
+![Compiler architecture: model adapters, graph optimization and AOTInductor produce one deployment bundle.](docs/diagrams/compiler-architecture.svg)
 
-Both exporters accept `--max-context-length`. When omitted, capacity is derived
-from the selected model's text-config `max_position_embeddings`: 40,960 for the
-pinned Qwen3-0.6B and 262,144 for both Qwen3.5 checkpoints. An explicit capacity
-must be in 512..that ceiling. The selected capacity determines actual KV allocation.
-Compiled prefill remains dynamic over 2–512 tokens per call; shared generation
-splits a longer prompt automatically, using decode for a one-token remainder.
-Metadata records `cache_length` and per-entry `token_range`. There is no extra
-prompt cap: the full prompt plus `xinfer_aoti --max-output-tokens` must fit the
-package's context. Retained 1,024-slot packages keep that capacity when their
-sidecars are converted into a new schema 5 bundle. Larger caches require re-export.
-The recorded 16,384-slot L20 profiles completed export, C++ execution and full
-inference-memory probes for Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B. Qwen3
-passed that suite's HF numerical gates; Qwen3.5 HF numerical acceptance remains
-open. Fresh model-default exports and full-capacity C++ checks also completed
-for Qwen3-0.6B and Qwen3.5-0.8B, with native/Python AOTI bitwise parity.
-Their focused HF numerical comparisons retain failures; see the
-[default-capacity validation record](docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07).
-These expanded profiles have not been validated on GB10.
+Both families use FlashAttention over the populated KV prefix. Qwen3.5 also uses
+Triton DeltaNet kernels and graph passes for linear packing and supported decode
+projections. Build `xinfer_attention_ops` before export; its library is embedded
+in both `.pt2` files and loaded by the standard AOTI loaders. See the
+[attention guide](docs/flash-attention.md) for the operator and packaging contract.
 
-Run Python tools from the repository root as modules, for example:
+The deployment bundle contains **five files**: `prefill.pt2`, `decode.pt2`,
+`weights.pt`, `prefill.json` and `decode.json`. Graph dumps and build logs are
+export diagnostics. Deploy the complete bundle with matching LibTorch/CUDA;
+see [package metadata](docs/package-metadata.md) and
+[runtime installation](environments/README.md#install-and-relocate-the-runtime).
+
+## Runtime architecture
+
+The same native executables serve both model families. Metadata selects the
+model-specific ABI checks; `runtime/common/` owns loading, state, request
+validation, prompt chunking and prefill/decode dispatch.
+
+![Runtime architecture: a shared C++ runner executes prefill and decode models using shared weights and model state.](docs/diagrams/runtime-architecture.svg)
+
+Both loaders borrow the same weight storage through `user_managed` loading.
+KV buffers update in place; Qwen3.5 convolution and recurrent outputs replace
+previous state. The weight pool outlives both loaders.
+
+| Executable | Purpose |
+| --- | --- |
+| `xinfer_aoti` | Greedy generation from token IDs, stopping at EOS or the output budget. |
+| `xinfer_benchmark` | Fixed-token prefill/decode timing and memory measurements. |
+| `xinfer_validate` | Logit/state traces and runtime correctness checks. |
+
+Python handles checkpoint preparation and offline tokenization/text decoding.
+Native execution requires LibTorch/CUDA but loads neither Python nor
+`libtorch_python`.
+
+## Getting started
+
+1. Follow the [environment guide](environments/README.md) to create a fresh
+   model venv and build compiler kernels and native executables in `build/<model>/`.
+   Dependency pins live in `environments/<target>/<model>_requirements.txt`.
+2. Follow the [Qwen3](compiler/qwen3/README.md) or
+   [Qwen3.5](compiler/qwen35/README.md) guide to prepare a checkpoint, export a
+   bundle, encode a prompt and run native generation. Use fresh output paths.
+3. Run [numerical and runtime validation](docs/development-tools.md#python-validation-tools)
+   for each new bundle, then measure it with the
+   [benchmark tools](docs/development-tools.md#benchmark-hf-and-native-aoti).
+
+Run Python commands as modules from the repository root, using the environment
+for that model. For example, after setting up Qwen3 on L20:
 
 ```bash
-Q3_PY=work/l20/qwen3-torch213-venv/bin/python  # choose the environment for your target
-"$Q3_PY" -m tools.prepare --help
-"$Q3_PY" -m compiler.qwen3.export --help
-"$Q3_PY" -m tools.validation.validate --help
-"$Q3_PY" -m tools.benchmark --help
+PY=work/l20/qwen3-torch213-venv/bin/python
+"$PY" -m tools.prepare --help
+"$PY" -m compiler.qwen3.export --help
+"$PY" -m tools.validation.validate --help
+"$PY" -m tools.benchmark --help
 ```
 
-Create each model's independent environment with its target setup script, following
-the [environment guide](environments/README.md). Qwen3 uses one fused FlashAttention
-compilation profile. Both exporters embed the native attention library in each
-`.pt2`; the standard Python and C++ AOTI loaders load it with the compiled wrapper.
-Build the compiler's `xinfer_attention_ops` target from the repository root
-before export. The default CMake build includes compiler kernels and runtime
-executables; explicit runtime targets build independently. Each model retains
-its own compiler environment; both share the same full-model numerical policy.
-Python export and standalone operator tests select the attention library from
-`build/qwen3/` or `build/qwen35/`; `XINFER_ATTENTION_OPS_LIBRARY` can select another
-build. Package inference and
-validation use the bundled implementation. Existing executable-path options
-select another native runtime.
-The [runtime installation guide](environments/README.md#install-and-relocate-the-runtime)
-shows how to install and move the native executables. Deploy the complete
-five-file model bundle with matching LibTorch/CUDA. Re-export packages that
-previously required a separate attention library; sidecar conversion alone does
-not add that implementation.
+Export chooses allocated context capacity with `--max-context-length`; omitting
+it uses the model config's declared ceiling. Compiled prefill accepts **2–512
+tokens per call**. Generation chunks longer prompts automatically and uses decode
+for a one-token remainder. The complete prompt plus requested output budget must
+fit the bundle's capacity. Increasing capacity requires re-exporting the model.
 
-Numerical validation follows HF → eager → Python AOTI → C++ AOTI. The eager
-stage includes adapters and any linear packing selected by package metadata.
-Package metadata selects the model hooks. The shared runner uses identical
-teacher-forced inputs, checks adjacent stages and retains a direct
-Python-AOTI/HF comparison. Both models generate HF references during validation;
-Qwen3 also cross-checks manual HF greedy decoding against HF `generate()`. No
-saved-reference preparation is required. Both models require bounded matched-input
-logit error and exact native/Python AOTI parity; full-model state and HF token
-differences are diagnostic. Structural state and runtime checks remain required.
-See the [shared numerical policy](docs/development-tools.md#shared-numerical-policy)
-for criteria and report versioning. CLI/deployment contract checks and affected
-kernel/block tests run separately. See the model guides for commands.
+## Validation and limitations
 
-CPU portability remains a known limitation: AOTI package wrappers inherit the build
-host's instruction set (including AVX-512 on L20), and the project does not enforce
-CPU compatibility. Use a compatible CPU or re-export on the destination host.
+Accuracy validation follows **HF → adapted/optimized eager → Python AOTI →
+C++ AOTI**, using identical teacher-forced inputs. The eager stage includes the
+adapters and graph transformations used by the compiled model. Native/Python
+AOTI parity must be bitwise; HF logit comparisons use the
+[shared numerical policy](docs/development-tools.md#shared-numerical-policy).
+State ownership, masking, reset/reuse and boundary checks remain required.
 
-Both exporters now produce weightless prefill/decode packages and one shared
-`weights.pt` archive containing the constant mappings. Both package metadata
-files record its checksum. Each `.pt2` also contains the same attention library,
-covered by its package checksum. Deploy the complete five-file package directory.
-The Python and C++ runtimes retain one weight pool and lend its storage to both
-loaders with `user_managed`; rebuild with Torch 2.13 or newer
-and re-export existing embedded-weight packages before using the current runtime.
+Benchmarks are separate from accuracy validation. `tools.benchmark` supports
+`run`, paired-package `compare` and `check-idle` for both families. The eager
+baseline is unchanged HF with a dynamic cache. HF receives the whole prompt in
+one call, while native execution uses chunks; reports record that difference.
+Use idle-GPU checks and repeated measurements for performance conclusions.
 
-`python -m tools.benchmark` selects the model from package metadata. Both models
-support `run`, paired package `compare` and standalone `check-idle`. Workloads are
-tokenized by the benchmark itself, with context capacity read from metadata.
-Benchmarks split reset, complete-prompt prefill, decode and whole-request timing.
-Native prefill includes every chunk. The unchanged HF benchmark receives the
-whole prompt in one call, so its partition differs from native execution; reports
-record this distinction. Numerical validation instead uses matched partitions.
-Both model eager workers use the unchanged HF model and its dynamic cache, with automatic
-masks and positions; reset discards the cache and initial allocation is timed
-in prefill. Reports identify the baseline as `eager_baseline: hf_dynamic_cache`.
-Earlier masked-cache speedups require fresh comparisons. Both model workers
-record reset-plus-prefill and consumed positions. The Python benchmark
-controller shares environment capture, rotated process order, failure handling
-and summaries across models. Warmup predictions
-are checked as well as measured repeats. Benchmark reports include package,
-binary and workload checksums. Benchmark reports contain performance and harness
-results; numerical accuracy reports remain in the validation tooling. Both models
-keep an independent BF16 HF eager reference for validation, with bounded logit
-error and separate state/token drift diagnostics. CUDA Graph integration is deferred.
+- **Numerics:** Qwen3.5 HF acceptance remains open. Recorded model-default
+  Qwen3 and Qwen3.5 runs also retain HF numerical failures despite native/Python
+  bitwise parity. Consult the [validation records](docs/experiments/common-runtime.md)
+  and model guides for the exact profiles tested.
+- **Devices and context:** recorded 16K-context L20 runs cover Qwen3-0.6B and
+  Qwen3.5-0.8B/4B; those expanded profiles have not been validated on GB10.
+- **CPU portability:** compiled wrappers can inherit the build host's instruction
+  set. CPU compatibility is not checked; use a compatible CPU or re-export on
+  the destination host.
+- **Scope:** batch-one text generation; no native tokenizer, serving API or
+  concurrent request scheduler. CUDA Graph integration is deferred.
+
+## Code and documentation map
+
+| Location | Responsibility |
+| --- | --- |
+| [`compiler/`](compiler/) | Model loading, adapters, graph passes, kernels and paired export; common metadata, weight and packaging helpers. |
+| [`runtime/`](runtime/) | Shared C++ runner and executables; model-specific ABI checks. |
+| [`tools/`](tools/) | Checkpoint preparation, numerical validation, benchmarks and focused diagnostics. |
+| [`environments/`](environments/README.md) | Per-device/model dependency pins, setup, checks, builds and deployment. |
+| [`plugins/xinfer-perf/`](plugins/xinfer-perf/README.md) | Fusion and kernel optimization workflows for GB10 in Codex and Claude Code. |
+| [`docs/`](docs/) | [Development and tests](docs/development-tools.md), [metadata/ABI](docs/package-metadata.md), [attention](docs/flash-attention.md) and [experiment history](docs/experiments/). |
+
+Tests follow the code they cover. Generated builds go in `build/<model>/`,
+packages/results in `artifacts/`, and venvs/scratch files in `work/`; these paths
+are ignored. See [AGENTS.md](AGENTS.md) for contribution rules and
+[PLAN.md](PLAN.md) for planned work.
