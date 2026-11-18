@@ -97,12 +97,14 @@ baseline is unchanged HF with a dynamic cache. HF receives the whole prompt in
 one call, while native execution uses chunks; reports record that difference.
 Use idle-GPU checks and repeated measurements for performance conclusions.
 
-- **Numerics:** Qwen3.5 HF acceptance remains open. Recorded model-default
-  Qwen3 and Qwen3.5 runs also retain HF numerical failures despite native/Python
-  bitwise parity. Consult the [validation records](docs/experiments/common-runtime.md)
-  and model guides for the exact profiles tested.
-- **Devices and context:** recorded 16K-context L20 runs cover Qwen3-0.6B and
-  Qwen3.5-0.8B/4B; those expanded profiles have not been validated on GB10.
+- **Numerics:** tested Qwen3.5-0.8B GEMV profiles pass the current policy on L20
+  and GB10, with HF state/token diagnostics remaining. Recorded Qwen3 focused
+  cases and Qwen3.5-4B profiles retain required logit failures. See
+  [validation status](docs/validation-status.md) for the tested builds, capacities
+  and policy qualifications.
+- **Devices and context:** native 16K-context L20 execution is recorded for all
+  three models. This does not establish numerical acceptance for every profile;
+  expanded contexts and 4B still need GB10 validation.
 - **CPU portability:** compiled wrappers can inherit the build host's instruction
   set. CPU compatibility is not checked; use a compatible CPU or re-export on
   the destination host.
@@ -118,7 +120,7 @@ Use idle-GPU checks and repeated measurements for performance conclusions.
 | [`tools/`](tools/) | Checkpoint preparation, numerical validation, benchmarks and focused diagnostics. |
 | [`environments/`](environments/README.md) | Per-device/model dependency pins, setup, checks, builds and deployment. |
 | [`plugins/xinfer-perf/`](plugins/xinfer-perf/README.md) | Fusion and kernel optimization workflows for GB10 in Codex and Claude Code. |
-| [`docs/`](docs/) | [Development and tests](docs/development-tools.md), [metadata/ABI](docs/package-metadata.md), [attention](docs/flash-attention.md) and [experiment history](docs/experiments/). |
+| [`docs/`](docs/) | [Development and tests](docs/development-tools.md), [metadata/ABI](docs/package-metadata.md), [attention](docs/flash-attention.md), [validation status](docs/validation-status.md) and the [GEMV case study](docs/experiments/qwen35-gemv-2026-11-13.md). |
 
 Tests follow the code they cover. Generated builds go in `build/<model>/`,
 packages/results in `artifacts/`, and venvs/scratch files in `work/`; these paths

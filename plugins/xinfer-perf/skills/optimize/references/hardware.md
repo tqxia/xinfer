@@ -12,7 +12,8 @@ design. Read only entries relevant to the current work.
 - If stuck at 611 MHz, resolve the clock fault before continuing. Full shutdown
   and PSU disconnection recovered the affected host; recheck clocks under load.
 - After recovery, repeat affected measurements and revisit implementation choices
-  based on them.
+  based on them. Reassess or re-export packages autotuned under the fault: a
+  healthy measurement window does not repair compiler choices made at low clocks.
 
 ## Hardware recipes
 

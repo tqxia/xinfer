@@ -1,159 +1,90 @@
-# Qwen3 valid-prefix FlashAttention
+# Shared valid-prefix FlashAttention
 
-The existing Flash module adapter is the sole supported Qwen3 export backend.
-It targets batch-one BF16 Qwen3-0.6B, retains eight KV heads and attends only to
-the populated cache prefix. There is no backend selector or alternate compiled
-eager-numerics profile. The independent BF16 HF eager reference remains unmodified.
+Qwen3 and Qwen3.5 full-attention layers use the same native operator,
+`xinfer::flash_attention`, implemented under `compiler/common/kernels/`.
+Model-specific adapters preserve HF projections, normalization and RoPE;
+Qwen3.5 also preserves its output gate. Neither model has an attention-backend
+selector or a separate eager-numerics export profile.
 
 ## Compilation and runtime contract
 
-1. Load the original HF weights, then wrap each decoder layer's `self_attn`
-   child with the existing `FlashAttention` adapter.
-2. `FlashStep` calls the original embedding, rotary embedding, decoder layers,
-   final norm and LM head with explicit caller-owned cache state. Each attention
-   adapter reuses the original projections and Q/K normalization, updates K/V,
-   then calls `xinfer::flash_attention` with native GQA.
-3. Verify 28 custom attention calls and all 56 cache mutations in the exported
-   graph, then compile the bounded dynamic prefill and single-token decode.
-4. The read-only native operator calls PyTorch's ATen FlashAttention with
-   lower-right causality. The same implementation handles initial prefill,
-   appended chunks and decode. There is no `flash-attn` pip-package dependency.
+Adapters own cache updates. They append K/V in place, then call the read-only
+operator with the populated prefix. The operator returns fresh contiguous
+output and does not mutate or alias cache inputs. It calls PyTorch's ATen
+FlashAttention with native grouped-query attention and lower-right causality,
+covering initial prefill, appended chunks and decode. No `flash-attn` pip package
+is required, and unused cache capacity is not read by attention.
 
-Qwen3's cache layout is `[1,8,C,128]`, with `C` defaulting to the pinned model's
-40,960-position ceiling; runtime capacity is derived from the
-package state descriptors and the native operator's K/V tensors. The query has
-16 heads, dimension 128, with 1–512 tokens per compiled call. The shared runner
-splits complete prompts into calls of at most 512 tokens, subject to compiled
-context capacity and the requested output budget; a one-token remainder
-uses decode. A CPU uint8 extent tensor of
-shape `[valid_length + 1]` passes populated prefix length through metadata; its data is ignored. The extra one
-avoids input size-one specialization. Prefix slicing stays inside the opaque
-operator and export requires `backed_size_oblivious=False`. The native flat
-input list has 59 tensors: IDs, positions, 56 K/V tensors, then the extent.
+Geometry comes from input tensors. Query heads must be a positive multiple of
+KV heads; head dimensions must be positive, divisible by eight and at most 256.
+The current exports use batch-one BF16 and 1–512 tokens per call. Model-specific
+restrictions remain in the [Qwen3](../compiler/qwen3/README.md#model-interface)
+and [Qwen3.5](../compiler/qwen35/README.md#model-interface-and-state) guides.
 
-The operator returns fresh contiguous output and never mutates/aliases its
-cache inputs. Cache updates belong to the adapter. The adapter rejects arbitrary
-masks, training, attention-weight requests and unsupported cache/layer types.
-This is not a general replacement for HF training or `generate()`. Load weights
-before installing adapters; wrapping reuses parameter objects but changes their
-module paths by adding an `original` component.
+A CPU uint8 extent tensor has shape `[valid_length + 1]`; its contents are ignored.
+This conveys prefix length without reading a CUDA scalar. The extra element
+avoids size-one specialization. Prefix slicing stays inside the opaque operator,
+and export requires `backed_size_oblivious=False`. The Python fake implementation
+supplies export shape checks; [runtime ABI 1](package-metadata.md#runtime-abi-1)
+defines the full model calling convention.
+
+Inputs must be unpadded contiguous appends to an existing prefix. Adapters reject
+arbitrary masks, training, attention-weight outputs and unsupported cache/layer
+types. Load HF weights before installing adapters: wrapping reuses parameter
+objects but changes module paths. These adapters are not general HF training or
+`generate()` replacements; validation retains an unmodified HF baseline.
 
 ## Build and deployment
 
-The compiler owns the native implementation, header and C shim in
-`compiler/common/kernels/`. Its `xinfer_attention_ops` CMake target produces
-`libxinfer_attention_ops.so` for export and standalone operator tests. Runtime
-executables build independently and load the packaged implementation.
-Build that compiler target before export, using matching LibTorch/CUDA and the
-toolchain commands in the
-[Qwen3 guide](../compiler/qwen3/README.md#build-before-export). Python export and
-standalone operator tests resolve `build/qwen3/libxinfer_attention_ops.so` for
-Qwen3 and `build/qwen35/libxinfer_attention_ops.so` for Qwen3.5 by default;
-`XINFER_ATTENTION_OPS_LIBRARY` can select another build.
+Build the compiler-owned `xinfer_attention_ops` CMake target before export or
+standalone attention tests, using the selected model's LibTorch/CUDA stack and
+[environment build commands](../environments/README.md#build-compiler-kernels-and-native-runtimes-for-each-model).
+It writes `libxinfer_attention_ops.so` to `build/qwen3/` or `build/qwen35/`.
+`XINFER_ATTENTION_OPS_LIBRARY` selects another build-time library.
+Runtime executable targets build independently.
 
-Both exporters compile attention calls through a shared C shim in that library.
-`compiler/common/attention.py` supplies the declaration and operator mapping;
-the exporters pass them through the shared-weight compiler to the generic
-packaging helper.
-`aot_inductor.custom_ops_to_c_shims` selects the direct C entry point, and
-`aot_inductor.custom_op_libs` adds the native library to the ordinary link.
-The shim borrows input tensor handles, calls the same native attention
-implementation and transfers the output handle to AOTI. Torch's error bridge
-propagates native exceptions. Eager execution and export retain the operator
-schema and fake implementation.
+Both exporters pass the shared C shim declaration/mapping from
+`compiler/common/attention.py` through the shared-weight compiler to
+`compiler/common/package.py`. Torch's `aot_inductor.custom_ops_to_c_shims` emits
+direct C calls; `aot_inductor.custom_op_libs` adds native linkage. The shim borrows
+input tensor handles, calls the operator and transfers the output handle to
+AOTI. Torch's error bridge propagates native exceptions.
 
-On the Linux GCC export toolchain, `compiler/common/package.py` temporarily sets
-`LIBRARY_PATH` to find the build library and `LD_RUN_PATH='$ORIGIN'` to make the
-linker record lookup beside the wrapper. Both variables are restored after
-compilation. Each export CLI runs compilation sequentially; independent
-concurrent exports must use separate processes because these variables are
-process-wide. Torch's `package_aoti` explicitly includes the library in each
-`.pt2` alongside the compiler outputs. The wrapper's dependency and relative
-search path are produced during its original link.
+On the Linux GCC toolchain, packaging temporarily sets `LIBRARY_PATH` for
+link-time discovery and `LD_RUN_PATH='$ORIGIN'` for lookup beside the wrapper.
+Both variables are restored afterward. Because they are process-wide, independent
+concurrent exports must use separate processes; each export CLI compiles its
+entries sequentially. `package_aoti` includes the native library in each `.pt2`
+during normal packaging.
 
-The standard Python and C++ AOTI loaders extract the library beside the wrapper;
-the system linker loads it and registers the operator. Compiled attention calls
-use the C shim directly. Current exporters select one attention library for both
-entries. Export, loading and tooling do not compare attention-library hashes or
-bytes. Generic Python and C++ weight loaders verify whole-package and
-shared-archive checksums, which cover the embedded library.
+Standard Python/C++ AOTI loaders extract the library beside the wrapper; the
+system linker loads it and registers the operator. Native executables neither
+link nor install a separate attention library. Deploy the complete
+[five-file bundle](package-metadata.md) with compatible LibTorch/CUDA. External-
+library packages require re-export; editing JSON or copying a library beside
+an old package does not meet the bundled contract.
 
-Independent prefill/decode implementations are deferred until a concrete use case.
-The current library shares a SONAME, C-shim symbol and process-wide Torch operator
-registration. Distinct implementations would need separate linkage identities or
-dispatch within one library; removing the equality guard does not implement that
-selection. Shared C-shim packaging has not yet been validated on GB10; that
-validation is deferred.
+Eager validation extracts the prefill package's implementation before installing
+adapters, or reuses an already registered eager operator. Runtime-contract
+validators use the standard package loaders without an eager preload. Whole-
+package checksums cover native dependencies; loaders do not compare attention
+library hashes or payload bytes between entries.
 
-Native executables do not link or install a separate attention library. Deploy
-the two `.pt2`, two metadata JSON files and `weights.pt` with matching
-LibTorch/CUDA. Eager validation selects the prefill package's implementation
-before installing adapters, or reuses an already registered eager operator.
-Re-export external-library packages with the
-current exporter; changing their JSON sidecars does not supply the library.
+Independent prefill/decode implementations remain future work. The current
+library shares a SONAME, C-shim symbol and process-wide Torch operator registration.
+Selecting distinct implementations needs separate linkage identities or dispatch
+within one library; removing a byte-equality guard alone does not provide it.
 
-`runtime_abi_version: 1` defines batch-one BF16 prefix Flash attention,
-full-capacity caller-owned caches and the shape-only CPU extent input. The
-former fixed backend/cache fields are replaced by this versioned contract.
-Python and C++ retain state, checkpoint/toolchain/architecture and numerical
-checks. See the
-[ABI definition](package-metadata.md#runtime-abi-1).
-Old efficient packages and legacy eager-numerics packages require re-export.
-Bundling preserves the compiled ABI and the
-[schema 5 metadata contract](package-metadata.md). Metadata-only conversion of
-older sidecars is sufficient only when the compiled packages already include
-the required attention library. Retained packages that depend on a separate
-library need re-export. Calling applications own any additional input policy;
-sidecar conversion does not expand the graph.
-Re-export for a chosen larger capacity and rebuild the attention library for
-generalized capacity support. The previously recorded 16,384-slot Qwen3 profile
-completed ordinary export and C++ execution on L20, with bitwise native/Python
-AOTI agreement, passing existing HF numerical gates and a full-capacity
-inference-memory probe. Those results do not validate the current 40,960-slot
-default. The recorded 16K profile has not been validated on GB10.
+## Verification
 
-```bash
-# First select Q3_PY and build with the matching target toolchain.
-BUILD="$PWD/build/qwen3"
-"$Q3_PY" -m unittest \
-  compiler.common.tests.test_attention compiler.qwen3.tests.test_attention
-"$Q3_PY" -m compiler.qwen3.export --output artifacts/qwen3-flash
-AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
-  --packages artifacts/qwen3-flash --native "$BUILD/xinfer_validate" \
-  --output artifacts/flash-validation-new
-```
+With the native library built, run the shared operator tests and the affected
+model's adapter/export checks. The [model guides](../README.md#getting-started)
+list those commands. Operator checks use synthetic tensors; Qwen3 adapter tests
+use random HF attention weights. Full-model validation separately checks
+HF → adapted/optimized eager → Python AOTI → C++ AOTI, including state ownership,
+write regions, masking and boundaries.
 
-The focused unit tests cover the shared operator and Qwen3 adapter, using an HF
-attention module with random weights. They require the built attention library
-but no checkpoint download or AOTI compilation. The separate attention validation
-CLIs have been removed. `tools.validation.validate` runs the shared HF → eager
-→ Python AOTI → C++ AOTI chain. Eager includes the Flash adapter; the chain covers
-real-model cache and numerical checks. `validate_runtime` separately checks the
-shipping CLI and deployment contract.
-
-## Numerical policy and evidence
-
-Both model families follow the
-[shared numerical policy](development-tools.md#shared-numerical-policy).
-Finite results, C++/Python AOTI bitwise agreement, cache write regions, poisoning,
-masking, reset/reuse, storage and boundary checks remain hard requirements.
-Matched-input logits retain both existing 5% row-error limits. Full-model state
-and HF top-token/greedy-sequence differences are diagnostics, with their metrics
-retained. Logit comparisons use identical fed tokens even when independent
-greedy trajectories differ. Focused attention tests run separately with their
-own required tolerances; a full-model numerical pass does not establish task
-quality or resolve recorded numerical differences.
-
-The retained L20/Torch 2.7 evidence covers 26 cases/185 rows with exact native/
-Python AOTI logits and caches. HF comparison reports 14/56 cache deviations and
-183/185 top-token agreement; a separately tuned build had 20/56 cache deviations
-and the same token mismatches. Focused adapter checks pass at maximum relative
-L2 0.289% / peak-normalized error 0.747%, and nine direct/compiled attention cases
-pass. These historical results motivate the explicit policy and do not replace
-validation of a fresh artifact. Full details and artifact paths are in
-[numerical history](experiments/qwen3-numerics.md).
-
-Historical GB10 measurements (Torch 2.13/CUDA 13) reported approximately
-1.27–1.32x decode and 1.38–1.49x prefill speedups against fused efficient
-attention. They are not a speedup claim for L20 or a different toolchain.
-Use the [paired benchmark](development-tools.md) for controlled measurements.
+Follow the [shared numerical policy](development-tools.md#shared-numerical-policy).
+Changing attention implementation or compiler tuning can change rounding; native
+parity does not prove HF equivalence. [Validation status](validation-status.md)
+records tested targets/capacities, known differences and remaining coverage.

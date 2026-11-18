@@ -137,7 +137,11 @@ matches the packaged implementation as described in the
 If unrelated recompilation changes could explain the measured gain or
 regression, inspect the affected generated code and launch settings. Use a
 controlled re-export or ablation as needed to isolate the intended
-transformation.
+transformation. Copying a tuning cache is not proof of isolation: changed kernel
+names can miss retained entries. Verify unaffected arithmetic and configurations
+in the produced artifacts. A compiler option can also change decomposition,
+not just search launch settings; check the actual implementation before attributing
+a result to tuning.
 
 ### Measurement disagreements
 

@@ -4,8 +4,9 @@ Read [README.md](README.md) and the relevant model guide before changing code.
 Use [environments/README.md](environments/README.md) for setup and builds,
 [docs/development-tools.md](docs/development-tools.md) for formatting and tests,
 and [docs/package-metadata.md](docs/package-metadata.md) for package contracts.
-[PLAN.md](PLAN.md) describes planned work. Files under `docs/experiments/` preserve
-historical evidence; their commands and results may describe retired code.
+[PLAN.md](PLAN.md) describes pending work. [Validation status](docs/validation-status.md)
+records tested profiles and unresolved findings; its dated source links preserve
+historical evidence without treating old commands or policies as current.
 
 ## Code ownership
 
@@ -100,7 +101,10 @@ and retained checkpoints/packages. Keep private infrastructure identifiers and
 access details out of tracked code and documentation.
 
 Generate one-off profiling and experiment scripts in scratch space; maintain
-only reusable project tooling. Update current usage documentation when interfaces
-change, while preserving clearly marked historical records.
+only reusable project tooling. Give shared commands, contracts and validation
+status one documented home and link to them from model guides. Keep model-specific
+design and constraints in those guides. Preserve reusable technical conclusions
+and dated evidence links when retiring development journals; raw run artifacts
+remain outside Git. Update current usage documentation when interfaces change.
 
 Commit, push or rewrite history only when requested.

@@ -1,18 +1,15 @@
 # Development tools
 
-Run these commands from the repository root with the matching Python/LibTorch
-environment. Full-model validation and benchmarks require exported packages;
-use fresh output directories.
-Select `Q3_PY`, `Q35_PY` and `CMAKE` with the
-[target environment guide](../environments/README.md), and set
-`BUILD="$PWD/build/qwen3"` for the Qwen3 commands below. Each model's Python
-tools default to executables in `build/<model>/`; existing native-path options
-override those defaults. Export and standalone operator tests select the
-attention library from that build or `XINFER_ATTENTION_OPS_LIBRARY`. Build the
-compiler-owned `xinfer_attention_ops` target first; its implementation and C shim
-live in `compiler/common/kernels/`. Runtime targets build independently. Package
-inference and validation use the embedded implementation. Shared logged
-subprocess execution and prompt partitioning live in `tools/common.py`.
+Run commands from the repository root with the matching model interpreter.
+Select `Q3_PY`, `Q35_PY` and the native build through the
+[environment guide](../environments/README.md). Build the attention library before
+export or standalone attention tests. Full-model tools require complete exported
+bundles; use fresh output paths. The [model guides](../README.md#getting-started)
+cover model-specific export settings and GPU tests.
+
+This guide defines the shared commands and acceptance policy.
+[Validation status](validation-status.md) records results for particular builds;
+benchmark reports remain independent of accuracy validation.
 
 ## Formatting
 
@@ -49,13 +46,16 @@ ABI checks are tested under `tools/tests/`. Compiler metadata/export, model load
 adapters and kernel tests remain under `compiler/*/tests/`; environment tests
 remain under `environments/tests/`.
 
-These CPU checks use temporary fixtures and mocks, without checkpoint
-downloads, compiled packages, native binaries or a GPU:
+These CPU checks need no checkpoints, prebuilt model packages, project native
+binaries or GPU. Most use temporary fixtures and mocks; `test_weights` compiles
+tiny CPU AOTI packages and requires a working C++ toolchain.
 
 ```bash
 CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
   compiler.common.tests.test_context compiler.common.tests.test_metadata \
-  compiler.common.tests.test_export \
+  compiler.common.tests.test_export compiler.common.tests.test_weights \
+  environments.tests.test_check environments.tests.test_setup \
+  environments.tests.test_entrypoints \
   compiler.qwen3.tests.test_export \
   tools.tests.test_common tools.tests.test_packages \
   tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \
@@ -131,145 +131,80 @@ execution; the full-model acquisition and token CLIs live in `tools/prepare/`.
 
 ## Shared native executables
 
-Both models build the same `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate`
-targets in separate `build/qwen3/` and `build/qwen35/` directories. Each executable
-reads the package metadata to select the model-specific contract. Both entry
-JSON files require the shared
-[`schema_version: 5` format](package-metadata.md), `runtime_abi_version: 1`, and an
-explicit `model_type` of `qwen3` or `qwen35`. Schema 1 through schema 4 and
-unversioned sidecars must be converted or re-exported; model selection reads the versioned
-metadata directly.
+Both model builds provide `xinfer_aoti` (greedy generation), `xinfer_benchmark`
+(fixed-token measurements) and `xinfer_validate` (logit/state traces and runtime
+checks). Metadata selects the model ABI; native-path options override each tool's
+`build/<model>/` default. The common runner owns loading, state, positions,
+prompt chunking and dispatch. The [package contract](package-metadata.md)
+defines integrity checks, state ownership and compatibility.
 
-The common `Runner<Spec>` owns package loaders, shared weights, device checks,
-token validation, positions, prompt chunking and prefill/decode dispatch.
-New exports choose `cache_length` with `--max-context-length`, defaulting to the
-model's declared ceiling. Compiled prefill remains `token_range: [2,512]`.
-The per-request `--max-output-tokens` budget shares context with the prompt;
-there is no separate prompt-cap option.
-A long request is split into calls of at most
-512 tokens, with a final single token routed to decode. Request/ID/budget checks
-cover the entire prompt before its first chunk executes. Ordinary L20 exports,
-C++ execution and full 16,384-slot inference-memory probes completed for
-Qwen3-0.6B, Qwen3.5-0.8B and Qwen3.5-4B, with bitwise native/Python AOTI
-agreement. Qwen3 passed its existing HF numerical gates; Qwen3.5 HF acceptance
-remains open. The new profile has not been validated on GB10. The common state
-policy uses metadata update rules and ABI-derived output positions to retain KV buffers
-and replace functional conv/recurrent outputs. Reset reuses KV storage and zeros
-replacement state. Returned tensors are checked for shape, dtype, device,
-contiguity and required KV aliases before replacement state is adopted. The
-generation CLI refuses existing output/trace files and path aliases. Native benchmarks use
-the same report header and timing boundaries for both models. The validation
-binary records every logit and selected state checkpoints. Expanded-capacity
-checks store the populated KV prefix and complete functional state; untouched
-future KV is checked separately. The case manifest records checkpoint coverage.
+Generation stops at EOS or its output budget and refuses existing output/trace
+files and path aliases. Prompt plus `--max-output-tokens` must fit compiled
+capacity; prompts are chunked into at most 512-token calls. Benchmark workloads
+consume all supplied tokens, including EOS. Validation records every logit and
+selected state checkpoints, with coverage described by its case manifest.
 
-With `XINFER_BUILD_VALIDATION=ON`, two targets check state ownership and complete
-prompt partitioning/generation on CPU without model packages or a GPU:
+With `XINFER_BUILD_VALIDATION=ON`, these native CPU contracts need neither model
+packages nor a GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_state_contract
-CUDA_VISIBLE_DEVICES= build/qwen3/xinfer_generation_contract
+CUDA_VISIBLE_DEVICES='' build/qwen3/xinfer_state_contract
+CUDA_VISIBLE_DEVICES='' build/qwen3/xinfer_generation_contract
 ```
 
-`Spec` validates metadata and the model ABI. Each native runtime construction
-performs fresh file preflight: it hashes prefill and decode once each against the
-sidecars and embedded weight manifest, hashes the weight archive once, and
-parses its manifest once. All integrity checks complete before GPU weight
-allocation. These checks repeat for every runtime construction. File preflight
-treats `.pt2` files as whole artifacts, including their bundled dependencies;
-it does not inspect or compare attention-library payloads.
-
-Native `load_ms` includes file preflight, weight loading and loader setup.
-Earlier reports excluded the file checks performed during `Spec` construction.
-Use whole-process elapsed time (`process_ms` in benchmark `runs.json`) to compare
-total startup across that boundary change; first-request and steady-state
-timings remain separate.
-
-The [common runtime record](experiments/common-runtime.md) preserves the initial
-runner refactor, its former model-specific state policies and validation evidence.
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
-for the CMake `Runtime` component, installed layout and prefix relocation.
+for deployment and relocation. Native `load_ms` includes artifact preflight,
+weight loading and loader setup; whole-process `process_ms` in benchmark
+`runs.json` is the comparable startup measure for older reports that excluded
+some integrity checks. First-use and steady-state timings remain separate.
 
 ## Python validation tools
 
-One metadata-selected command runs numerical validation for either model:
+One command runs the numerical chain for either family, selected from metadata:
 
 ```bash
 "$Q35_PY" -m tools.validation.validate \
-  --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation
+  --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation-new
 ```
 
-`--packages` and a fresh `--output` are required. The model directory and native
-`xinfer_validate` path default from package identity; existing `--model-dir` and
-`--native` overrides select another checkpoint/build. Run from the repository
-root with the matching model environment. Both models generate their HF references
-during validation; neither needs a separate preparation command or saved-reference
-input.
+`--packages` and a fresh `--output` are required. Checkpoint and native validator
+paths default from package identity; `--model-dir` and `--native` override them.
+HF references are generated during the run, without saved-reference preparation.
+Qwen3 additionally cross-checks manual HF greedy decoding against `HF.generate()`.
 
-The shared chain is HF → eager → Python AOTI → C++ AOTI. The eager stage
-applies adapters and explicit graph passes such as Qwen3.5 linear packing,
-following the package metadata. Teacher forcing uses identical tokens and
-partitions at every stage. Adjacent numerical comparisons distinguish the
-combined eager transformations from compilation; a direct Python-AOTI/HF
-comparison retains the end-result bound. Native/Python AOTI comparison is
-bitwise. Long-context cases retain identical chunk partitions across the HF,
-adapted/packed eager and AOTI stages, with the independent BF16 HF baseline and
-selected state checkpoints. Runtime parity and open HF numerical acceptance
-remain separate conclusions; existing HF limits are unchanged. Inductor code-generation options apply in the compiled stage.
+The chain is **HF → adapted/optimized eager → Python AOTI → C++ AOTI**.
+Eager includes the model's adapters and explicit graph passes, such as linear
+packing and decode projection replacement. Inductor code-generation settings
+apply in the compiled stage. All stages receive the same teacher-forced tokens
+and partitions; comparisons cover adjacent stages plus a direct AOTI/HF anchor.
+Native/Python execution of the same packages must be bitwise.
 
-`tools/validation/common/` owns shared execution, comparisons and native trace
-handling. Each model's `model.py` supplies loading, the eager transformations,
-fixtures and the independent BF16 HF reference. Shared prompt definitions in
-`tools/validation/common/prompts.py` retain each model's texts and case names;
-Qwen3.5 numerical and runtime-contract checks also reuse its long-prompt text.
-Each HF stage generates its chat continuations and logits during the run, then
-fixes identical teacher-forced inputs for later stages. Qwen3 also cross-checks
-its manual HF greedy decoding against HF `generate()` before installing adapters.
-The chain and runtime validator share the Python AOTI loader and explicit-state
-runtime, including package preflight and ownership of shared weights.
-`qwen3/validate_runtime.py` and `qwen35/validate_runtime.py` retain separate
-CLI/deployment contract checks and tokenize their prompts from the local
-checkpoint. These replace the former separate Python-AOTI,
-model and end-to-end numerical entry points. The HF → eager → AOTI chain uses the shared
-`tools.validation.common.attention.load_packaged_attention_ops` helper for eager
-execution and shape registration after checking metadata and shared-weight
-integrity. This helper selects the prefill package's operator for eager execution,
-or reuses an already registered eager operator. It does not compare attention
-payloads between entries. The generic weight loaders retain package and archive
-integrity checks without inspecting the attention payload.
-The two runtime validators use standard Python and C++ package loaders, whose
-wrappers load the embedded native dependency, without an eager operator preload.
-Native executables do not link it directly.
-Validation tooling tests live in
-`tools/validation/tests/`; compiler/model/operator tests remain under
-`compiler/*/tests/`. DeltaNet numerical and behavior checks live in
-`compiler/qwen35/tests/test_kernels.py`, with reusable fixtures and references
-beside the tests. `compiler/qwen35/tests/test_kernels_aoti.py`
-checks export, decomposition and exact direct-kernel/Python AOTI output/state
-parity for both geometries and BF16/FP32. It compiles packages in temporary
-directories, reuses them across test methods and skips when CUDA is unavailable.
-Run the affected kernel/block tests as required checks when changing their
-implementation; the full-model validation command does not invoke them.
-There is no standalone kernel-validation CLI or kernel C++ runner; full-model
-validation retains native coverage. Production compiler and runtime code stays
-in its existing directories.
+Long-context cases retain every logit row and selected state checkpoints:
+populated KV prefixes and complete functional states. Untouched future KV is
+checked separately. Eager validation selects the bundled prefill attention
+implementation; native/package execution uses standard AOTI loading. See
+[attention loading](flash-attention.md#build-and-deployment).
 
-The retained Qwen3.5 rounding diagnostic runs with
-`python -m tools.diagnostics.qwen35.probe_rounding` in the Qwen3.5 environment.
-It uses the prepared text checkpoint to reproduce Q35-NUM-001; exit zero means
-the issue was reproduced.
+The runtime-contract tools separately exercise shipping CLIs and deployment:
 
-Shared attention operator checks and Qwen3 adapter checks run as unit tests in
-`compiler/common/tests/test_attention.py` and `compiler/qwen3/tests/test_attention.py`.
-The adapter tests construct an HF attention module with random weights and
-require no checkpoint download. The model validation tools check exported
-attention packages through Python AOTI and C++; there are no separate Qwen3
-operator or adapter validation CLIs.
+```bash
+"$Q3_PY" -m tools.validation.qwen3.validate_runtime \
+  --packages artifacts/qwen3-flash --output artifacts/qwen3-runtime-new
+"$Q35_PY" -m tools.validation.qwen35.validate_runtime \
+  --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/runtime-new
+```
 
-Shared tensor measurements live in `compiler/common/tests/tensors.py` and are
-reused by `tools/validation/common/validation.py`; report and native-file helpers
-remain in the validation tooling. Shared metric names are `max_abs`,
-`relative_l2` and `peak_relative`.
+Qwen3's `--native` selects the generation binary. Qwen3.5's `--binary` and `--cli`
+select the validation and generation binaries. Both tools default to matching
+model build directories and prepared checkpoints. Inspect complete reports even
+when a command exits nonzero; do not assume every failure is a known numerical
+issue. Package and native-binary identities accompany runtime/numerical reports.
+
+The shared pipeline lives in `tools/validation/common/`; family `model.py` hooks
+supply loading, eager transformations, fixtures and the independent BF16 baseline.
+Prompts are shared in `common/prompts.py`. Component/kernel tests are separate
+required checks and are not invoked by full-model validation. The model guides
+list their coverage and the Qwen3.5 rounding diagnostic.
 
 ### Shared numerical policy
 
@@ -329,145 +264,79 @@ report was produced with assertions disabled.
 
 ## Benchmark HF and native AOTI
 
-The shared benchmark tool lives under `tools/benchmark/`. Its common module
-owns environment and package records, rotated process order, GPU idle checks,
-worker execution, measurements, failure reports and summaries. Small model hooks
-provide checkpoint manifests, package checks, tokenization and HF model loading.
-`python -m tools.benchmark` selects these hooks from package metadata and offers
-`run`, `compare` and `check-idle` for both families. Workers use the common plain-HF
-cached-forward helper. Benchmarking prepares its own fixed-token workload and
-uses no validation reports or saved validation fixtures.
-
-Benchmark `summary.json` uses `schema_version: 1` and `model_type`. `run` names its
-profiles `hf` and `cpp_aoti`; `compare` uses the selected baseline/candidate labels.
-Eager worker reports and summaries containing an eager profile record
-`eager_baseline: hf_dynamic_cache`; each case stores
-`prediction_agreement: {reference_profile: matching_count}`. Environment records
-use `packages[profile][entry_point]` for metadata, size and checksum, and
-`shared_weights[profile]` for archive identity checks. Package, binary and
-workload checksums accompany the measurements. Accuracy reports remain in the
-validation tools.
-
-Benchmark summaries include reset, prefill, reset-plus-prefill (`first_prediction_ms`),
-decode, per-token decode and whole-request distributions. Prefill timing
-covers the complete native prompt, including every compiled chunk and the final
-prediction, rather than only the final chunk. Memory records include
-the sampled device-memory peak and its delta from the process's initial reading,
-as well as PyTorch allocator peaks. Device-memory samples can include other GPU
-users. Repeated predictions, their counts, consumed positions and single-threaded
-workers are checked before aggregation. Prediction agreement between profiles
-remains diagnostic.
-
-One command serves both model families, selected from package metadata. Run it
-with the matching model's Python environment. `run` compares the unmodified HF
-eager profile (`hf`) with a compiled package pair (`cpp_aoti`). Each process
-receives identical prompts and forced decode tokens, so differing predictions
-do not change the measured workload. Both models start with
-`past_key_values=None`, then carry the cache returned by the unchanged HF model.
-HF creates its dynamic cache and determines masks and positions. Normal PyTorch
-SDPA backend selection remains enabled. Reset discards the cache; the first
-prefill includes cache allocation. Initial one-token requests use the same path.
-HF receives the whole prompt in one call, whereas native AOTI uses chunks bounded
-by the package prefill range. `prefill_execution` in the summary records this
-partition difference; the benchmark is not a matched-partition numerical test.
-
-The benchmark tokenizes its own capital-of-France chat prompt and the fixed
-"Paris is the capital of France. " continuation. It needs no validation fixtures
-or reports. Earlier Qwen3 workloads used a saved generated continuation;
-workload hashes identify that protocol change. Earlier masked-cache speedups
-also need fresh measurements with the HF dynamic-cache baseline. Model-specific
-Transformers versions and computation still differ, so compare measurements
-within a model and target.
+`python -m tools.benchmark` selects the model from package metadata. Both families
+support `run`, `compare` and `check-idle`. The harness prepares its own fixed
+capital-of-France prompt/continuation tokens and does not consume validation
+reports. Use the matching model environment:
 
 ```bash
-"$CMAKE" --build "$BUILD" --target xinfer_benchmark -j2
 "$Q3_PY" -m tools.benchmark run \
-  --packages artifacts/aoti \
-  --native "$BUILD/xinfer_benchmark" \
-  --output artifacts/benchmark-new
+  --packages artifacts/qwen3-flash --output artifacts/benchmark-new
 ```
 
-`--packages` and a fresh `--output` are required. The prepared model directory
-and native executable default from package identity; `--model-dir` and `--native`
-select another local checkpoint path or build. The native defaults are
-`build/qwen3/xinfer_benchmark` and `build/qwen35/xinfer_benchmark`.
-Deploy the complete five-file model bundle with the native executable and
-matching LibTorch/CUDA, following the runtime installation guide. Both `.pt2`
-files carry attention; benchmark environment reports record whole-package
-checksums for each profile and entry.
+`run` compares unchanged HF with its dynamic cache (`hf`) against one compiled
+pair (`cpp_aoti`). `--model-dir` and `--native` override the inferred checkpoint
+and `build/<model>/xinfer_benchmark`. Each worker receives identical prompts and
+forced decode tokens, so differing predictions do not shorten the workload.
+HF reset discards its cache and first prefill includes allocation. HF receives
+the whole prompt in one call; native prefill includes every compiled chunk.
+`prefill_execution` records that difference. Numerical validation instead matches
+partitions. Earlier masked-cache or different-workload speedups need fresh
+comparisons; compare results within the same model and target.
 
-Defaults are prompt lengths 25, 128 and 512, 64 fixed decode steps, two warmups,
-five measured requests per case and three process rounds. `compare` defaults to
-four rounds. `--lengths`, `--decode-steps`, `--warmup`, `--repeats` and `--rounds`
-override these counts. The package's `cache_length` bounds complete request
-context, including both prompt and forced output tokens; `token_range`
-bounds each compiled call. Use
-`--lengths 511 512 513 8191 8192` to measure chunk boundaries and the complete
-long prompt. Recheck idle conditions and available device memory before running
-long-context workloads.
+Defaults are prompt lengths 25/128/512, 64 forced decode steps, two warmups,
+five measured requests and three process rounds. Override with `--lengths`,
+`--decode-steps`, `--warmup`, `--repeats` and `--rounds`. Prompt plus forced decode
+tokens must fit package capacity. Use lengths 511/512/513/8191/8192 when measuring
+chunk boundaries and long prompts, after checking available device memory.
 
-`run`, `compare` and `check-idle` default to CUDA logical device 0 under the current
-`CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` settings. `--gpu` accepts an
-`nvidia-smi` physical index or GPU UUID and overrides inherited visibility.
-Every worker uses that GPU as CUDA device 0. Idle checks, telemetry and recorded
-GPU information use the same UUID, stored as `gpu_uuid` in `environment.json`.
-
+All commands honor `CUDA_VISIBLE_DEVICES` and `CUDA_DEVICE_ORDER` by default.
+`--gpu` selects an explicit physical `nvidia-smi` index or GPU UUID. Workers,
+idle checks and telemetry use that same UUID as logical CUDA device zero.
 The standalone idle check needs no model or packages:
 
 ```bash
 "$Q3_PY" -m tools.benchmark check-idle --output artifacts/idle.json
 ```
 
-It records GPU and memory activity once per second, accepting five consecutive
-readings at or below 10%, and fails after roughly 30 seconds without that quiet
-window. Every benchmark worker also has idle checks before and after execution.
-`--allow-busy` permits functional harness runs and marks their timings
-provisional.
+It samples GPU/memory activity once per second, requiring five consecutive
+readings at or below 10% and failing after roughly 30 seconds without that window.
+Workers also check idle conditions before and after execution. `--allow-busy`
+permits functional harness checks and marks timings provisional. Idle checks
+alone do not prove healthy clocks or exclusive access; inspect telemetry and
+repeat controlled measurements before making performance claims.
+
+Reports use summary schema 1 and `model_type`; HF profiles record
+`eager_baseline: hf_dynamic_cache`. `environment.json` records GPU identity and
+package, binary and workload checksums. Summaries include reset, full-prompt
+prefill, reset-plus-prefill (`first_prediction_ms`), decode/per-token and whole-
+request distributions. Loading and first use are separate from warmed results.
+Repeated predictions, counts, consumed positions and thread settings are checked;
+`prediction_agreement` between different profiles is diagnostic.
+
+Memory reports distinguish allocator peaks from sampled total-device use and
+its delta from process startup. Device samples may include other GPU users and
+miss transient allocations. Do not add allocator and device totals together.
+Detailed environment capture, rotated process order and worker orchestration
+are shared under `tools/benchmark/`, with small model hooks.
 
 ## Compare two compiled profiles
-
-`python -m tools.benchmark compare` supports both models. It runs two package
-directories through the same native executable with identical fixed-token
-workloads. The default four process rounds alternate baseline/candidate order,
-with two warmups and five measured requests per prompt length. Loading and first
-use are recorded separately from steady-state latency.
 
 ```bash
 "$Q3_PY" -m tools.benchmark compare \
   --baseline-packages artifacts/aoti-baseline \
   --candidate-packages artifacts/aoti-candidate \
   --baseline-label baseline --candidate-label candidate \
-  --native "$BUILD/xinfer_benchmark" \
   --output artifacts/comparison-new
 ```
 
-Both pairs require compatible checkpoint, toolchain, tensor contracts and
-numerical compilation settings, as well as matching logical weight identities
-and source mappings. General compiler tuning options remain in export logs.
-Labels name the measurements and default to `baseline` and `candidate`.
+Both pairs need compatible checkpoints, toolchains, tensor/numerical contracts
+and logical weight identities/source mappings. General tuning options remain in
+export logs. `--native` selects another common binary; labels default to
+`baseline` and `candidate`. Four process rounds alternate execution order by
+default, with the same warmup/repeat settings as `run`.
 
-Results include request timings, latency distributions, prediction agreement,
-memory samples, GPU telemetry and package/binary/workload hashes. Numerical
-accuracy is checked separately with the validation tooling.
-
-## Validate runtime correctness and report HF differences
-
-```bash
-"$Q3_PY" -m tools.validation.validate \
-  --packages artifacts/aoti-candidate \
-  --output artifacts/validation-candidate-new
-```
-
-The default validation report records HF cache errors and differing token IDs,
-including top-two margins and the HF score gap to the compiled-selected token.
-Those differences are diagnostic under the
-[shared numerical policy](#shared-numerical-policy); the report distinguishes HF
-parity from runtime correctness. Logit differences must still satisfy both
-existing 5% row-error limits.
-
-C++/Python AOTI bitwise agreement, finite-value checks, cache writes and masking,
-reset/reuse, stable storage, boundary rejection and native/Python generation
-agreement remain strict. The independent BF16 HF eager baseline is retained.
-This policy does not change model arithmetic or make HF numerical equivalence a
-claim of the compiled profile. See [FlashAttention](flash-attention.md) for the
-recorded differences and supported workload.
+Inspect per-workload/per-round results as well as pooled distributions. Use an
+identical-bundle A/A comparison when needed to characterize observed variation;
+it is not a universal noise bound. Separate profiler timing from unprofiled
+native measurements. Run accuracy validation independently on the same bundles.

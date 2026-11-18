@@ -41,10 +41,9 @@ installation. The installed launcher works with the normal image library
 environment; no global library override or image `PATH` change is needed for
 this workaround.
 
-An experimental `xinfer/l20:torch2.13-cu126-envfix` image was built and tested,
-but it is not the default. Per the 2026-11-07 decision, its Dockerfile changes
-were withdrawn; the running-container workaround remains temporary. Revisiting
-an NVIDIA official base image is deferred in [the project plan](../../../PLAN.md).
+The running-container workaround remains temporary. Revisiting an NVIDIA
+official base image is deferred in [the project plan](../../../PLAN.md);
+the maintained Dockerfile still uses the pinned base described here.
 
 Project source, model checkpoints, generated packages and reports live in host
 bind mounts. The final image contains the installed environment and the small
@@ -191,3 +190,5 @@ After launch, validate actual Triton GPU compilation/execution, AOTI packaging,
 Python/native execution and shared-weight loading. Build-time CPU imports and
 dependency checks do not establish GPU compatibility. Record CUDA's reported
 memory capacity and the container's memory configuration with those checks.
+Use the [shared validation tools](../../../docs/development-tools.md#python-validation-tools)
+and record the tested profile in [validation status](../../../docs/validation-status.md).
