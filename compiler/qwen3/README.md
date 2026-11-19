@@ -1,15 +1,61 @@
 # Qwen3-0.6B AOTI / C++
 
-Qwen3 has one compiled profile: batch-one BF16 AOTInductor with valid-prefix
-FlashAttention and native grouped-query attention. The original Hugging Face
-model provides the weights and an independent eager reference. The shared C++
-runtime performs inference and greedy generation without Python.
+Qwen3 compiles BF16 AOTInductor with valid-prefix FlashAttention and native
+grouped-query attention. The original Hugging Face model provides the weights
+and an independent eager reference. The shared C++ runtime performs inference
+and greedy generation without Python. Batch-one generation is the default;
+one package also supports explicit inference steps with any batch size from 1 through 8.
 
 Use the [environment guide](../../environments/README.md) for setup/builds,
 [development tools](../../docs/development-tools.md) for preparation, validation
 and benchmarks, and [validation status](../../docs/validation-status.md) for
 recorded results and unresolved issues. Historical passes do not cover every
 capacity or newly compiled artifact.
+
+## Dynamic-batch inference
+
+Every export supports `B=1..8`, with independent prompt lengths and cache
+positions. The range is fixed in code; there is no batch-size export option.
+`Runner::step_batch` accepts `B` token vectors, pads them on the right and
+returns `[B,vocab_size]` logits for each row's last real token. A call consumes
+at most 512 real tokens per row. Width one uses decode; widths 2–512 use the
+dynamic prefill package, even if one row has only one token.
+
+The runtime allocates eight cache rows once and passes views of the first `B`
+rows to each call. Row indices retain their identity: reducing `B` preserves
+omitted rows; increasing it resumes those rows or starts previously unused rows.
+Each row's first input must be nonempty. Later empty rows preserve cache and
+position and return zero logits. At least one row must be active. `reset()`
+clears all eight rows; individual request replacement and EOS scheduling remain
+future work. Split longer prompts into calls at the API boundary.
+
+Context capacity is per row. At capacity 1,024 the eight-row allocation is
+896 MiB, independent of the current `B`, in addition to weights and temporary
+buffers. The scalar generation and benchmark CLIs use B=1 from this same bundle.
+
+```bash
+"$Q3_PY" -m compiler.qwen3.export --model-dir work/models/qwen3-0.6b \
+  --max-context-length 1024 --output artifacts/qwen3-batched
+"$Q3_PY" -m tools.validation.qwen3.validate_batch \
+  --model-dir work/models/qwen3-0.6b --packages artifacts/qwen3-batched \
+  --native build/qwen3/xinfer_validate --output artifacts/validation-batched
+```
+
+The batch validator exercises every B=1..8 on that bundle, comparing distinct
+text prompts and boundary cases against independent BF16 HF requests, adapted
+eager and Python/C++ AOTI. It checks the shared 5% logit bounds, bitwise native
+parity, padding, unused rows, cache ownership, independent positions, inactive
+and resumed rows, changing B, reset, poisoned future KV, 511/512/513 boundaries,
+full capacity and overflow. HF, adapted eager and Python AOTI are each loaded
+once for the entire matrix. Common and multi-row fixtures run for each B;
+batch-transition fixtures run once afterward. Per-batch reports live in
+`b1/` through `b8/`, with transition results in `transitions/`; `summary.json`
+uses these group names as keys. After the Python phase releases its models,
+one C++ runtime executes all cases. Expected cache traces use sparse files with
+unchanged bytes; C++ compares complete logits/state files byte for byte and
+removes successful state dumps case by case. Reports retain their digests.
+HF state differences remain diagnostic. See
+[validation status](../../docs/validation-status.md) for results.
 
 ## Prepare and export
 
@@ -52,26 +98,34 @@ logs are build diagnostics. The
 The adapter retains the original embedding, rotary embedding, decoder layers,
 final normalization and vocabulary head. Each attention wrapper reuses HF
 projections and Q/K normalization, appends K/V in place and invokes the shared
-read-only FlashAttention operator over the populated prefix.
+read-only batched FlashAttention operator over the populated prefixes. Each
+layer uses one Triton KV-write launch and one native variable-length attention
+call across the batch. Metadata is prepared once per step and reused by all
+layers; packing excludes padded queries. See the [attention guide](../../docs/flash-attention.md)
+for cache-layout handling.
 
 | Property | Qwen3-0.6B |
 | --- | --- |
 | Layers | 28 |
 | Query / KV heads | 16 / 8 |
 | Head dimension | 128 |
-| KV tensors | 56 caller-owned BF16 buffers, each `[1,8,C,128]` |
-| Output | Last-token BF16 logits `[1,151936]` |
+| KV inputs | 56 BF16 cache views, each `[B,8,C,128]` |
+| Output | Last-token BF16 logits `[B,151936]` |
 
-`C` is the exported capacity. The Python step signature is
-`(input_ids, cache_position, (K0, V0, ..., K27, V27), kv_extent)`.
-Native AOTI receives 59 flat inputs: IDs, positions, the 56 KV tensors and the
-shape-only extent. Inputs are unpadded contiguous appends to an existing prefix.
+`B` is the runtime batch size (1 through 8), and `C` is the exported capacity.
+All batch sizes use the same Python step signature:
+`(input_ids, cache_position, (K0, V0, ..., K27, V27), kv_lengths, query_lengths)`.
+IDs and positions have shape `[B,T]`; the two CPU int32 length tensors have
+shape `[B]`. KV inputs are views of the first B rows of the eight-row allocation.
+Native AOTI always receives 60 flat inputs. See
+[runtime ABI 4](../../docs/package-metadata.md#runtime-abi-4-dynamic-qwen3-batches)
+for padding, inactive rows and state ownership. Earlier Qwen3 ABI packages
+must be re-exported.
 Training, arbitrary masks and attention-weight outputs are unsupported.
 
-[Runtime ABI 1](../../docs/package-metadata.md#runtime-abi-1) defines shared
-input types, mutation and dispatch semantics. Prefill accepts 2–512 tokens per
-call; decode accepts one token, including at position zero. The shared runner
-chunks longer prompts and requires prompt plus output budget to fit capacity.
+Prefill accepts padded widths 2–512 per call; decode accepts width one,
+including at position zero. The shared runner chunks longer prompts and requires
+prompt plus output budget to fit capacity.
 `runtime/qwen3/runtime.h` checks model-specific geometry; loading, state handling
 and generation live in `runtime/common/`.
 
@@ -128,5 +182,5 @@ but was not consistently closer to an independent FP32 control. It is therefore
 not an alternate supported export path. Bounded matched-input logit error and
 strict native/Python parity remain the acceptance criteria; HF state and token
 differences remain visible diagnostics. The
-[validation status](../../docs/validation-status.md#numerical-findings-to-preserve)
-records the unresolved focused logit failure and historical evidence.
+[validation status](../../docs/validation-status.md#open-numerical-issues)
+records the unresolved logit failures and tested profiles.

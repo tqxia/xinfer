@@ -46,6 +46,7 @@ class HFRuntime:
         self.position = 0
 
     def reset(self, fill=0):
+        self.fill = fill
         if self.dynamic:
             require(fill == 0, "The HF DynamicCache control starts with an empty cache")
             self.cache = DynamicCache()
@@ -68,6 +69,7 @@ class HFRuntime:
                 value = cache[spec["layer"]]
                 if self.dynamic:
                     value = F.pad(value, (0, 0, 0, self.capacity - value.shape[2]))
+                value = F.pad(value, (0, 0, 0, 0, 0, 0, 0, spec["shape"][0] - 1), value=self.fill)
             values.append(value)
         return values
 

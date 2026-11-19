@@ -17,7 +17,8 @@ def validate_qwen3_metadata(metadata):
             "Unsupported package metadata: state",
         )
         require(
-            item["shape"] == [1, 8, metadata["cache_length"], 128], "Unsupported Flash cache shape"
+            item["shape"] == [metadata["state"][0]["shape"][0], 8, metadata["cache_length"], 128],
+            "Unsupported Flash cache shape",
         )
 
 

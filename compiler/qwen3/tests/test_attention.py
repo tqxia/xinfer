@@ -9,13 +9,28 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3RotaryEmbedding,
 )
 
-from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.attention import load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
-from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, PrefixCache
-from compiler.qwen3.model import TensorCache
+from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, KVCache
+from transformers.cache_utils import Cache
 
 
 TEST_CAPACITY = 16384
+
+
+class ReferenceCache(Cache):
+    """Test-only explicit cache for the unmodified HF attention module."""
+
+    def __init__(self, tensors, position):
+        super().__init__()
+        self.tensors = tensors
+        self.position = position
+
+    def update(self, key, value, layer_idx, cache_kwargs=None):
+        k, v = self.tensors[2 * layer_idx : 2 * layer_idx + 2]
+        k.index_copy_(2, self.position, key)
+        v.index_copy_(2, self.position, value)
+        return k, v
 
 
 class AttentionProbe(torch.nn.Module):
@@ -28,18 +43,18 @@ class AttentionProbe(torch.nn.Module):
         self.adapter = adapter
         self.eval()
 
-    def forward(self, hidden, cache_position, kv, kv_extent):
+    def forward(self, hidden, cache_position, kv, kv_lengths, query_lengths):
         mask = None
         if self.adapter:
-            cache = PrefixCache(kv, cache_position, kv_extent)
+            cache = KVCache(kv, cache_position, kv_lengths, query_lengths)
         else:
-            cache = TensorCache(kv, cache_position)
+            cache = ReferenceCache(kv, cache_position[0])
             future = torch.arange(kv[0].shape[2], device=hidden.device).unsqueeze(
                 0
-            ) > cache_position.unsqueeze(1)
+            ) > cache_position[0].unsqueeze(1)
             mask = torch.zeros_like(future, dtype=hidden.dtype)
             mask = mask.masked_fill(future, torch.finfo(hidden.dtype).min)[None, None]
-        rotary = self.rotary(hidden, cache_position.unsqueeze(0))
+        rotary = self.rotary(hidden, cache_position)
         return self.attention(
             hidden,
             position_embeddings=rotary,
@@ -78,12 +93,13 @@ class PrefixFlashAdapter(unittest.TestCase):
     def inputs(self, tokens, length):
         return (
             torch.randn(1, tokens, self.config.hidden_size, device="cuda", dtype=torch.bfloat16),
-            torch.arange(length - tokens, length, device="cuda"),
+            torch.arange(length - tokens, length, device="cuda")[None],
             tuple(
                 torch.randn(1, 8, TEST_CAPACITY, 128, device="cuda", dtype=torch.bfloat16)
                 for _ in range(2)
             ),
-            cache_extent(length),
+            torch.tensor([length], dtype=torch.int32),
+            torch.tensor([tokens], dtype=torch.int32),
         )
 
     @torch.inference_mode()
@@ -91,28 +107,22 @@ class PrefixFlashAdapter(unittest.TestCase):
         for kind in ("decode", "prefill"):
             example = self.inputs(1 if kind == "decode" else 16, 32)
             tokens = torch.export.Dim("tokens", min=2, max=512)
-            extent = torch.export.Dim("extent", min=2, max=TEST_CAPACITY + 1)
             shapes = (
                 {} if kind == "decode" else {1: tokens},
-                {} if kind == "decode" else {0: tokens},
+                {} if kind == "decode" else {1: tokens},
                 ({}, {}),
-                {0: extent},
+                {},
+                {},
             )
             exported = torch.export.export(
                 self.adapter, example, dynamic_shapes=shapes, strict=False
             )
             exported.validate()
             targets = [node.target for node in exported.graph.nodes if node.op == "call_function"]
-            self.assertEqual(targets.count(torch.ops.xinfer.flash_attention.default), 1)
-            self.assertEqual(targets.count(torch.ops.aten.index_copy_.default), 2)
+            self.assertEqual(targets.count(torch.ops.xinfer.batched_flash_attention.default), 1)
+            self.assertEqual(targets.count(torch.ops.xinfer.append_kv_batched.default), 1)
             self.assertNotIn(torch.ops.aten.scaled_dot_product_attention.default, targets)
             self.assertNotIn(torch.ops.aten._scaled_dot_product_flash_attention.default, targets)
-            site = next(
-                node
-                for node in exported.graph.nodes
-                if node.target == torch.ops.xinfer.flash_attention.default
-            )
-            self.assertTrue(site.args[0].meta["val"].is_contiguous())
             exported_adapter = exported.module()
             cases = (
                 ((1, 1), (1, 2), (1, TEST_CAPACITY))
@@ -128,12 +138,12 @@ class PrefixFlashAdapter(unittest.TestCase):
             )
             for count, length in cases:
                 with self.subTest(kind=kind, tokens=count, length=length):
-                    hidden, positions, initial, valid = self.inputs(count, length)
+                    hidden, positions, initial, valid, queries = self.inputs(count, length)
                     outputs, caches = [], []
                     for call in (self.hf, self.adapter, exported_adapter):
                         kv = tuple(t.clone() for t in initial)
                         pointers = [t.data_ptr() for t in kv]
-                        outputs.append(call(hidden, positions, kv, valid))
+                        outputs.append(call(hidden, positions, kv, valid, queries))
                         self.assertEqual(pointers, [t.data_ptr() for t in kv])
                         start = length - count
                         for before, after in zip(initial, kv):
@@ -153,23 +163,24 @@ class PrefixFlashAdapter(unittest.TestCase):
                     poisoned = tuple(t.clone() for t in initial)
                     for tensor in poisoned:
                         tensor[:, :, length:].fill_(100)
-                    valid.fill_(255)
                     self.assertTrue(
-                        bits_equal(self.adapter(hidden, positions, poisoned, valid), outputs[1])
+                        bits_equal(
+                            self.adapter(hidden, positions, poisoned, valid, queries), outputs[1]
+                        )
                     )
 
     @torch.inference_mode()
     def test_unsupported_inputs_are_rejected(self):
-        hidden, positions, kv, extent = self.inputs(1, 1)
+        hidden, positions, kv, extents, queries = self.inputs(1, 1)
         arguments = dict(
-            position_embeddings=self.rotary(hidden, positions[None]),
-            past_key_value=PrefixCache(kv, positions, extent),
+            position_embeddings=self.rotary(hidden, positions),
+            past_key_value=KVCache(kv, positions, extents, queries),
             cache_position=positions,
         )
         try:
             for name, changes in (
                 ("mask", {"attention_mask": torch.zeros(1, 1, 1, TEST_CAPACITY, device="cuda")}),
-                ("cache", {"past_key_value": TensorCache(kv, positions)}),
+                ("cache", {"past_key_value": ReferenceCache(kv, positions[0])}),
                 ("positions", {"cache_position": positions.clone()}),
                 ("attention_weights", {"output_attentions": True}),
                 ("training", {}),

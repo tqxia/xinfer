@@ -5,6 +5,7 @@
 
 #include <iostream>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -63,6 +64,16 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
 
     expected = trace(runtime);
     expected_ids = runtime.generate({42, 13}, 3, nullptr);
+
+    if constexpr (std::is_same_v<Runtime, qwen::Runtime>) {
+      runtime.reset();
+      runtime.step_batch({{42}, {42, 13}});
+      runtime.prefill(std::vector<int64_t>(validated.capacity - 1, 13));
+      require(runtime.positions()[0] == validated.capacity && runtime.positions()[1] == 2,
+              "Scalar prefill used another row's remaining capacity");
+      require(runtime.state()[0].size(0) == 8, "Runtime did not reserve eight cache rows");
+      report["cases"].push_back({{"name", "scalar_prefill_after_batch"}, {"passed", true}});
+    }
 
     // This fails deterministically with the old borrowed Spec, before the
     // temporary/scoped cases below can encounter a dangling reference.

@@ -26,18 +26,18 @@ struct Bundle {
     const Json state = Json::array({
         {{"layer", 0},
          {"kind", "key"},
-         {"shape", {1, 8, capacity, 128}},
+         {"shape", {8, 8, capacity, 128}},
          {"dtype", "bfloat16"},
          {"update", "inplace"}},
         {{"layer", 0},
          {"kind", "value"},
-         {"shape", {1, 8, capacity, 128}},
+         {"shape", {8, 8, capacity, 128}},
          {"dtype", "bfloat16"},
          {"update", "inplace"}},
     });
     Json metadata = {
         {"schema_version", 5},
-        {"runtime_abi_version", 1},
+        {"runtime_abi_version", 4},
         {"model_type", "qwen3"},
         {"torch_version", TORCH_VERSION},
         {"cxx11_abi", bool(_GLIBCXX_USE_CXX11_ABI)},
@@ -47,7 +47,7 @@ struct Bundle {
         {"eos_token_ids", {1}},
         {"checkpoint", {{"model_id", "test"}, {"revision", "test"}, {"manifest", Json::object()}}},
         {"state", state},
-        {"export_options", {{"backed_size_oblivious", false}}},
+        {"export_options", {{"backed_size_oblivious", true}}},
         {"tf32", false},
         {"triton_enable_fp_fusion", true},
         {"inductor_configs",
@@ -104,7 +104,7 @@ struct Runtime {
   }
 
   Logits step(const std::vector<int64_t> &tokens) {
-    spec.check_step_tokens(tokens);
+    spec.check_batch_tokens({tokens});
     require(static_cast<int64_t>(tokens.size()) <= spec.capacity - position,
             "Context capacity exceeded");
 
@@ -219,6 +219,55 @@ int main() {
         rejected = std::string(error.what()) == "Unsupported package metadata: max_prompt_length";
       }
       require(rejected, "A retired prompt field was accepted as package metadata");
+    });
+
+    check("retired_qwen3_abis_require_reexport", [&] {
+      for (int64_t version : {1, 2, 3}) {
+        auto metadata = xinfer::read_json(bundle.directory / "prefill.json");
+        metadata["runtime_abi_version"] = version;
+        bool rejected = false;
+        try {
+          xinfer::validate_metadata(metadata, "prefill");
+        } catch (const std::runtime_error &error) {
+          rejected = std::string(error.what()).find("Unsupported runtime ABI version") == 0;
+        }
+        require(rejected, "Retired Qwen3 ABI was accepted");
+      }
+    });
+
+    check("independent_row_admission", [&] {
+      const qwen::Spec batch_spec(bundle.directory);
+      for (int64_t batch = 1; batch <= 8; ++batch) {
+        std::vector<std::vector<int64_t>> rows(batch, {2});
+        rows[0] = {2, 3};
+        require(batch_spec.max_batch_size == 8 && batch_spec.check_batch_tokens(rows) == 2,
+                "Per-row lengths not accepted");
+        for (int64_t active = 0; active < batch; ++active) {
+          rows.assign(batch, {});
+          rows[active] = {4};
+          require(batch_spec.check_batch_tokens(rows) == 1, "Inactive rows not accepted");
+        }
+        for (int variant = 0; variant < 5; ++variant) {
+          rows.assign(batch, {2});
+          if (variant == 0)
+            rows.assign(9, {2});
+          if (variant == 1)
+            rows.assign(batch, {});
+          if (variant == 2)
+            rows.back() = {16};
+          if (variant == 3)
+            rows.back().assign(513, 3);
+          if (variant == 4)
+            rows.clear();
+          bool rejected = false;
+          try {
+            batch_spec.check_batch_tokens(rows);
+          } catch (const std::runtime_error &) {
+            rejected = true;
+          }
+          require(rejected, "Invalid batch admitted");
+        }
+      }
     });
 
     check("default_requests_above_8192_and_exact_generation_budget", [&] {

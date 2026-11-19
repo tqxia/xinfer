@@ -18,10 +18,6 @@
 
 namespace xinfer {
 
-// ABI 1: batch-one BF16 prefix Flash attention, CPU shape-only extent,
-// ordered contiguous state, KV-only mutation and model-defined outputs.
-inline constexpr int64_t runtime_abi_version = 1;
-
 enum class ModelType { Qwen3, Qwen35 };
 
 inline const char *model_name(ModelType model) {
@@ -109,8 +105,11 @@ inline void check_metadata_schema(const Json &metadata) {
 inline void check_runtime_abi(const Json &metadata) {
   require(metadata.contains("runtime_abi_version") &&
               metadata_integer(metadata.at("runtime_abi_version"), 1) &&
-              metadata.at("runtime_abi_version") == runtime_abi_version,
-          "Unsupported runtime ABI version; convert retained metadata or re-export both packages");
+              ((metadata.value("model_type", "") == "qwen3" &&
+                metadata.at("runtime_abi_version") == 4) ||
+               (metadata.value("model_type", "") == "qwen35" &&
+                metadata.at("runtime_abi_version") == 1)),
+          "Unsupported runtime ABI version; re-export both packages");
 }
 
 inline bool metadata_keys(const Json &value, const std::unordered_set<std::string> &keys) {
@@ -124,10 +123,10 @@ inline bool metadata_keys(const Json &value, const std::unordered_set<std::strin
 
 inline void validate_metadata(const Json &metadata, const std::string &entry) {
   check_metadata_schema(metadata);
-  check_runtime_abi(metadata);
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
               (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
           "Unsupported model type");
+  check_runtime_abi(metadata);
 
   const auto &fields = metadata_fields();
   for (const auto &field : fields)
@@ -173,7 +172,8 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                    "checkpoint");
   metadata_check(checkpoint.at("manifest").is_object(), "checkpoint");
 
-  metadata_check(metadata_equal(m.at("export_options"), Json({{"backed_size_oblivious", false}})),
+  metadata_check(metadata_equal(m.at("export_options"),
+                                Json({{"backed_size_oblivious", m.at("model_type") == "qwen3"}})),
                  "export_options");
   metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
   metadata_check(m.at("triton_enable_fp_fusion").is_boolean(), "triton_enable_fp_fusion");
@@ -203,7 +203,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                      "state");
       elements *= dim.get<int64_t>();
     }
-    metadata_check(shape[0] == 1, "state");
+    metadata_check(shape[0] == (m.at("model_type") == "qwen3" ? 8 : 1), "state");
     metadata_check(item.at("dtype") == (kind == "recurrent" ? "float32" : "bfloat16"), "state");
     metadata_check(item.at("update") == (kv ? "inplace" : "replace"), "state");
     if (kv)
@@ -226,15 +226,15 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
 inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
   check_metadata_schema(prefill);
   check_metadata_schema(decode);
-  check_runtime_abi(prefill);
-  check_runtime_abi(decode);
 
   require(prefill.value("model_type", Json()) == decode.value("model_type", Json()),
           "Package model types differ");
-  for (const auto *m : {&prefill, &decode})
+  for (const auto *m : {&prefill, &decode}) {
     require(m->contains("model_type") && m->at("model_type").is_string() &&
                 (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
             "Unsupported model type");
+    check_runtime_abi(*m);
+  }
 
   static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",
                                                             "package_bytes", "package_sha256"};
@@ -254,7 +254,7 @@ struct StateSpec {
   std::vector<int64_t> shape, stride;
   at::ScalarType dtype;
   bool inplace;
-  // ABI 1: Qwen3 returns logits only; Qwen3.5 also returns every state.
+  // Qwen3 returns logits only; Qwen3.5 also returns every state.
   std::optional<size_t> output_index;
 };
 
@@ -266,6 +266,7 @@ struct SpecBase {
 
     model_type = parse_model_type(metadata.at("model_type").get<std::string>());
     capacity = metadata.at("cache_length");
+    max_batch_size = metadata.at("state").at(0).at("shape").at(0);
     max_prefill = prefill_metadata.at("token_range").at(1);
     vocab = metadata.at("vocab_size");
     eos = metadata.at("eos_token_ids").get<std::vector<int64_t>>();
@@ -297,7 +298,7 @@ struct SpecBase {
   }
 
   ModelType model_type;
-  int64_t capacity = 0, max_prefill = 0, vocab = 0;
+  int64_t capacity = 0, max_prefill = 0, vocab = 0, max_batch_size = 1;
   std::vector<int64_t> eos, compute_capability;
   Json prefill_metadata, metadata, shared_weights;
   std::vector<StateSpec> state;
@@ -320,11 +321,17 @@ struct SpecBase {
     check_token_ids(ids);
   }
 
-  void check_step_tokens(const std::vector<int64_t> &ids) const {
-    require(!ids.empty() && static_cast<int64_t>(ids.size()) <= max_prefill,
-            "Expected 1.." + std::to_string(max_prefill) + " tokens per compiled call");
-    // A compiled call has its own bound, independent of complete request length.
-    check_token_ids(ids);
+  int64_t check_batch_tokens(const std::vector<std::vector<int64_t>> &rows) const {
+    require(!rows.empty() && static_cast<int64_t>(rows.size()) <= max_batch_size,
+            "Batch size outside package range");
+    size_t length = 0;
+    for (const auto &row : rows) {
+      require(row.size() <= static_cast<size_t>(max_prefill), "Too many tokens per compiled call");
+      check_token_ids(row);
+      length = std::max(length, row.size());
+    }
+    require(length > 0, "Expected at least one active row");
+    return static_cast<int64_t>(length);
   }
 
   void check_request(const std::vector<int64_t> &ids, int64_t limit) const {

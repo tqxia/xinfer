@@ -26,7 +26,9 @@ class PackagedAttentionSelection(unittest.TestCase):
         self.enterContext(patch.object(packaged_attention, "_packaged_directory", None))
         self.addCleanup(self.cleanup_packaged_library)
         self.torch = SimpleNamespace(
-            ops=SimpleNamespace(load_library=Mock()),
+            ops=SimpleNamespace(
+                load_library=Mock(), xinfer=SimpleNamespace(batched_flash_attention=Mock())
+            ),
             library=SimpleNamespace(register_fake=Mock(return_value=lambda function: function)),
         )
 
@@ -46,6 +48,12 @@ class PackagedAttentionSelection(unittest.TestCase):
                         "fixture/data/aotinductor/model/libxinfer_attention_ops.so", payload
                     )
         return directory
+
+    def test_prefix_only_library_remains_usable_for_qwen35(self):
+        del self.torch.ops.xinfer.batched_flash_attention
+        with patch.dict("sys.modules", {"torch": self.torch}):
+            attention.load_attention_ops(self.library)
+        self.torch.library.register_fake.assert_called_once_with("xinfer::flash_attention")
 
     def test_missing_prefill_library_is_rejected_before_loading(self):
         packages = self.packages(prefill=None)
@@ -86,7 +94,7 @@ class PackagedAttentionSelection(unittest.TestCase):
             )
             self.assertEqual(attention.attention_library(), library)
         self.torch.ops.load_library.assert_called_once_with(str(library))
-        self.torch.library.register_fake.assert_called_once_with("xinfer::flash_attention")
+        self.assertEqual(self.torch.library.register_fake.call_count, 2)
 
     def test_packaged_selection_survives_a_stale_environment_override(self):
         packages = self.packages()
@@ -110,7 +118,7 @@ class PackagedAttentionSelection(unittest.TestCase):
                     packaged_attention.load_packaged_attention_ops(packages), self.library
                 )
         self.torch.ops.load_library.assert_called_once_with(str(self.library))
-        self.torch.library.register_fake.assert_called_once_with("xinfer::flash_attention")
+        self.assertEqual(self.torch.library.register_fake.call_count, 2)
 
 
 if __name__ == "__main__":

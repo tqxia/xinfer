@@ -1,6 +1,7 @@
 """Qwen3 builds live HF references and checks the HF generation API on CPU."""
 
 import importlib.metadata
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -26,6 +27,64 @@ if QWEN3_ENVIRONMENT:
 
 @unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
 class LiveHFReferences(unittest.TestCase):
+    def test_batch_fixtures_cover_supported_rows_and_capacity(self):
+        from tools.validation.qwen3 import validate_batch
+
+        tokenizer = Mock()
+        tokenizer.encode.return_value = [11, 12, 13]
+        for capacity in (512, 1024):
+            with patch.object(
+                validate_batch,
+                "encode_prompt",
+                side_effect=lambda _, text: list(range(len(text))),
+            ):
+                groups = validate_batch.case_groups(tokenizer, capacity)
+            self.assertEqual(list(groups), [f"b{b}" for b in range(1, 9)] + ["transitions"])
+            for group, (texts, cases) in groups.items():
+                batch = len(texts)
+                names = [case["name"] for case in cases]
+                self.assertEqual(len(names), len(set(names)))
+                for case in cases:
+                    positions = [0] * batch
+                    for rows in case["batch_steps"]:
+                        self.assertTrue(1 <= len(rows) <= batch)
+                        self.assertTrue(any(rows))
+                        for row, tokens in enumerate(rows):
+                            self.assertLessEqual(len(tokens), 512)
+                            positions[row] += len(tokens)
+                            self.assertGreater(positions[row], 0)
+                            self.assertLessEqual(positions[row], capacity)
+                    self.assertEqual(case["state_steps"], [len(case["batch_steps"]) - 1])
+                if group == "transitions":
+                    self.assertEqual(names, ["changing_batch", "growing_batch"])
+                    self.assertEqual(
+                        [[len(rows) for rows in case["batch_steps"]] for case in cases],
+                        [[8, 1, 3, 5, 8], [1, 3, 8]],
+                    )
+                    continue
+                self.assertEqual(group, f"b{batch}")
+                self.assertEqual(names[0], "prompts")
+                self.assertTrue({"reset", "poison", "padding"}.issubset(names))
+                self.assertNotIn("changing_batch", names)
+                self.assertNotIn("growing_batch", names)
+                self.assertEqual("perturb" in names, batch > 1)
+                self.assertEqual(any(name.startswith("lengths_") for name in names), batch > 1)
+                self.assertEqual("staggered_resume" in names, batch > 2)
+                if batch > 1:
+                    perturb = next(c for c in cases if c["name"] == "perturb")
+                    self.assertEqual(perturb["batch_steps"][0][1:], cases[0]["batch_steps"][0][1:])
+                    self.assertEqual(perturb["batch_steps"][1:], cases[0]["batch_steps"][1:])
+                if batch > 2:
+                    staggered = next(c for c in cases if c["name"] == "staggered_resume")
+                    self.assertEqual(
+                        [[len(row) for row in step] for step in staggered["batch_steps"][-batch:]],
+                        [[int(row == active) for row in range(batch)] for active in range(batch)],
+                    )
+            if capacity == 1024:
+                all_cases = [case for _, cases in groups.values() for case in cases]
+                self.assertEqual(len(all_cases), 142)
+                self.assertEqual(sum(len(case["batch_steps"]) for case in all_cases), 583)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -182,6 +241,162 @@ class LiveHFReferences(unittest.TestCase):
             ValueError, r"Manual HF decoding disagrees with HF\.generate\(\) for capital"
         ):
             self.suite.fixtures(self.runtime)
+
+
+@unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
+class BatchValidation(unittest.TestCase):
+    def test_sparse_traces_preserve_all_bytes_and_trailing_zeros(self):
+        from tools.validation.qwen3.validate_batch import write_trace
+        from tools.validation.common.validation import raw_bytes
+
+        values = (
+            (),
+            (torch.zeros(131073, dtype=torch.uint8),),
+            (
+                torch.zeros(65536, dtype=torch.uint8),
+                torch.tensor([0, 1, 0, 255], dtype=torch.uint8),
+                torch.zeros(65536, dtype=torch.uint8),
+                torch.tensor([-0.0, 1.0], dtype=torch.float32),
+                torch.zeros(131073, dtype=torch.uint8),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "trace"
+            for tensors in values:
+                expected = b"".join(raw_bytes(t) for t in tensors)
+                digest = write_trace(path, iter(tensors))
+                self.assertEqual(path.read_bytes(), expected)
+                self.assertEqual(digest, hashlib.sha256(expected).hexdigest())
+
+    def test_models_are_loaded_once_and_closed_after_all_batches_or_failure(self):
+        from tools.validation.qwen3 import validate_batch as batch
+
+        names = [f"b{size}" for size in range(1, 9)] + ["transitions"]
+        groups = {name: ([name], [dict(name="fixture")]) for name in names}
+        for fail_at in (None, "b4", "transitions"):
+            with self.subTest(fail_at=fail_at):
+                args = SimpleNamespace(model_dir=Path("model"), packages=Path("package"))
+                meta = dict(state=[], vocab_size=64, cache_length=1024)
+                eager, aoti = Mock(), Mock()
+                seen = []
+
+                def execute(
+                    actual_args, group, texts, cases, actual_meta, hf, actual_eager, actual_aoti
+                ):
+                    self.assertIs(actual_args, args)
+                    self.assertIs(actual_meta, meta)
+                    self.assertIs(texts, groups[group][0])
+                    self.assertIs(cases, groups[group][1])
+                    self.assertIs(hf, sentinel.hf)
+                    self.assertIs(actual_eager, eager)
+                    self.assertIs(actual_aoti, aoti)
+                    eager.close.assert_not_called()
+                    aoti.close.assert_not_called()
+                    seen.append(group)
+                    if group == fail_at:
+                        raise RuntimeError("case failed")
+
+                with (
+                    patch.object(batch, "load_packaged_attention_ops") as library,
+                    patch.object(
+                        batch, "load_tokenizer", return_value=sentinel.tokenizer
+                    ) as tokenizer,
+                    patch.object(batch, "case_groups", return_value=groups) as fixtures,
+                    patch.object(
+                        batch, "load_model", side_effect=[sentinel.hf, sentinel.base]
+                    ) as loader,
+                    patch.object(batch, "FlashStep", return_value=sentinel.adapter) as adapter,
+                    patch.object(batch, "ExplicitRuntime", return_value=eager),
+                    patch.object(batch, "load_aoti_runtime", return_value=aoti) as compiled,
+                    patch.object(batch, "validate_python_group", side_effect=execute),
+                ):
+                    if fail_at is None:
+                        self.assertEqual(batch.validate_python(args, meta), names)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "case failed"):
+                            batch.validate_python(args, meta)
+                    self.assertEqual(seen, names[: names.index(fail_at) + 1] if fail_at else names)
+                    self.assertEqual(loader.call_count, 2)
+                    adapter.assert_called_once_with(sentinel.base)
+                    library.assert_called_once_with(args.packages)
+                    tokenizer.assert_called_once_with(args.model_dir)
+                    fixtures.assert_called_once_with(sentinel.tokenizer, 1024)
+                    compiled.assert_called_once_with(args.packages, model_type="qwen3", specs=[])
+                eager.close.assert_called_once_with()
+                aoti.close.assert_called_once_with()
+
+    def test_one_native_run_preserves_failures_and_requires_complete_parity(self):
+        from tools.validation.qwen3 import validate_batch as batch
+        from compiler.common.artifacts import read_json, write_json
+
+        groups = {f"b{size}": ["prompt"] for size in range(1, 9)}
+        groups["transitions"] = ["changing_batch", "growing_batch"]
+        for defect in (None, "coverage", "positions", "parity"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                args = SimpleNamespace(output=root, packages=root / "package", native=root / "exe")
+                for group, names in groups.items():
+                    directory = root / group
+                    directory.mkdir()
+                    write_json(
+                        directory / "cases.json",
+                        dict(cases=[dict(name=name, state_steps=[0]) for name in names]),
+                    )
+                    write_json(
+                        directory / "report.json",
+                        dict(
+                            cases=[dict(name=name, positions=[3] + [0] * 7) for name in names],
+                            failures=[dict(case=names[0])]
+                            if group in ("b2", "transitions")
+                            else [],
+                        ),
+                    )
+
+                def execute(*args, **kwargs):
+                    manifest = read_json(root / "cases.json")
+                    self.assertEqual(len(manifest["cases"]), 10)
+                    rows = [
+                        dict(name=f"{group}_{name}", positions=[3] + [0] * 7, bitwise_parity=True)
+                        for group, names in groups.items()
+                        for name in names
+                    ]
+                    self.assertEqual(
+                        [case["name"] for case in manifest["cases"]],
+                        [row["name"] for row in rows],
+                    )
+                    if defect == "coverage":
+                        rows.pop()
+                    elif defect == "positions":
+                        rows[-1]["positions"][0] += 1
+                    elif defect == "parity":
+                        rows[-1]["bitwise_parity"] = False
+                    (root / "native").mkdir()
+                    write_json(
+                        root / "native/native.json",
+                        dict(
+                            cases=rows,
+                            loader_pairs=1,
+                            no_python_library=True,
+                            attention_library=True,
+                        ),
+                    )
+
+                with patch.object(batch.subprocess, "run", side_effect=execute) as native:
+                    if defect:
+                        with self.assertRaises(ValueError):
+                            batch.validate_native(args, list(groups))
+                    else:
+                        result = batch.validate_native(args, list(groups))
+                        self.assertEqual(result["b2"]["required_failures"], 1)
+                        self.assertEqual(result["transitions"]["required_failures"], 1)
+                        self.assertEqual(list(result), list(groups))
+                        for group, names in groups.items():
+                            report = read_json(root / group / "report.json")
+                            self.assertTrue(report["native_bitwise_parity"])
+                            self.assertEqual(
+                                [case["name"] for case in report["native"]["cases"]], names
+                            )
+                    native.assert_called_once()
 
 
 if __name__ == "__main__":

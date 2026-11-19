@@ -39,11 +39,12 @@ def _contract_probes(runtime, specs, seed, lengths):
             actual = actual.cpu()
             if spec["update"] == "inplace":
                 require(
-                    bits_equal(actual[:, :, :length], expected[:, :, :length]),
+                    bits_equal(actual[:1, :, :length], expected[:1, :, :length]),
                     "Poison changes valid KV",
                 )
                 fill = 7 if spec["kind"] == "key" else -3
                 require(bool((actual[:, :, length:] == fill).all()), "Future KV overwritten")
+                require(bool((actual[1:, :, :length] == fill).all()), "Unused KV row overwritten")
             else:
                 require(bits_equal(actual, expected), "Poison changes functional state")
         runtime.step([tokens[0]])
@@ -237,6 +238,10 @@ def validate_chain(suite, packages, native, output, metadata, report):
     policy = Policy(state_rows=getattr(suite, "state_rows", None))
     _describe_validation(suite, policy, native, report)
     hf, eager, cases, chats = _run_eager_stages(suite, specs, policy, report)
+    # Repeated-generation state checks finish inside run_stage. Subsequent
+    # HF/eager comparisons use their greedy logits and tokens, not these caches.
+    for generation in (*hf.greedy.values(), *eager.greedy.values()):
+        del generation["state"]
     compiled = _run_python_aoti(suite, packages, cases, chats, specs, report)
     compare_traces(report, "python_aoti", "eager", compiled, eager, specs, policy)
     del eager

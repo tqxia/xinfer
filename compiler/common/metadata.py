@@ -9,7 +9,7 @@ from compiler.common.artifacts import canonical_json, read_json, require, sha256
 
 
 SCHEMA_VERSION = 5
-RUNTIME_ABI_VERSION = 1
+RUNTIME_ABI_VERSIONS = {"qwen3": 4, "qwen35": 1}
 FIELDS = (
     "schema_version",  # Version of this metadata format.
     "runtime_abi_version",  # Compiled calling convention, state ownership and attention ABI.
@@ -104,7 +104,7 @@ def make_metadata(
     states = copy.deepcopy(list(state))
     return dict(
         schema_version=SCHEMA_VERSION,
-        runtime_abi_version=RUNTIME_ABI_VERSION,
+        runtime_abi_version=RUNTIME_ABI_VERSIONS[model_type],
         model_type=model_type,
         entry_point=entry_point,
         token_range=list(token_range),
@@ -116,7 +116,7 @@ def make_metadata(
         eos_token_ids=eos,
         checkpoint=copy.deepcopy(checkpoint),
         state=states,
-        export_options=dict(backed_size_oblivious=False),
+        export_options=dict(backed_size_oblivious=model_type == "qwen3"),
         tf32=False,
         triton_enable_fp_fusion=triton_enable_fp_fusion,
         model_specific=copy.deepcopy(model_specific),
@@ -135,20 +135,20 @@ def _schema(metadata):
 def _runtime_abi(metadata):
     require(
         type(metadata.get("runtime_abi_version")) is int
-        and metadata["runtime_abi_version"] == RUNTIME_ABI_VERSION,
-        "Unsupported runtime ABI version; convert retained metadata or re-export both packages",
+        and metadata["runtime_abi_version"] == RUNTIME_ABI_VERSIONS.get(metadata.get("model_type")),
+        "Unsupported runtime ABI version; re-export both packages",
     )
 
 
 def validate_metadata(metadata, model_type=None, entry_point=None):
     """Validate a complete v5 descriptor without loading Torch, files or CUDA."""
     _schema(metadata)
-    _runtime_abi(metadata)
     require(
         metadata.get("model_type") in ("qwen3", "qwen35")
         and (model_type is None or metadata["model_type"] == model_type),
         "Unsupported model type",
     )
+    _runtime_abi(metadata)
     for field in FIELDS:
         _check(field in metadata, field)
     for field in metadata:
@@ -195,7 +195,10 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and isinstance(checkpoint["manifest"], dict),
         "checkpoint",
     )
-    _check(_same_json(m["export_options"], {"backed_size_oblivious": False}), "export_options")
+    _check(
+        _same_json(m["export_options"], {"backed_size_oblivious": m["model_type"] == "qwen3"}),
+        "export_options",
+    )
     _check(m["tf32"] is False, "tf32")
     _check(type(m["triton_enable_fp_fusion"]) is bool, "triton_enable_fp_fusion")
     options = m["inductor_configs"]
@@ -222,7 +225,7 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
             isinstance(shape, list)
             and len(shape) == (3 if kind == "conv" else 4)
             and all(_integer(n, 1) for n in shape)
-            and shape[0] == 1
+            and shape[0] == (8 if m["model_type"] == "qwen3" else 1)
             and math.prod(shape) <= (2**63 - 1) // 4,
             "state",
         )
@@ -251,7 +254,6 @@ def validate_metadata_pair(prefill, decode, model_type=None):
     """Reject mixed schema/model/contracts before file, archive or device access."""
     for m in (prefill, decode):
         _schema(m)
-        _runtime_abi(m)
     require(prefill.get("model_type") == decode.get("model_type"), "Package model types differ")
     for m in (prefill, decode):
         require(
@@ -259,6 +261,7 @@ def validate_metadata_pair(prefill, decode, model_type=None):
             and (model_type is None or m["model_type"] == model_type),
             "Unsupported model type",
         )
+        _runtime_abi(m)
     for field in FIELDS:
         if field not in ENTRY_FIELDS:
             require(

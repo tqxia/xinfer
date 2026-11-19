@@ -1,7 +1,8 @@
 # Shared valid-prefix FlashAttention
 
-Qwen3 and Qwen3.5 full-attention layers use the same native operator,
-`xinfer::flash_attention`, implemented under `compiler/common/kernels/`.
+Qwen3 and Qwen3.5 full-attention layers use native FlashAttention operators
+implemented under `compiler/common/kernels/`. Qwen3 uses batched variable-length
+attention; Qwen3.5 retains the single-prefix operator.
 Model-specific adapters preserve HF projections, normalization and RoPE;
 Qwen3.5 also preserves its output gate. Neither model has an attention-backend
 selector or a separate eager-numerics export profile.
@@ -17,22 +18,44 @@ is required, and unused cache capacity is not read by attention.
 
 Geometry comes from input tensors. Query heads must be a positive multiple of
 KV heads; head dimensions must be positive, divisible by eight and at most 256.
-The current exports use batch-one BF16 and 1–512 tokens per call. Model-specific
-restrictions remain in the [Qwen3](../compiler/qwen3/README.md#model-interface)
+Exports use BF16 and 1–512 padded tokens per call; one Qwen3 bundle supports dynamic
+batches of 1 through 8. Model-specific restrictions remain in the [Qwen3](../compiler/qwen3/README.md#model-interface)
 and [Qwen3.5](../compiler/qwen35/README.md#model-interface-and-state) guides.
 
-A CPU uint8 extent tensor has shape `[valid_length + 1]`; its contents are ignored.
+For Qwen3.5, a CPU uint8 extent tensor has shape `[valid_length + 1]`; its contents are ignored.
 This conveys prefix length without reading a CUDA scalar. The extra element
 avoids size-one specialization. Prefix slicing stays inside the opaque operator,
-and export requires `backed_size_oblivious=False`. The Python fake implementation
-supplies export shape checks; [runtime ABI 1](package-metadata.md#runtime-abi-1)
-defines the full model calling convention.
+and Qwen3.5 export requires `backed_size_oblivious=False`. The Python fake implementation
+supplies export shape checks; [package metadata](package-metadata.md) defines
+each model's calling convention.
 
-Inputs must be unpadded contiguous appends to an existing prefix. Adapters reject
-arbitrary masks, training, attention-weight outputs and unsupported cache/layer
+The base `xinfer::flash_attention` operator takes unpadded appends to an existing
+prefix. Adapters reject arbitrary masks, training, attention-weight outputs and unsupported cache/layer
 types. Load HF weights before installing adapters: wrapping reuses parameter
 objects but changes module paths. These adapters are not general HF training or
 `generate()` replacements; validation retains an unmodified HF baseline.
+
+Qwen3 uses `xinfer::append_kv_batched`, a `torch.library.triton_op`, for one
+masked KV-write launch across all rows and heads. Only real tokens are written;
+padded positions are not loaded. Its Triton code is packaged by AOTI without a
+separate kernel library.
+
+`xinfer::batched_flash_attention` packs real queries, calls ATen's variable-length
+FlashAttention once for the batch and scatters results into zero-padded output.
+CPU cumulative query/KV lengths and their CUDA copy are derived from CPU int32
+length tensors `[B]` once per step and shared across layers. No CUDA length readback is needed.
+Each request's contiguous cache is viewed as one block when capacity is divisible
+by 256; other capacities pack valid K/V prefixes for the same batched call.
+This fixed block view is internal to attention; runtime cache ownership and
+[runtime ABI 4](package-metadata.md#runtime-abi-4-dynamic-qwen3-batches) define the
+eight-row allocation and active prefix views.
+
+The wrapper fixes `num_splits=1`, normalizes the singleton block-table stride and
+uses the general variable-length path for mixed inactive/decode rows. The pinned
+ATen one-query GQA shortcut otherwise assumes a query for every row. Tests cover
+these boundaries, query padding, unrelated rows and unused cache slots against
+FP32 math. Query packing/scattering still has per-row overhead; performance has
+not been measured for this implementation.
 
 ## Build and deployment
 

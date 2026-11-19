@@ -1,7 +1,7 @@
 """Qwen3-0.6B FlashAttention through child-module replacement, without FX passes.
 
-The tensor entry point supports only batch-one, unpadded, contiguous appends to
-the populated cache prefix. The C++ runtime validates positions and capacity.
+The tensor entry point uses right-padded independent rows at every batch size,
+with compact KV prefixes. The C++ runtime validates positions and capacity.
 Weights are loaded with HF first; wrappers reuse the original modules in place.
 """
 
@@ -17,16 +17,28 @@ if _transformers_version != "4.51.3":
     )
 
 import torch
+from transformers.cache_utils import Cache
 from transformers.models.qwen3.modeling_qwen3 import Qwen3Attention, apply_rotary_pos_emb
 
-from compiler.common.attention import load_attention_ops
-from compiler.qwen3.model import TensorCache
+from compiler.common.attention import load_attention_ops, batched_attention_metadata
+from compiler.common.kernels.kv_cache import append_kv_batched
 
 
-class PrefixCache(TensorCache):
-    def __init__(self, tensors, position, extent):
-        super().__init__(tensors, position)
-        self.extent = extent
+class KVCache(Cache):
+    """Caller-owned KV tensors with per-row positions and contiguous valid lengths."""
+
+    def __init__(self, tensors, position, kv_lengths, query_lengths):
+        super().__init__()
+        self.tensors = tensors
+        self.position = position
+        self.offsets, self.cuda_offsets, self.blocks = batched_attention_metadata(
+            kv_lengths, query_lengths, position.device
+        )
+
+    def update(self, key, value, layer_idx, cache_kwargs=None):
+        k, v = self.tensors[2 * layer_idx : 2 * layer_idx + 2]
+        append_kv_batched(key, value, self.position, self.cuda_offsets[0], k, v)
+        return k, v
 
 
 class FlashAttention(torch.nn.Module):
@@ -57,12 +69,9 @@ class FlashAttention(torch.nn.Module):
         if self.training or kwargs.get("output_attentions", False):
             raise ValueError("Flash adapter supports inference without attention weights")
         if attention_mask is not None:
-            raise ValueError("Flash adapter accepts only the unpadded PrefixCache contract")
-        if (
-            not isinstance(past_key_value, PrefixCache)
-            or cache_position is not past_key_value.position
-        ):
-            raise ValueError("Flash adapter requires PrefixCache with the same position tensor")
+            raise ValueError("Flash adapter uses KVCache lengths instead of attention masks")
+        if not isinstance(past_key_value, KVCache) or cache_position is not past_key_value.position:
+            raise ValueError("Flash adapter requires KVCache with the same position tensor")
         a = self.original
         input_shape = hidden_states.shape[:-1]
         head_shape = (*input_shape, -1, a.head_dim)
@@ -74,9 +83,14 @@ class FlashAttention(torch.nn.Module):
         k, v = past_key_value.update(
             k, v, a.layer_idx, {"sin": sin, "cos": cos, "cache_position": cache_position}
         )
-        # Preserve HF SDPA's query layout for a controlled backend comparison.
-        output = torch.ops.xinfer.flash_attention(
-            q.contiguous(), k, v, past_key_value.extent, a.scaling
+        output = torch.ops.xinfer.batched_flash_attention(
+            q,
+            k,
+            v,
+            past_key_value.offsets,
+            past_key_value.cuda_offsets,
+            past_key_value.blocks,
+            a.scaling,
         )
         output = output.transpose(1, 2).reshape(*input_shape, -1).contiguous()
         return a.o_proj(output), None
@@ -99,20 +113,29 @@ class FlashStep(torch.nn.Module):
         self.model = model
         self.eval()
 
-    def forward(self, input_ids, cache_position, kv, kv_extent):
-        cache = PrefixCache(kv, cache_position, kv_extent)
+    def forward(self, input_ids, cache_position, kv, kv_lengths, query_lengths):
+        cache = KVCache(kv, cache_position, kv_lengths, query_lengths)
         base = self.model.model
         hidden = base.embed_tokens(input_ids)
-        positions = cache_position.unsqueeze(0)
-        rotary = base.rotary_emb(hidden, positions)
+        # HF's batched RoPE matmul specializes B=1 during export. Flatten only
+        # its independent positions, then restore the model's batch layout.
+        rotary = tuple(
+            value.reshape(*cache_position.shape, -1)
+            for value in base.rotary_emb(hidden, cache_position.reshape(1, -1))
+        )
         for layer in base.layers:
             hidden = layer(
                 hidden,
                 attention_mask=None,
-                position_ids=positions,
+                position_ids=cache_position,
                 past_key_value=cache,
                 cache_position=cache_position,
                 position_embeddings=rotary,
                 use_cache=True,
             )[0]
-        return self.model.lm_head(base.norm(hidden)[:, -1:, :])[:, -1, :]
+        hidden = base.norm(hidden)
+        counts = query_lengths.to(device=hidden.device, dtype=torch.int64)
+        indices = (counts - 1).clamp_min(0)
+        last = hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
+        logits = self.model.lm_head(last)[:, -1, :]
+        return logits.masked_fill(counts[:, None] == 0, 0)

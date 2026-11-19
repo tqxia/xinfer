@@ -1,8 +1,9 @@
 # xinfer
 
 Compile Hugging Face Qwen models with PyTorch AOTInductor and run them in C++
-without Python. xinfer provides batch-one BF16 inference, paired prefill/decode
-packages, shared weights and explicit model state.
+without Python. xinfer provides BF16 inference, paired prefill/decode packages,
+shared weights and explicit model state. Generation uses batch one; Qwen3 supports dynamic batches of 1–8 through explicit steps
+with independent request lengths, using the same package.
 
 The model pipelines cover [Qwen3-0.6B](compiler/qwen3/README.md) and
 [Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) (text only). Device-specific

@@ -7,7 +7,7 @@ from tools.packages import validate_model_metadata
 
 
 def metadata(*, cache_length=1024):
-    shape = [1, 8, cache_length, 128]
+    shape = [8, 8, cache_length, 128]
     state = [state_spec(0, kind, shape, "bfloat16", "inplace") for kind in ("key", "value")]
     result = make_metadata(
         model_type="qwen3",
@@ -54,7 +54,7 @@ class Qwen3PackageContract(unittest.TestCase):
         self.reject(item, "Unsupported package metadata: state")
 
     def test_invalid_geometry_is_rejected(self):
-        for shape in ([1, 4, 1024, 128], [1, 8, 1024, 64]):
+        for shape in ([8, 4, 1024, 128], [8, 8, 1024, 64]):
             with self.subTest(shape=shape):
                 item = metadata()
                 for state in item["state"]:

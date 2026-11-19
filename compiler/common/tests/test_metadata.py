@@ -10,7 +10,7 @@ import unittest
 
 from compiler.common.artifacts import ROOT, sha256
 from compiler.common.metadata import (
-    RUNTIME_ABI_VERSION,
+    RUNTIME_ABI_VERSIONS,
     SCHEMA_VERSION,
     finalize_metadata,
     make_metadata,
@@ -23,7 +23,7 @@ from compiler.common.metadata import (
 
 def metadata_pair(model_type="qwen3", *, cache_length=1024):
     if model_type == "qwen3":
-        shape = [1, 8, cache_length, 128]
+        shape = [8, 8, cache_length, 128]
         states = [
             state_spec(i, kind, shape, "bfloat16", "inplace")
             for i in range(28)
@@ -85,7 +85,22 @@ class PackageMetadata(unittest.TestCase):
                     )
                 )
                 self.assertEqual(pair["decode"]["eos_token_ids"], [151645])
-                self.assertEqual(pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSION)
+                self.assertEqual(
+                    pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSIONS[model_type]
+                )
+
+    def test_qwen3_reserves_eight_rows_and_rejects_other_allocations(self):
+        pair = metadata_pair()
+        validate_metadata_pair(pair["prefill"], pair["decode"])
+        for batch_size in (1, 2, 4, 7, 9):
+            invalid = copy.deepcopy(pair["decode"])
+            invalid["state"][0]["shape"][0] = batch_size
+            with self.subTest(batch_size=batch_size), self.assertRaisesRegex(ValueError, "state"):
+                validate_metadata(invalid)
+        pair = metadata_pair("qwen35")
+        pair["decode"]["state"][0]["shape"][0] = 2
+        with self.assertRaisesRegex(ValueError, "state"):
+            validate_metadata(pair["decode"])
 
     def test_capacity_is_separate_from_compiled_call_bounds_and_prompt_policy(self):
         for model_type in ("qwen3", "qwen35"):
@@ -152,7 +167,7 @@ class PackageMetadata(unittest.TestCase):
 
     def test_runtime_abi_is_required_and_strict_in_both_entries(self):
         for entries in (("prefill",), ("decode",), ("prefill", "decode")):
-            for version in (None, 0, RUNTIME_ABI_VERSION + 1, -1, True, 1.0, "1", [], {}):
+            for version in (None, 0, 1, 2, 3, 5, -1, True, 4.0, "4", [], {}):
                 with self.subTest(entries=entries, version=version):
                     pair = metadata_pair()
                     for kind in entries:

@@ -53,6 +53,7 @@ class ExplicitRuntime:
         self.require_write = require_write
         self.max_prefill = max_prefill
         self.position = 0
+        self.positions = [0] * specs[0]["shape"][0]
         self.state = []
 
     def reset(self, fill=0):
@@ -65,35 +66,64 @@ class ExplicitRuntime:
             value = fill.get(spec["kind"], 0) if isinstance(fill, dict) else fill
             tensor.fill_(value if spec["update"] == "inplace" else 0)
         self.position = 0
+        self.positions = [0] * self.specs[0]["shape"][0]
 
     def step(self, tokens):
-        length = len(tokens)
+        return self.step_batch([tokens])
+
+    def step_batch(self, rows, *, padding_token=0):
+        batch_size = len(rows)
+        require(1 <= batch_size <= self.specs[0]["shape"][0], "Batch size outside package range")
+        counts = [len(row) for row in rows]
+        length = max(counts)
+        tokens = [token for row in rows for token in row]
         require(1 <= length <= self.max_prefill, f"Expected 1..{self.max_prefill} input tokens")
-        require(self.position + length <= self.capacity, "Context capacity exceeded")
+        ends = [start + count for start, count in zip(self.positions, counts)]
+        require(all(end <= self.capacity for end in ends), "Context capacity exceeded")
+        require(all(end > 0 for end in ends), "Each row must start with tokens")
         require(all(type(t) is int and 0 <= t < self.vocab_size for t in tokens), "Invalid token")
-        ids = torch.tensor([tokens], dtype=torch.int64, device="cuda")
-        positions = torch.arange(self.position, self.position + length, device="cuda")
+        ids = torch.tensor(
+            [row + [padding_token] * (length - len(row)) for row in rows],
+            dtype=torch.int64,
+            device="cuda",
+        )
+        # Qwen3's logits-only entry uses per-row inputs at every supported batch size.
+        if self.logits_only:
+            positions = torch.tensor(
+                [
+                    list(range(start, end)) + [0] * (length - count)
+                    for start, end, count in zip(self.positions, ends, counts)
+                ],
+                dtype=torch.int64,
+                device="cuda",
+            )
+            attention_inputs = (
+                torch.tensor(ends, dtype=torch.int32),
+                torch.tensor(counts, dtype=torch.int32),
+            )
+        else:
+            positions = torch.arange(self.position, self.position + length, device="cuda")
+            attention_inputs = (cache_extent(ends[0]),)
         before = tuple(t.clone() for t in (ids, positions, *self.state))
         pointers = [t.data_ptr() for t in self.state]
         result = self.functions["decode" if length == 1 else "prefill"](
             ids,
             positions,
-            tuple(self.state) if self.logits_only else self.state,
-            cache_extent(self.position + length),
+            tuple(t[:batch_size] for t in self.state) if self.logits_only else self.state,
+            *attention_inputs,
         )
         if self.logits_only:
             logits, state = result, self.state
         else:
             require(len(result) == len(self.specs) + 1, "Incorrect output/state count")
             logits, state = result[0], list(result[1:])
-        require(logits.shape == (1, self.vocab_size), "Incorrect logit shape")
+        require(logits.shape == (batch_size, self.vocab_size), "Incorrect logit shape")
         require(logits.dtype == torch.bfloat16, "Incorrect logit dtype")
         require(
             bits_equal(ids, before[0]) and bits_equal(positions, before[1]),
             "Token/position input mutated",
         )
         require(len(state) == len(self.specs), "Incorrect state count")
-        start, end = self.position, self.position + length
         for index, (incoming, output, original, spec) in enumerate(
             zip(self.state, state, before[2:], self.specs)
         ):
@@ -108,21 +138,29 @@ class ExplicitRuntime:
                     "KV output lost caller-owned storage",
                 )
                 require(
-                    bits_equal(output[:, :, :start], original[:, :, :start]), "Past KV overwritten"
+                    bits_equal(output[batch_size:], original[batch_size:]),
+                    "Unused KV row overwritten",
                 )
-                require(
-                    bits_equal(output[:, :, end:], original[:, :, end:]), "Future KV overwritten"
-                )
-                if self.require_write:
+                for row, (start, end) in enumerate(zip(self.positions, ends)):
                     require(
-                        not bits_equal(output[:, :, start:end], original[:, :, start:end]),
-                        "Cache update missing",
+                        bits_equal(output[row, :, :start], original[row, :, :start]),
+                        "Past KV overwritten",
                     )
+                    require(
+                        bits_equal(output[row, :, end:], original[row, :, end:]),
+                        "Future KV overwritten",
+                    )
+                    if self.require_write and start != end:
+                        require(
+                            not bits_equal(output[row, :, start:end], original[row, :, start:end]),
+                            "Cache update missing",
+                        )
             else:
                 require(bits_equal(incoming, original), "Functional input state mutated")
         require(all(bool(torch.isfinite(t).all()) for t in (logits, *state)), "Nonfinite output")
         self.state = list(state)
-        self.position = end
+        self.positions[:batch_size] = ends
+        self.position = max(self.positions)
         return logits
 
     def close(self):
@@ -218,9 +256,10 @@ def teacher_trace(runtime, cases, specs, capture_states):
                     ):
                         if spec["update"] == "inplace":
                             require(
-                                bits_equal(actual[:, :, :position], expected[:, :, :position]),
+                                bits_equal(actual[:1, :, :position], expected[:1, :, :position]),
                                 "Reset/poison changed valid KV",
                             )
+                            require(bool((actual[1:] == fill).all()), "Unused KV row overwritten")
                             if not result.compact_states:
                                 require(
                                     bool((actual[:, :, position:] == fill).all()),

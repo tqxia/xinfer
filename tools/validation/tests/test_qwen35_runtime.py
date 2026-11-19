@@ -8,13 +8,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from compiler.common.metadata import RUNTIME_ABI_VERSION, SCHEMA_VERSION, make_metadata, state_spec
+from compiler.common.metadata import RUNTIME_ABI_VERSIONS, SCHEMA_VERSION, make_metadata, state_spec
 from tools.validation.common.runner import load_aoti_runtime
 
 
 CONTRACT_FIELDS = ("runtime_abi_version", "export_options")
 INVALID_VALUES = {
-    "runtime_abi_version": RUNTIME_ABI_VERSION + 1,
+    "runtime_abi_version": RUNTIME_ABI_VERSIONS["qwen35"] + 1,
     "export_options": {"backed_size_oblivious": True},
 }
 
@@ -194,9 +194,9 @@ class AOTIRuntimeContract(unittest.TestCase):
             None,
             -1,
             0,
-            RUNTIME_ABI_VERSION + 1,
+            RUNTIME_ABI_VERSIONS["qwen35"] + 1,
             True,
-            float(RUNTIME_ABI_VERSION),
+            float(RUNTIME_ABI_VERSIONS["qwen35"]),
             "1",
             [],
             {},

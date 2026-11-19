@@ -6,7 +6,12 @@ import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.attention import (
+    cache_extent,
+    load_attention_ops,
+    batched_attention_metadata,
+)
+from compiler.common.kernels.kv_cache import append_kv_batched
 from compiler.common.tests.tensors import row_errors
 
 
@@ -17,16 +22,185 @@ class PrefixFlash(unittest.TestCase):
         load_attention_ops(model="qwen3")
         cls.op = torch.ops.xinfer.flash_attention.default
 
-    def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1, capacity=1024):
+    def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1, capacity=1024, batch_size=1):
         options = dict(device="cuda", dtype=torch.bfloat16)
-        q = torch.randn(1, heads, tokens, dim * feature_stride, **options)[..., ::feature_stride]
-        k = torch.randn(1, kv_heads, capacity, dim * feature_stride, **options)[
+        q = torch.randn(batch_size, heads, tokens, dim * feature_stride, **options)[
             ..., ::feature_stride
         ]
-        v = torch.randn(1, kv_heads, capacity, dim * feature_stride, **options)[
+        k = torch.randn(batch_size, kv_heads, capacity, dim * feature_stride, **options)[
+            ..., ::feature_stride
+        ]
+        v = torch.randn(batch_size, kv_heads, capacity, dim * feature_stride, **options)[
             ..., ::feature_stride
         ]
         return q, k, v
+
+    @torch.inference_mode()
+    def test_batched_attention_and_masked_writes(self):
+        torch.manual_seed(18)
+        for batch in range(1, 9):
+            for width, start, capacity, ragged in (
+                (1, 17, 1024, False),
+                (1, 17, 1024, True),
+                (2, 511, 513, True),
+                (17, 7, 1024, True),
+                (512, 1, 1024, True),
+                (512, 2048, 4096, True),
+            ):
+                counts = [
+                    width if not ragged or r % 3 == 0 else (0 if r % 3 == 1 else 1)
+                    for r in range(batch)
+                ]
+                starts = [start - r if start >= batch else start for r in range(batch)]
+                lengths = [s + c for s, c in zip(starts, counts)]
+                with self.subTest(batch=batch, counts=counts, capacity=capacity):
+                    q, k, v = self.inputs(16, 8, 128, width, capacity=capacity, batch_size=batch)
+                    key = torch.randn(batch, width, 8, 128, device="cuda", dtype=q.dtype).transpose(
+                        1, 2
+                    )
+                    value = torch.randn_like(key)
+                    positions = torch.stack(
+                        [torch.arange(s, s + width, device="cuda") for s in starts]
+                    )
+                    host, cu, blocks = batched_attention_metadata(
+                        torch.tensor(lengths, dtype=torch.int32),
+                        torch.tensor(counts, dtype=torch.int32),
+                        q.device,
+                    )
+                    # Inductor may use zero stride for the singleton page dimension.
+                    if not ragged:
+                        blocks = blocks.as_strided((batch, 1), (1, 0))
+                    expected_k, expected_v = k.clone(), v.clone()
+                    for row, (count, offset) in enumerate(zip(counts, starts)):
+                        expected_k[row, :, offset : offset + count] = key[row, :, :count]
+                        expected_v[row, :, offset : offset + count] = value[row, :, :count]
+                        # Even invalid padded positions must never be dereferenced.
+                        positions[row, count:] = capacity + 100
+                    before_inputs = [t.clone() for t in (key, value, positions)]
+                    append_kv_batched(key, value, positions, cu[0], k, v)
+                    self.assertTrue(torch.equal(k, expected_k) and torch.equal(v, expected_v))
+                    self.assertTrue(
+                        all(
+                            torch.equal(a, b)
+                            for a, b in zip((key, value, positions), before_inputs)
+                        )
+                    )
+                    op = torch.ops.xinfer.batched_flash_attention.default
+                    actual = op(q, k, v, host, cu, blocks, 128**-0.5)
+                    self.assertEqual(actual.stride(), torch.empty(q.shape).stride())
+                    self.assertNotIn(actual.data_ptr(), [t.data_ptr() for t in (q, k, v)])
+                    for row, (count, length) in enumerate(zip(counts, lengths)):
+                        self.assertEqual(torch.count_nonzero(actual[row, :, count:]).item(), 0)
+                        if count:
+                            mask = (
+                                torch.arange(length, device="cuda")[None, :]
+                                <= torch.arange(length - count, length, device="cuda")[:, None]
+                            )
+                            with sdpa_kernel(SDPBackend.MATH):
+                                expected = F.scaled_dot_product_attention(
+                                    q[row : row + 1, :, :count].float(),
+                                    k[row : row + 1, :, :length].float(),
+                                    v[row : row + 1, :, :length].float(),
+                                    attn_mask=mask,
+                                    enable_gqa=True,
+                                    scale=128**-0.5,
+                                )
+                            error = row_errors(
+                                actual[row : row + 1, :, :count].float().flatten(1),
+                                expected.flatten(1),
+                            )
+                            self.assertLess(error["relative_l2"], 0.01)
+                            self.assertLessEqual(error["peak_relative"], 0.05)
+                        q[row, :, count:] = float("nan")
+                        k[row, :, length:] = float("nan")
+                        v[row, :, length:] = float("nan")
+                    self.assertTrue(torch.equal(actual, op(q, k, v, host, cu, blocks, 128**-0.5)))
+                    if batch > 1:
+                        k[0].fill_(5)
+                        v[0].fill_(7)
+                        self.assertTrue(
+                            torch.equal(actual[1:], op(q, k, v, host, cu, blocks, 128**-0.5)[1:])
+                        )
+                    torch.library.opcheck(
+                        op,
+                        (q, k, v, host, cu, blocks, 128**-0.5),
+                        test_utils=("test_schema", "test_faketensor"),
+                    )
+
+    @torch.inference_mode()
+    def test_appended_prefill_batches(self):
+        # Shapes from the Qwen3 prefill backend divergence; retain full-capacity
+        # strides and use an independent math reference for the attention op.
+        torch.manual_seed(18)
+        for batch_size in (1, 2):
+            for length in (1024, 2560):
+                with self.subTest(batch_size=batch_size, length=length):
+                    q, k, v = self.inputs(16, 8, 128, 512, capacity=4096, batch_size=batch_size)
+                    extent = cache_extent(length)
+                    actual = self.op(q, k, v, extent, 128**-0.5)
+                    positions = torch.arange(length - 512, length, device="cuda")
+                    mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
+                    with sdpa_kernel(SDPBackend.MATH):
+                        reference = F.scaled_dot_product_attention(
+                            q.float(),
+                            k[:, :, :length].float(),
+                            v[:, :, :length].float(),
+                            attn_mask=mask,
+                            enable_gqa=True,
+                            scale=128**-0.5,
+                        )
+                    error = row_errors(actual.float().flatten(1), reference.flatten(1))
+                    self.assertLess(error["relative_l2"], 0.01)
+                    self.assertLessEqual(error["peak_relative"], 0.05)
+                    # Future cache slots and another request's KV must not
+                    # affect the valid output for this row.
+                    k[:, :, length:].fill_(100)
+                    v[:, :, length:].fill_(-100)
+                    self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, 128**-0.5)))
+                    if batch_size == 2:
+                        k[0].fill_(5)
+                        v[0].fill_(7)
+                        self.assertTrue(
+                            torch.equal(actual[1], self.op(q, k, v, extent, 128**-0.5)[1])
+                        )
+
+    @torch.inference_mode()
+    def test_two_independent_rows(self):
+        torch.manual_seed(13)
+        for tokens, length in ((1, 32), (2, 3), (16, 32), (512, 512)):
+            triples = [self.inputs(16, 8, 128, tokens) for _ in range(2)]
+            q, k, v = [torch.cat([triple[i] for triple in triples]) for i in range(3)]
+            extent = cache_extent(length)
+            out = self.op(q, k, v, extent, 128**-0.5)
+            expected = torch.cat([self.op(*triple, extent, 128**-0.5) for triple in triples])
+            # Batch size can change Flash's reduction schedule. Use the same
+            # numerical bounds as the FP32 reference checks below.
+            error = row_errors(out.float().flatten(1), expected.float().flatten(1))
+            self.assertLess(error["relative_l2"], 0.01)
+            self.assertLessEqual(error["peak_relative"], 0.05)
+            positions = torch.arange(length - tokens, length, device="cuda")
+            mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
+            with sdpa_kernel(SDPBackend.MATH):
+                reference = F.scaled_dot_product_attention(
+                    q.float(),
+                    k[:, :, :length].float(),
+                    v[:, :, :length].float(),
+                    attn_mask=mask,
+                    enable_gqa=True,
+                    scale=128**-0.5,
+                )
+            error = row_errors(out.float().flatten(1), reference.flatten(1))
+            self.assertLess(error["relative_l2"], 0.01)
+            self.assertLessEqual(error["peak_relative"], 0.05)
+            native = torch.ops.aten._scaled_dot_product_flash_attention.default(
+                q, k[:, :, :length], v[:, :, :length], 0.0, True, scale=128**-0.5
+            )[0]
+            self.assertTrue(torch.equal(out, native))
+            self.assertEqual(out.shape, q.shape)
+            k[0].fill_(5)
+            v[0].fill_(7)
+            self.assertTrue(torch.equal(out[1], self.op(q, k, v, extent, 128**-0.5)[1]))
+            torch.library.opcheck(self.op, (q, k, v, extent, 128**-0.5))
 
     @torch.inference_mode()
     def test_grouped_prefix_and_read_only_contract(self):

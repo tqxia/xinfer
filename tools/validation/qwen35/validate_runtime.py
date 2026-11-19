@@ -12,7 +12,7 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
-from compiler.common.metadata import RUNTIME_ABI_VERSION, read_package_metadata
+from compiler.common.metadata import RUNTIME_ABI_VERSIONS, read_package_metadata
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from compiler.common.weights import validate_shared_weights
 from tools.common import native_environment, prompt_chunks, run
@@ -185,12 +185,14 @@ def metadata_mutations(metadata):
         ),
         (
             "unknown_runtime_abi",
-            lambda m: [v.update(runtime_abi_version=RUNTIME_ABI_VERSION + 1) for v in m.values()],
+            lambda m: [
+                v.update(runtime_abi_version=RUNTIME_ABI_VERSIONS["qwen35"] + 1) for v in m.values()
+            ],
             "Unsupported runtime ABI version",
         ),
         (
             "mixed_runtime_abi",
-            lambda m: m["prefill"].update(runtime_abi_version=RUNTIME_ABI_VERSION + 1),
+            lambda m: m["prefill"].update(runtime_abi_version=RUNTIME_ABI_VERSIONS["qwen35"] + 1),
             "Unsupported runtime ABI version",
         ),
         (
@@ -201,7 +203,8 @@ def metadata_mutations(metadata):
         (
             "float_runtime_abi",
             lambda m: [
-                v.update(runtime_abi_version=float(RUNTIME_ABI_VERSION)) for v in m.values()
+                v.update(runtime_abi_version=float(RUNTIME_ABI_VERSIONS["qwen35"]))
+                for v in m.values()
             ],
             "Unsupported runtime ABI version",
         ),

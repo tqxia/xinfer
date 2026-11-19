@@ -22,37 +22,73 @@ public:
   void reset(double fill = 0) {
     state_.reset(fill);
     position_ = prefill_calls_ = decode_calls_ = 0;
+    positions_.assign(spec_.max_batch_size, 0);
   }
 
-  at::Tensor step(const std::vector<int64_t> &tokens) {
-    spec_.check_step_tokens(tokens);
-    const auto length = static_cast<int64_t>(tokens.size());
-    require(length <= spec_.capacity - position_, "Context capacity exceeded");
+  at::Tensor step(const std::vector<int64_t> &tokens) { return step_batch({tokens}); }
 
+  at::Tensor step_batch(const std::vector<std::vector<int64_t>> &rows) {
+    const auto length = spec_.check_batch_tokens(rows);
+    const auto batch_size = static_cast<int64_t>(rows.size());
+    for (size_t row = 0; row < rows.size(); ++row) {
+      require(static_cast<int64_t>(rows[row].size()) <= spec_.capacity - positions_[row],
+              "Context capacity exceeded");
+      require(positions_[row] + rows[row].size() > 0, "Each row must start with tokens");
+    }
+
+    std::vector<int64_t> tokens(rows.size() * length, 0), positions(tokens.size(), 0);
+    for (size_t row = 0; row < rows.size(); ++row)
+      for (size_t token = 0; token < rows[row].size(); ++token) {
+        tokens[row * length + token] = rows[row][token];
+        positions[row * length + token] = positions_[row] + token;
+      }
     const auto options = at::TensorOptions().device(device_).dtype(at::kLong);
-    const auto ids = length == 1 ? at::full({1, 1}, tokens.front(), options)
-                                 : at::tensor(tokens, at::kLong).view({1, length}).to(options);
-    std::vector<at::Tensor> inputs{ids, at::arange(position_, position_ + length, options)};
+    auto cache_positions = at::tensor(positions, at::kLong).view({batch_size, length}).to(options);
+    // Qwen3 uses per-row inputs at every batch size; Qwen3.5 retains its text ABI.
+    if (spec_.model_type == ModelType::Qwen35)
+      cache_positions = cache_positions.view({length});
+    std::vector<at::Tensor> inputs{
+        at::tensor(tokens, at::kLong).view({batch_size, length}).to(options), cache_positions};
     const auto &tensors = state_.tensors();
-    inputs.insert(inputs.end(), tensors.begin(), tensors.end());
-    // Prefix length comes from CPU shape metadata, never CUDA tensor data.
-    inputs.push_back(extent_.narrow(0, 0, position_ + length + 1));
+    // Prefix views preserve the allocation and unused rows' state.
+    for (const auto &tensor : tensors)
+      inputs.push_back(tensor.narrow(0, 0, batch_size));
+    if (spec_.model_type == ModelType::Qwen3) {
+      std::vector<int32_t> kv_lengths, query_lengths;
+      for (size_t row = 0; row < rows.size(); ++row) {
+        kv_lengths.push_back(positions_[row] + rows[row].size());
+        query_lengths.push_back(rows[row].size());
+      }
+      inputs.push_back(at::tensor(kv_lengths, at::kInt));
+      inputs.push_back(at::tensor(query_lengths, at::kInt));
+    } else {
+      inputs.push_back(extent_.narrow(0, 0, positions_[0] + rows[0].size() + 1));
+    }
 
+    auto output = run_inputs(inputs, length, batch_size);
+    for (size_t row = 0; row < rows.size(); ++row)
+      positions_[row] += rows[row].size();
+    position_ = *std::max_element(positions_.begin(), positions_.end());
+    return output;
+  }
+
+private:
+  at::Tensor run_inputs(const std::vector<at::Tensor> &inputs, int64_t length, int64_t batch_size) {
     auto outputs = (length == 1 ? decode_ : prefill_).run(inputs);
-    require(!outputs.empty() && outputs[0].sizes() == at::IntArrayRef({1, spec_.vocab}) &&
+    require(!outputs.empty() && outputs[0].sizes() == at::IntArrayRef({batch_size, spec_.vocab}) &&
                 outputs[0].scalar_type() == at::kBFloat16 && outputs[0].device() == device_,
             "Unexpected compiled output");
 
     state_.accept(outputs);
-    position_ += length;
     ++(length == 1 ? decode_calls_ : prefill_calls_);
     return outputs[0];
   }
 
+public:
   at::Tensor prefill(const std::vector<int64_t> &prompt) {
     // Validate the complete request before its first chunk can change state.
     spec_.check_tokens(prompt);
-    require(static_cast<int64_t>(prompt.size()) <= spec_.capacity - position_,
+    require(static_cast<int64_t>(prompt.size()) <= spec_.capacity - positions_[0],
             "Context capacity exceeded");
 
     return xinfer::prefill(*this, prompt, spec_.max_prefill);
@@ -68,6 +104,7 @@ public:
   const std::vector<at::Tensor> &cache() const { return state(); }
   const Spec &spec() const { return spec_; }
   int64_t position() const { return position_; }
+  const std::vector<int64_t> &positions() const { return positions_; }
   int64_t prefill_calls() const { return prefill_calls_; }
   int64_t decode_calls() const { return decode_calls_; }
 
@@ -80,8 +117,9 @@ private:
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
 
-    extent_ =
-        at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
+    if (spec_.model_type == ModelType::Qwen35)
+      extent_ =
+          at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();
   }
 
@@ -93,6 +131,7 @@ private:
   Loader prefill_, decode_;
   StatePolicy state_;
   at::Tensor extent_;
+  std::vector<int64_t> positions_;
   int64_t position_ = 0, prefill_calls_ = 0, decode_calls_ = 0;
 };
 

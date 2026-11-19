@@ -1,6 +1,7 @@
 // Shared native validator with adapters for the retained trace file layouts.
 #include "common/model.h"
 
+#include <array>
 #include <iostream>
 #include <unordered_set>
 
@@ -25,6 +26,7 @@ struct Case {
   bool greedy, dump_cache, check_overflow;
   std::vector<int64_t> prompt, eos;
   std::vector<std::vector<int64_t>> steps;
+  std::vector<std::vector<std::vector<int64_t>>> batch_steps;
   int64_t limit = 0;
   double fill = 0;
   bool override_eos = false;
@@ -67,20 +69,36 @@ std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::
       c.limit = item.at("limit");
       spec.check_request(c.prompt, c.limit);
     } else {
-      require(item.contains("chunks") != item.contains("steps"),
-              "Expected validation chunks or steps");
-      c.steps = item.at(item.contains("steps") ? "steps" : "chunks")
-                    .get<std::vector<std::vector<int64_t>>>();
+      if (item.contains("batch_steps")) {
+        require(!item.contains("chunks") && !item.contains("steps"),
+                "Expected one validation input form");
+        c.batch_steps = item.at("batch_steps").get<decltype(c.batch_steps)>();
+        for (const auto &rows : c.batch_steps) {
+          spec.check_batch_tokens(rows);
+          c.steps.push_back(rows.front());
+        }
+      } else {
+        require(item.contains("chunks") != item.contains("steps"),
+                "Expected validation chunks or steps");
+        c.steps = item.at(item.contains("steps") ? "steps" : "chunks")
+                      .get<std::vector<std::vector<int64_t>>>();
+      }
       require(!c.steps.empty(), "Expected validation steps");
 
-      int64_t position = 0;
-      for (const auto &tokens : c.steps) {
-        spec.check_step_tokens(tokens);
-        require(static_cast<int64_t>(tokens.size()) <= spec.capacity - position,
-                "Context capacity exceeded");
-        position += tokens.size();
+      std::vector<int64_t> positions(spec.max_batch_size, 0);
+      for (size_t step = 0; step < c.steps.size(); ++step) {
+        const auto rows = c.batch_steps.empty() ? std::vector<std::vector<int64_t>>{c.steps[step]}
+                                                : c.batch_steps[step];
+        spec.check_batch_tokens(rows);
+        for (size_t row = 0; row < rows.size(); ++row) {
+          require(static_cast<int64_t>(rows[row].size()) <= spec.capacity - positions[row],
+                  "Context capacity exceeded");
+          positions[row] += rows[row].size();
+          require(positions[row] > 0, "Each row must start with tokens");
+        }
       }
-      require(!c.check_overflow || position == spec.capacity,
+      require(!c.check_overflow ||
+                  *std::max_element(positions.begin(), positions.end()) == spec.capacity,
               "Overflow case must fill the context");
 
       if (manifest.value("trace_format", 1) == 2) {
@@ -193,7 +211,7 @@ void check_state_update(const StateSpec &spec, const at::Tensor &input, const at
             "KV output lost caller-owned storage");
     require(at::equal(before.slice(2, 0, start), after.slice(2, 0, start)), "Past KV overwritten");
     require(at::equal(before.slice(2, end), after.slice(2, end)), "Future KV overwritten");
-    if (qwen3)
+    if (qwen3 && end > start)
       require(!at::equal(before.slice(2, start, end), after.slice(2, start, end)),
               "Cache update missing");
   } else {
@@ -209,14 +227,16 @@ template <class Runtime> void check_overflow(Runtime &runtime) {
 
   const auto inputs = runtime.state();
   const auto before = snapshot(runtime);
+  const auto positions = runtime.positions();
   bool rejected = false;
   try {
-    runtime.step({1});
+    runtime.step_batch(std::vector<std::vector<int64_t>>(runtime.spec().max_batch_size, {1}));
   } catch (const std::runtime_error &error) {
     rejected = std::string(error.what()) == "Context capacity exceeded";
   }
 
-  require(rejected && runtime.position() == capacity, "Overflow not rejected");
+  require(rejected && runtime.position() == capacity && runtime.positions() == positions,
+          "Overflow not rejected");
   for (size_t i = 0; i < before.size(); ++i)
     require(inputs[i].const_data_ptr() == runtime.state()[i].const_data_ptr() &&
                 at::equal(before[i], runtime.state()[i]),
@@ -247,11 +267,18 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
     const auto &tokens = c.steps[step];
     const auto inputs = runtime.state();
     const auto before = snapshot(runtime);
-    const int64_t start = runtime.position(), end = start + tokens.size();
+    const auto starts = runtime.positions();
+    const auto rows =
+        c.batch_steps.empty() ? std::vector<std::vector<int64_t>>{tokens} : c.batch_steps[step];
 
-    const auto score = runtime.step(tokens);
+    const auto score =
+        c.batch_steps.empty() ? runtime.step(tokens) : runtime.step_batch(c.batch_steps[step]);
     require(at::isfinite(score).all().template item<bool>(), "Non-finite logits");
-    require(runtime.position() == end, "Incorrect position advance");
+    for (size_t row = 0; row < rows.size(); ++row)
+      require(runtime.positions()[row] == starts[row] + static_cast<int64_t>(rows[row].size()),
+              "Incorrect position advance");
+    for (size_t row = rows.size(); row < starts.size(); ++row)
+      require(runtime.positions()[row] == starts[row], "Unused row position changed");
 
     if (layout.qwen3)
       write_logits(logits, score);
@@ -261,8 +288,10 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
     require(runtime.state().size() == runtime.spec().state.size(), "Incorrect state count");
     for (size_t i = 0; i < inputs.size(); ++i) {
       const auto &after = runtime.state()[i];
-      check_state_update(runtime.spec().state[i], inputs[i], before[i], after, start, end,
-                         layout.qwen3);
+      for (size_t row = 0; row < starts.size(); ++row)
+        check_state_update(runtime.spec().state[i], inputs[i].narrow(0, row, 1),
+                           before[i].narrow(0, row, 1), after.narrow(0, row, 1), starts[row],
+                           runtime.positions()[row], layout.qwen3);
       if (!layout.qwen3 && !layout.selected_states)
         write_tensor(states, after);
     }
@@ -321,6 +350,7 @@ Json run_case(Runtime &runtime, const Case &c, const TraceLayout &layout, const 
   check_persistent(runtime, persistent);
 
   row["position"] = runtime.position();
+  row["positions"] = runtime.positions();
   if (layout.qwen3)
     row["stable_storage"] = true;
   row["stable_kv_storage"] = true;
@@ -335,16 +365,50 @@ void write_report(const fs::path &output, const Json &report) {
   finish(file, "Failed to write native validation report");
 }
 
+void compare_files(const fs::path &actual, const fs::path &expected) {
+  std::ifstream a(actual, std::ios::binary), b(expected, std::ios::binary);
+  require(a.is_open() && b.is_open(), "Cannot open parity traces: " + actual.string());
+  std::array<char, 65536> left{}, right{};
+  for (;;) {
+    a.read(left.data(), left.size());
+    b.read(right.data(), right.size());
+    require((a.good() || a.eof()) && (b.good() || b.eof()), "Parity trace read failed");
+    const auto size = a.gcount();
+    require(size == b.gcount() && std::equal(left.begin(), left.begin() + size, right.begin()),
+            "Native bitwise mismatch: " + actual.string());
+    if (size == 0)
+      break;
+  }
+}
+
+void check_parity(const Case &c, const fs::path &output, const fs::path &expected, Json &row) {
+  compare_files(output / (c.name + ".f32"), expected / (c.name + ".f32"));
+  for (auto step : c.state_steps) {
+    const auto name = c.name + "." + std::to_string(step) + ".states";
+    compare_files(output / name, expected / name);
+  }
+  row["bitwise_parity"] = true;
+  // Keep failed traces; discard large state dumps only after exact comparisons.
+  for (auto step : c.state_steps) {
+    const auto name = c.name + "." + std::to_string(step) + ".states";
+    fs::remove(output / name);
+    fs::remove(expected / name);
+  }
+}
+
 void run_validation(const Options &options) {
   const auto manifest = read_json(options.cases);
   const auto trace_format = manifest.value("trace_format", 1);
   require(trace_format == 1 || trace_format == 2, "Unsupported validation trace format");
   const bool selected_states = trace_format == 2;
+  const fs::path expected = manifest.value("expected_directory", std::string());
 
   with_model(options.packages, [&](const auto &spec, auto make_runtime) {
     const auto cases = parse_cases(manifest, spec, options.output);
     const TraceLayout layout{spec.model_type == ModelType::Qwen3, selected_states,
                              selected_states && spec.capacity > 1024};
+    require(expected.empty() || (layout.qwen3 && selected_states),
+            "Expected traces require Qwen3 trace format 2");
 
     c10::InferenceMode inference;
     auto runtime = make_runtime();
@@ -360,7 +424,12 @@ void run_validation(const Options &options) {
       report["cache_buffers"] = persistent.size();
 
     for (const auto &c : cases) {
-      report["cases"].push_back(run_case(*runtime, c, layout, options.output, persistent));
+      auto row = run_case(*runtime, c, layout, options.output, persistent);
+      if (!expected.empty())
+        check_parity(c, options.output, expected, row);
+      report["cases"].push_back(std::move(row));
+      if (!expected.empty())
+        write_report(options.output, report);
       std::cerr << c.name << ": position " << runtime->position() << '\n';
     }
 

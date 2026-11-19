@@ -9,7 +9,6 @@ import subprocess
 import numpy as np
 import torch
 
-from compiler.common.attention import cache_extent
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from compiler.common.artifacts import (
     MODEL_MANIFEST_NAME,
@@ -19,7 +18,7 @@ from compiler.common.artifacts import (
     sha256,
 )
 from compiler.common.metadata import (
-    RUNTIME_ABI_VERSION,
+    RUNTIME_ABI_VERSIONS,
     SCHEMA_VERSION,
     read_package_metadata,
     validate_metadata,
@@ -30,6 +29,7 @@ from tools.common import native_environment, prompt_chunks
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.validation import read_ids as ids_from
+from tools.validation.common.runner import ExplicitRuntime
 
 
 def build_parser():
@@ -82,24 +82,23 @@ def compare_native_trace(prompt, generated, trace_path, budget, *, metadata, pre
     assert len(generated) == budget or generated[-1] in spec["eos_token_ids"]
     rows = np.fromfile(trace_path, dtype="<f4").reshape(len(generated), spec["vocab_size"])
     assert np.isfinite(rows).all()
-    cache = tuple(
-        torch.zeros(state["shape"], dtype=getattr(torch, state["dtype"]), device="cuda")
-        for state in spec["state"]
+    runtime = ExplicitRuntime(
+        dict(prefill=prefill, decode=decode),
+        spec["state"],
+        spec["vocab_size"],
+        spec["cache_length"],
+        logits_only=True,
+        max_prefill=metadata["prefill"]["token_range"][1],
     )
-    tokens, position = prompt, 0
+    runtime.reset()
+    tokens = prompt
     for token, row in zip(generated, rows):
-        for chunk in prompt_chunks(tokens, metadata["prefill"]["token_range"][1]):
-            ids = torch.tensor([chunk], dtype=torch.int64, device="cuda")
-            positions = torch.arange(position, position + len(chunk), device="cuda")
-            scores = (decode if len(chunk) == 1 else prefill)(
-                ids, positions, cache, cache_extent(position + len(chunk))
-            )
-            position += len(chunk)
+        for chunk in prompt_chunks(tokens, runtime.max_prefill):
+            scores = runtime.step(chunk)
         assert torch.isfinite(scores).all().item()
         assert scores.argmax(-1).item() == token
         assert scores.float().cpu().numpy()[0].tobytes() == row.tobytes()
         tokens = [token]
-    assert all(torch.isfinite(tensor).all().item() for tensor in cache)
 
 
 def prepare_tokenizer(model_dir, spec):
@@ -243,11 +242,11 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
             elif name == "unknown_runtime_abi" or (
                 name == "mixed_runtime_abi" and kind == "prefill"
             ):
-                metadata["runtime_abi_version"] = RUNTIME_ABI_VERSION + 1
+                metadata["runtime_abi_version"] = RUNTIME_ABI_VERSIONS["qwen3"] + 1
             elif name == "boolean_runtime_abi":
                 metadata["runtime_abi_version"] = True
             elif name == "float_runtime_abi":
-                metadata["runtime_abi_version"] = float(RUNTIME_ABI_VERSION)
+                metadata["runtime_abi_version"] = float(RUNTIME_ABI_VERSIONS["qwen3"])
             elif name == "mixed_state_layout" and kind == "prefill":
                 metadata["state"][0]["shape"][-1] += 1
             elif name == "odd_state_count":
@@ -255,12 +254,12 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
             elif name == "invalid_cache_shape":
                 metadata["state"][0]["shape"][1] = 4
             elif name == "mixed_export_settings" and kind == "prefill":
-                metadata["export_options"]["backed_size_oblivious"] = True
+                metadata["export_options"]["backed_size_oblivious"] = False
             (mixed / (kind + ".json")).write_text(json.dumps(metadata))
             if (
                 name.startswith("legacy_")
                 or type(metadata.get("runtime_abi_version")) is not int
-                or metadata["runtime_abi_version"] != RUNTIME_ABI_VERSION
+                or metadata["runtime_abi_version"] != RUNTIME_ABI_VERSIONS["qwen3"]
             ):
                 try:
                     validate_metadata(metadata, model_type="qwen3")

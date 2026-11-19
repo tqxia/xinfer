@@ -5,12 +5,15 @@ import time
 from pathlib import Path
 
 import torch
+from torch.fx.experimental import _config as symbolic_config
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
-from compiler.common.attention import cache_extent, attention_library, attention_c_shims
+from compiler.common.attention import (
+    attention_library,
+    attention_c_shims,
+)
 from compiler.common.export import (
     ExportInputError,
-    check_symbolic_config,
     export_parser,
     prepare_export,
     report_export,
@@ -18,35 +21,41 @@ from compiler.common.export import (
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import MAX_PREFILL, allocate_cache, load_model
+from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL
 
 
 def example_inputs(config, kind, capacity):
+    batch_size = 2
     length = 1 if kind == "decode" else 16
-    cache = allocate_cache(config, capacity)
+    cache = allocate_cache(config, capacity, batch_size)
+    starts = [16 + 8 * row for row in range(batch_size)]
+    counts = [max(1, length // (row + 1)) for row in range(batch_size)]
     inputs = (
-        torch.ones((1, length), dtype=torch.int64, device="cuda"),
-        torch.arange(length, device="cuda"),
+        torch.ones((batch_size, length), dtype=torch.int64, device="cuda"),
+        torch.stack([torch.arange(start, start + length, device="cuda") for start in starts]),
         cache,
-        cache_extent(32),
+        torch.tensor([start + count for start, count in zip(starts, counts)], dtype=torch.int32),
+        torch.tensor(counts, dtype=torch.int32),
     )
-    token_shape = {}
+    batch = torch.export.Dim("batch", min=1, max=MAX_BATCH_SIZE)
+    token_shape = {0: batch}
     if kind == "prefill":
-        seq = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
-        token_shape = {1: seq}
-    extent = torch.export.Dim("kv_extent", min=2, max=capacity + 1)
+        token_shape[1] = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
     shapes = (
         token_shape,
-        {} if kind == "decode" else {0: seq},
-        tuple({} for _ in cache),
-        {0: extent},
+        token_shape,
+        tuple({0: batch} for _ in cache),
+        {0: batch},
+        {0: batch},
     )
     return inputs, shapes
 
 
 def export_step(step, inputs, shapes):
-    exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
+    # Keep B=1 inside the symbolic range used by AOTI's input guards.
+    with symbolic_config.patch(backed_size_oblivious=True):
+        exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
     exported.validate()
     return exported
 
@@ -85,7 +94,8 @@ def export_entry(kind, staging_directory, *, model, step, checkpoint, capacity):
     print(f"Exported {kind}; compiling...", flush=True)
 
     def metadata_factory(_compiled_path):
-        metadata = entry_metadata(model, kind, checkpoint, capacity, inputs[2][0].shape)
+        cache_shape = (MAX_BATCH_SIZE, *inputs[2][0].shape[1:])
+        metadata = entry_metadata(model, kind, checkpoint, capacity, cache_shape)
         report_export(
             "qwen3",
             kind,
@@ -107,7 +117,6 @@ def export_model(*, model_dir, output, max_context_length=None):
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
-    check_symbolic_config()
     model = load_model(model_dir)
     step = FlashStep(model)
     manifest = read_json(model_dir / MODEL_MANIFEST_NAME)
@@ -116,9 +125,13 @@ def export_model(*, model_dir, output, max_context_length=None):
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
     options = {"emulate_precision_casts": True}
     prepare_entry = partial(
-        export_entry, model=model, step=step, checkpoint=checkpoint, capacity=capacity
+        export_entry,
+        model=model,
+        step=step,
+        checkpoint=checkpoint,
+        capacity=capacity,
     )
-    with torch.inference_mode():
+    with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         compile_shared(
             output,
             prepare_entry,
