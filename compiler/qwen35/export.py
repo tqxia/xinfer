@@ -6,22 +6,21 @@ import time
 from pathlib import Path
 
 import torch
+from torch.fx.experimental import _config as symbolic_config
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import resolve_context_length
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.passes.projection_gemv import replace_projection_gemv
-from compiler.qwen35.config import ARTIFACT_DIR, MAX_PREFILL, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, MAX_BATCH_SIZE, MAX_PREFILL, TEXT_DIR
 from compiler.common.weights import compile_shared
 from compiler.common.attention import (
-    cache_extent,
     attention_library,
     attention_c_shims,
     load_attention_ops,
 )
 from compiler.common.export import (
     ExportInputError,
-    check_symbolic_config,
     export_parser,
     prepare_export,
     report_export,
@@ -43,19 +42,23 @@ def export_step(model, kind, capacity=None):
     capacity = resolve_context_length(model.config, capacity)
     dynamic = kind == "prefill"
     length = 32 if dynamic else 1
+    batch_size = 2
     torch.manual_seed(35)
     inputs = (
-        torch.randint(0, model.config.vocab_size, (1, length), device="cuda"),
-        torch.arange(length, device="cuda"),
-        zero_state(model.config, capacity),
-        cache_extent(length),
+        torch.randint(0, model.config.vocab_size, (batch_size, length), device="cuda"),
+        torch.arange(length, device="cuda").expand(batch_size, -1).contiguous(),
+        zero_state(model.config, capacity, batch_size=batch_size),
+        torch.full((batch_size,), length, dtype=torch.int32),
+        torch.full((batch_size,), length, dtype=torch.int32),
     )
-    extent = torch.export.Dim("kv_extent", min=2, max=capacity + 1)
-    shapes = ({}, {}, [None] * len(inputs[2]), {0: extent})
+    batch = torch.export.Dim("batch", min=1, max=MAX_BATCH_SIZE)
+    token_shape = {0: batch}
     if dynamic:
-        tokens = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
-        shapes = ({1: tokens}, {0: tokens}, [None] * len(inputs[2]), {0: extent})
-    exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
+        token_shape[1] = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
+    shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
+    # Retain the singleton batch in AOTI guards, including the torch.cond branches.
+    with symbolic_config.patch(backed_size_oblivious=True):
+        exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
     packing = pack_linears(exported)
     if kind == "decode":
@@ -82,7 +85,7 @@ def entry_metadata(model, kind, checkpoint, capacity):
         cache_length=capacity,
         vocab_size=model.config.vocab_size,
         eos_token_ids=model.generation_config.eos_token_id,
-        state=state_specs(model.config, capacity),
+        state=state_specs(model.config, capacity, batch_size=MAX_BATCH_SIZE),
         triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
         model_specific=dict(
             delta_backend="triton_op",
@@ -165,7 +168,6 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
     model_dir, output = Path(model_dir), Path(output)
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
     configure_text()
-    check_symbolic_config()
     model = load_model(model_dir)
     install_delta(model)
     checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)
@@ -179,7 +181,7 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
         capacity=capacity,
         enable_inductor_optimization=enable_inductor_optimization,
     )
-    with torch.inference_mode():
+    with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         load_attention_ops(model="qwen35")
         compile_shared(
             output,

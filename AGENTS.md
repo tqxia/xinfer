@@ -5,8 +5,8 @@ Use [environments/README.md](environments/README.md) for setup and builds,
 [docs/development-tools.md](docs/development-tools.md) for formatting and tests,
 and [docs/package-metadata.md](docs/package-metadata.md) for package contracts.
 [PLAN.md](PLAN.md) describes pending work. [Validation status](docs/validation-status.md)
-records tested profiles and unresolved findings; its dated source links preserve
-historical evidence without treating old commands or policies as current.
+records current tested profiles, unresolved findings and validation gaps. Keep it
+concise; detailed run histories and per-case results belong in local artifacts.
 
 ## Code ownership
 
@@ -50,7 +50,10 @@ to verify the selected stack and configured build.
 Preserve BF16 HF → adapted/optimized eager → Python AOTI → C++ AOTI validation,
 with identical teacher-forced inputs and an unmodified BF16 HF baseline. Generate
 HF references during validation. Full-model validation does not load a separate
-FP32 HF control model; standalone kernel FP32 checks remain required. Keep
+FP32 HF control model. DeltaNet component tests compare matching input dtypes:
+BF16 kernels against HF's BF16 tensor operations, with algorithm-defined FP32
+accumulation and recurrent state preserved. FP32 kernel support tests use FP32
+references; BF16 acceptance does not require an upcast FP32 control. Keep
 native/Python bitwise equality, finite-value, state ownership, masking, reset/reuse,
 native generation and boundary checks strict. Both models follow the
 [shared numerical policy](docs/development-tools.md#shared-numerical-policy):

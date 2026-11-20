@@ -108,7 +108,7 @@ inline void check_runtime_abi(const Json &metadata) {
               ((metadata.value("model_type", "") == "qwen3" &&
                 metadata.at("runtime_abi_version") == 4) ||
                (metadata.value("model_type", "") == "qwen35" &&
-                metadata.at("runtime_abi_version") == 1)),
+                metadata.at("runtime_abi_version") == 2)),
           "Unsupported runtime ABI version; re-export both packages");
 }
 
@@ -136,7 +136,6 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
 
   const auto &m = metadata;
   metadata_check(m.at("entry_point") == entry, "entry_point");
-  // The shape-only extent input has capacity + 1 elements.
   metadata_check(metadata_integer(m.at("cache_length"), 512) &&
                      m.at("cache_length").get<int64_t>() < std::numeric_limits<int64_t>::max(),
                  "cache_length");
@@ -172,8 +171,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                    "checkpoint");
   metadata_check(checkpoint.at("manifest").is_object(), "checkpoint");
 
-  metadata_check(metadata_equal(m.at("export_options"),
-                                Json({{"backed_size_oblivious", m.at("model_type") == "qwen3"}})),
+  metadata_check(metadata_equal(m.at("export_options"), Json({{"backed_size_oblivious", true}})),
                  "export_options");
   metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
   metadata_check(m.at("triton_enable_fp_fusion").is_boolean(), "triton_enable_fp_fusion");
@@ -203,7 +201,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                      "state");
       elements *= dim.get<int64_t>();
     }
-    metadata_check(shape[0] == (m.at("model_type") == "qwen3" ? 8 : 1), "state");
+    metadata_check(shape[0] == 8, "state");
     metadata_check(item.at("dtype") == (kind == "recurrent" ? "float32" : "bfloat16"), "state");
     metadata_check(item.at("update") == (kv ? "inplace" : "replace"), "state");
     if (kv)

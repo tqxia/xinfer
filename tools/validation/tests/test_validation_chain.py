@@ -1,6 +1,8 @@
 """CPU checks for validation-stage coverage, policies and request orchestration."""
 
 from contextlib import nullcontext
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import unittest
@@ -286,7 +288,7 @@ class ValidationPipeline(unittest.TestCase):
                     finally:
                         events.append("stages_closed")
 
-                def execute(current, *args):
+                def execute(current, *args, **kwargs):
                     events.append("run:" + current.name)
                     if current.name == failure:
                         raise RuntimeError("stage failed")
@@ -371,13 +373,14 @@ class ValidationPipeline(unittest.TestCase):
         native.states["teacher", 0][1].add_(native_drift)
         report = new_report(model_type)
         with (
+            TemporaryDirectory() as directory,
             patch.object(pipeline, "sha256", return_value="native-digest"),
             patch.object(pipeline, "load_aoti_runtime", return_value=BF16Runtime(optimized=True)),
             patch.object(pipeline, "_contract_probes", return_value={}),
             patch.object(pipeline, "run_native", return_value=(native, {})),
             patch.object(pipeline.torch.cuda, "empty_cache"),
         ):
-            validate_chain(suite, "packages", "native", "output", {}, report)
+            validate_chain(suite, "packages", "native", Path(directory), {}, report)
         suite.reference.assert_not_called()
         return report
 
@@ -472,6 +475,24 @@ class StageExecution(unittest.TestCase):
         before = trace.states["clean", 0][0].clone()
         runtime.state[0].fill_(-99)
         self.assertTrue(torch.equal(trace.states["clean", 0][0], before))
+
+    def test_disk_snapshots_preserve_all_values_and_survive_reset(self):
+        capture = lambda case, step: True
+        expected = teacher_trace(CPURuntime(), self.cases(), self.specs, capture)
+        runtime = CPURuntime()
+        with TemporaryDirectory() as directory:
+            snapshots = Path(directory) / "states"
+            actual = teacher_trace(
+                runtime, self.cases(), self.specs, capture, state_directory=snapshots
+            )
+            runtime.reset(-99)
+            self.assertEqual(actual.states.keys(), expected.states.keys())
+            self.assertEqual(len(list(snapshots.glob("*.states"))), len(expected.states))
+            for key in expected.states:
+                for left, right in zip(actual.states[key], expected.states[key]):
+                    self.assertTrue(torch.equal(left.view(torch.uint8), right.view(torch.uint8)))
+                    self.assertEqual(left.dtype, right.dtype)
+                    self.assertEqual(left.shape, right.shape)
 
     def test_poison_checks_support_selected_state_capture(self):
         trace = teacher_trace(

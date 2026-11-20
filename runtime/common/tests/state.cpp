@@ -14,9 +14,10 @@ using xinfer::StatePolicy;
 using xinfer::StateSpec;
 using Tensors = std::vector<at::Tensor>;
 
-StateSpec descriptor(const std::string &kind, bool inplace, std::optional<size_t> output) {
+StateSpec descriptor(const std::string &kind, bool inplace, std::optional<size_t> output,
+                     int64_t batch = 1) {
   const auto shape =
-      kind == "conv" ? std::vector<int64_t>{1, 2, 3} : std::vector<int64_t>{1, 2, 3, 4};
+      kind == "conv" ? std::vector<int64_t>{batch, 2, 3} : std::vector<int64_t>{batch, 2, 3, 4};
   std::vector<int64_t> stride(shape.size());
   int64_t step = 1;
   for (size_t i = shape.size(); i-- > 0;) {
@@ -33,9 +34,9 @@ std::vector<StateSpec> kv_specs() {
   return {descriptor("key", true, std::nullopt), descriptor("value", true, std::nullopt)};
 }
 
-std::vector<StateSpec> mixed_specs() {
-  return {descriptor("conv", false, 1), descriptor("recurrent", false, 2),
-          descriptor("key", true, 3), descriptor("value", true, 4)};
+std::vector<StateSpec> mixed_specs(int64_t batch = 1) {
+  return {descriptor("conv", false, 1, batch), descriptor("recurrent", false, 2, batch),
+          descriptor("key", true, 3, batch), descriptor("value", true, 4, batch)};
 }
 
 Tensors valid_outputs(const StatePolicy &state) {
@@ -82,7 +83,7 @@ int main() {
       StatePolicy state(kv_specs(), cpu);
       state.reset(7);
       const auto before = state.tensors();
-      state.accept({at::zeros({1})});
+      state.accept({at::zeros({1})}, 1);
       unchanged(state.tensors(), before);
 
       state.reset(-4);
@@ -91,8 +92,8 @@ int main() {
                     state.tensors()[i].eq(-4).all().item<bool>(),
                 "KV reset did not preserve storage or fill value");
 
-      reject([&] { state.accept({}); });
-      reject([&] { state.accept({at::zeros({1}), state.tensors()[0]}); });
+      reject([&] { state.accept({}, 1); });
+      reject([&] { state.accept({at::zeros({1}), state.tensors()[0]}, 1); });
     });
 
     check("qwen35_replace_and_alias", [&] {
@@ -103,7 +104,7 @@ int main() {
       auto outputs = valid_outputs(state);
       // A returned KV view may be a different Tensor object with identical storage/layout.
       outputs[3] = outputs[3].view(outputs[3].sizes());
-      state.accept(outputs);
+      state.accept(outputs, 1);
       require(state.tensors()[0].const_data_ptr() == outputs[1].const_data_ptr() &&
                   state.tensors()[1].const_data_ptr() == outputs[2].const_data_ptr(),
               "Replacement state was not adopted");
@@ -122,6 +123,37 @@ int main() {
       }
       require(outputs[1].eq(2).all().item<bool>() && outputs[2].eq(3).all().item<bool>(),
               "Reset modified prior replacement outputs");
+    });
+
+    check("qwen35_dynamic_batch_retains_functional_tail", [&] {
+      StatePolicy state(mixed_specs(8), cpu);
+      state.reset();
+      for (const auto batch : {8, 1, 3, 2, 8}) {
+        const auto before = state.tensors();
+        Tensors outputs{at::zeros({batch})};
+        for (size_t i = 0; i < before.size(); ++i) {
+          auto active = before[i].narrow(0, 0, batch);
+          outputs.push_back(i < 2 ? active + 1 : active);
+        }
+        state.accept(outputs, batch);
+        for (size_t i = 0; i < before.size(); ++i) {
+          const auto &after = state.tensors()[i];
+          require(after.size(0) == 8, "State allocation shrank");
+          require(
+              at::equal(after.narrow(0, batch, 8 - batch), before[i].narrow(0, batch, 8 - batch)),
+              "Unused state rows changed");
+          if (i < 2) {
+            require(at::equal(after.narrow(0, 0, batch), before[i].narrow(0, 0, batch) + 1),
+                    "Functional rows did not advance independently");
+            require(after.const_data_ptr() != before[i].const_data_ptr(),
+                    "Functional input mutated");
+          } else {
+            require(after.const_data_ptr() == before[i].const_data_ptr(), "KV storage changed");
+          }
+        }
+      }
+      reject([&] { state.accept(valid_outputs(state), 0); });
+      reject([&] { state.accept(valid_outputs(state), 9); });
     });
 
     using Mutation = std::function<void(Tensors &)>;
@@ -153,7 +185,7 @@ int main() {
 
         auto outputs = valid_outputs(state);
         mutate(outputs);
-        reject([&] { state.accept(outputs); });
+        reject([&] { state.accept(outputs, 1); });
         // The later KV failures exercise validation before adopting earlier replacements.
         unchanged(state.tensors(), before);
       });

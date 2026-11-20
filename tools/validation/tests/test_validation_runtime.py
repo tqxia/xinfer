@@ -29,8 +29,8 @@ class AOTIRuntimeLoading(unittest.TestCase):
             ]
             if model_type == "qwen3"
             else [
-                state_spec(0, "conv", [1, 6144, 4], "bfloat16", "replace"),
-                state_spec(0, "recurrent", [1, 16, 128, 128], "float32", "replace"),
+                state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
+                state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
             ]
         )
         pair = {}

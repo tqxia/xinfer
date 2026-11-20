@@ -168,13 +168,29 @@ class ExportGraph(unittest.TestCase):
                     node.target for node in exported.graph.nodes if node.op == "call_function"
                 ]
                 layers = self.model.config.layer_types.count("full_attention")
-                self.assertEqual(targets.count(torch.ops.xinfer.flash_attention.default), layers)
-                self.assertEqual(targets.count(torch.ops.aten.index_copy_.default), 2 * layers)
+                self.assertEqual(
+                    targets.count(torch.ops.xinfer.batched_flash_attention.default), layers
+                )
+                self.assertEqual(targets.count(torch.ops.xinfer.append_kv_batched.default), layers)
                 self.assertNotIn(torch.ops.aten.index_copy.default, targets)
                 self.assertNotIn(torch.ops.aten.scaled_dot_product_attention.default, targets)
                 if kind == "decode":
-                    self.assertIn(torch.ops.xinfer.projection_gemv.default, targets)
+                    self.assertNotIn(torch.ops.xinfer.projection_gemv.default, targets)
                 self.assert_delta_dispatch(exported, kind)
+                executable = exported.module()
+                sample = exported.example_inputs[0]
+                for batch in (1, 8):
+
+                    def resize(tensor):
+                        return tensor[:1].expand(batch, *tensor.shape[1:]).clone()
+
+                    inputs = tuple(
+                        [resize(t) for t in value] if isinstance(value, list) else resize(value)
+                        for value in sample
+                    )
+                    logits, *state = executable(*inputs)
+                    self.assertEqual(logits.shape, (batch, self.model.config.vocab_size))
+                    self.assertTrue(all(t.shape[0] == batch for t in state))
 
 
 if __name__ == "__main__":

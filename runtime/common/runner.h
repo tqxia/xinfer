@@ -44,26 +44,19 @@ public:
       }
     const auto options = at::TensorOptions().device(device_).dtype(at::kLong);
     auto cache_positions = at::tensor(positions, at::kLong).view({batch_size, length}).to(options);
-    // Qwen3 uses per-row inputs at every batch size; Qwen3.5 retains its text ABI.
-    if (spec_.model_type == ModelType::Qwen35)
-      cache_positions = cache_positions.view({length});
     std::vector<at::Tensor> inputs{
         at::tensor(tokens, at::kLong).view({batch_size, length}).to(options), cache_positions};
     const auto &tensors = state_.tensors();
     // Prefix views preserve the allocation and unused rows' state.
     for (const auto &tensor : tensors)
       inputs.push_back(tensor.narrow(0, 0, batch_size));
-    if (spec_.model_type == ModelType::Qwen3) {
-      std::vector<int32_t> kv_lengths, query_lengths;
-      for (size_t row = 0; row < rows.size(); ++row) {
-        kv_lengths.push_back(positions_[row] + rows[row].size());
-        query_lengths.push_back(rows[row].size());
-      }
-      inputs.push_back(at::tensor(kv_lengths, at::kInt));
-      inputs.push_back(at::tensor(query_lengths, at::kInt));
-    } else {
-      inputs.push_back(extent_.narrow(0, 0, positions_[0] + rows[0].size() + 1));
+    std::vector<int32_t> kv_lengths, query_lengths;
+    for (size_t row = 0; row < rows.size(); ++row) {
+      kv_lengths.push_back(positions_[row] + rows[row].size());
+      query_lengths.push_back(rows[row].size());
     }
+    inputs.push_back(at::tensor(kv_lengths, at::kInt));
+    inputs.push_back(at::tensor(query_lengths, at::kInt));
 
     auto output = run_inputs(inputs, length, batch_size);
     for (size_t row = 0; row < rows.size(); ++row)
@@ -79,7 +72,7 @@ private:
                 outputs[0].scalar_type() == at::kBFloat16 && outputs[0].device() == device_,
             "Unexpected compiled output");
 
-    state_.accept(outputs);
+    state_.accept(outputs, batch_size);
     ++(length == 1 ? decode_calls_ : prefill_calls_);
     return outputs[0];
   }
@@ -117,9 +110,6 @@ private:
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
 
-    if (spec_.model_type == ModelType::Qwen35)
-      extent_ =
-          at::empty({spec_.capacity + 1}, at::TensorOptions().device(at::kCPU).dtype(at::kByte));
     reset();
   }
 
@@ -130,7 +120,6 @@ private:
   SharedWeights weights_;
   Loader prefill_, decode_;
   StatePolicy state_;
-  at::Tensor extent_;
   std::vector<int64_t> positions_;
   int64_t position_ = 0, prefill_calls_ = 0, decode_calls_ = 0;
 };

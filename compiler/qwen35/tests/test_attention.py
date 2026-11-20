@@ -3,6 +3,7 @@
 import unittest
 
 import torch
+from transformers import DynamicCache
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
     Qwen3_5TextConfig,
@@ -10,6 +11,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
 from compiler.qwen35.model import TextCache, configure_text
 
@@ -73,7 +75,13 @@ class GatedPrefixFlash:
                 ]
                 states = [[tensor.clone() for tensor in initial] for _ in range(2)]
                 caches = [
-                    TextCache(["full_attention"], positions, state, cache_extent(length))
+                    TextCache(
+                        ["full_attention"],
+                        positions[None, :],
+                        state,
+                        torch.tensor([length], dtype=torch.int32),
+                        torch.tensor([tokens], dtype=torch.int32),
+                    )
                     for state in states
                 ]
                 pointers = [[tensor.data_ptr() for tensor in state] for state in states]
@@ -112,7 +120,11 @@ class GatedPrefixFlash:
                 for tensor, value in zip(poisoned, (100.0, -100.0)):
                     tensor[:, :, length:].fill_(value)
                 poisoned_cache = TextCache(
-                    ["full_attention"], positions, poisoned, cache_extent(length)
+                    ["full_attention"],
+                    positions[None, :],
+                    poisoned,
+                    torch.tensor([length], dtype=torch.int32),
+                    torch.tensor([tokens], dtype=torch.int32),
                 )
                 output, _ = self.flash(
                     hidden, position_embeddings=rotary, past_key_values=poisoned_cache
@@ -121,6 +133,77 @@ class GatedPrefixFlash:
                 for updated, clean, value in zip(poisoned, states[1], (100.0, -100.0)):
                     self.assertTrue(torch.equal(updated[:, :, :length], clean[:, :, :length]))
                     self.assertTrue(bool((updated[:, :, length:] == value).all()))
+
+    @torch.inference_mode()
+    def test_unequal_rows_against_independent_hf_attention(self):
+        capacity, starts = 256, (7, 33)
+        for tokens, counts in ((1, (0, 1)), (2, (1, 2)), (98, (97, 98))):
+            with self.subTest(tokens=tokens):
+                hidden = torch.randn(
+                    2, tokens, self.hidden_size, device="cuda", dtype=torch.bfloat16
+                )
+                positions = torch.stack(
+                    [torch.arange(start, start + tokens, device="cuda") for start in starts]
+                )
+                rotary = self.rotary(hidden, positions.unsqueeze(0).expand(3, -1, -1))
+                initial = [
+                    torch.randn(2, self.kv_heads, capacity, 256, device="cuda", dtype=hidden.dtype)
+                    for _ in range(2)
+                ]
+                state = [tensor.clone() for tensor in initial]
+                cache = TextCache(
+                    ["full_attention"],
+                    positions,
+                    state,
+                    torch.tensor(
+                        [start + count for start, count in zip(starts, counts)], dtype=torch.int32
+                    ),
+                    torch.tensor(counts, dtype=torch.int32),
+                )
+                actual, _ = self.flash(hidden, position_embeddings=rotary, past_key_values=cache)
+                for row, (start, count) in enumerate(zip(starts, counts)):
+                    for updated, before in zip(state, initial):
+                        self.assertTrue(bits_equal(updated[row, :, :start], before[row, :, :start]))
+                        self.assertTrue(
+                            bits_equal(
+                                updated[row, :, start + count :], before[row, :, start + count :]
+                            )
+                        )
+                    if not count:
+                        self.assertTrue(torch.count_nonzero(actual[row]) == 0)
+                        continue
+                    hf_cache = DynamicCache(config=self.config)
+                    hf_cache.update(
+                        *(tensor[row : row + 1, :, :start].clone() for tensor in initial), 0
+                    )
+                    future = (
+                        torch.arange(start + count, device="cuda")[None, :]
+                        > positions[row, :count, None]
+                    )
+                    mask = torch.zeros_like(future, dtype=hidden.dtype).masked_fill(
+                        future, torch.finfo(hidden.dtype).min
+                    )[None, None]
+                    expected, _ = self.original(
+                        hidden[row : row + 1, :count],
+                        position_embeddings=tuple(t[row : row + 1, :count] for t in rotary),
+                        attention_mask=mask,
+                        past_key_values=hf_cache,
+                    )
+                    errors = row_errors(
+                        actual[row : row + 1, :count].float().flatten(1),
+                        expected.float().flatten(1),
+                    )
+                    self.assertLessEqual(errors["relative_l2"], 0.05, errors)
+                    self.assertLessEqual(errors["peak_relative"], 0.05, errors)
+                    for updated, expected_kv in zip(
+                        state, (hf_cache.layers[0].keys, hf_cache.layers[0].values)
+                    ):
+                        errors = row_errors(
+                            updated[row : row + 1, :, : start + count].float().flatten(1),
+                            expected_kv.float().flatten(1),
+                        )
+                        self.assertLessEqual(errors["relative_l2"], 0.05, errors)
+                        self.assertLessEqual(errors["peak_relative"], 0.05, errors)
 
     @torch.inference_mode()
     def test_installation_reuses_parameters_and_is_idempotent(self):

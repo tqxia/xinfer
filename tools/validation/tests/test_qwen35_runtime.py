@@ -15,7 +15,7 @@ from tools.validation.common.runner import load_aoti_runtime
 CONTRACT_FIELDS = ("runtime_abi_version", "export_options")
 INVALID_VALUES = {
     "runtime_abi_version": RUNTIME_ABI_VERSIONS["qwen35"] + 1,
-    "export_options": {"backed_size_oblivious": True},
+    "export_options": {"backed_size_oblivious": False},
 }
 
 
@@ -31,8 +31,8 @@ class AOTIRuntimeContract(unittest.TestCase):
 
     def metadata(self):
         state = [
-            state_spec(0, "conv", [1, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [1, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
         ]
         pair = {}
         for kind in ("prefill", "decode"):
@@ -216,8 +216,8 @@ class AOTIRuntimeContract(unittest.TestCase):
         def mismatched_kv_shapes(metadata):
             for entry in metadata.values():
                 entry["state"] = [
-                    state_spec(0, "key", [1, 2, 1024, 256], "bfloat16", "inplace"),
-                    state_spec(0, "value", [1, 3, 1024, 256], "bfloat16", "inplace"),
+                    state_spec(0, "key", [8, 2, 1024, 256], "bfloat16", "inplace"),
+                    state_spec(0, "value", [8, 3, 1024, 256], "bfloat16", "inplace"),
                 ]
 
         for mutate, error in (

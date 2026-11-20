@@ -1,6 +1,7 @@
 """CPU regression for full-attention cache updates after symbolic DeltaNet dispatch."""
 
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 
 import torch
@@ -30,6 +31,10 @@ class StateCapacity(unittest.TestCase):
         self.assertEqual(baseline[2]["shape"], [1, 4, 1024, 256])
         self.assertEqual(scaled[2]["shape"], [1, 4, 16384, 256])
         self.assertEqual(scaled[2]["shape"], scaled[3]["shape"])
+        batched = state_specs(config, capacity=1024, batch_size=2)
+        for single, batch in zip(baseline, batched):
+            self.assertEqual(batch["shape"], [2, *single["shape"][1:]])
+            self.assertEqual(batch["update"], single["update"])
 
 
 class AttentionUpdate(torch.nn.Module):
@@ -45,20 +50,37 @@ class CacheAfterCond(torch.nn.Module):
     def forward(self, key, positions, state):
         # The cache must exist before cond, as it does before the first
         # DeltaNet layer in TextStep. Creating it afterwards misses the bug.
-        cache = TextCache(["full_attention"], positions, state)
+        cache = TextCache(
+            ["full_attention"],
+            positions,
+            state,
+            torch.full((1,), key.shape[2] + 1, dtype=torch.int32),
+            torch.full((1,), key.shape[2], dtype=torch.int32),
+        )
         key = torch.cond(key.shape[2] <= 3, lambda x: x + 1, lambda x: x + 2, (key,))
         attended_key, attended_value = self.attention(key, cache)
         return attended_key, attended_value, *cache.tensors()
 
 
 class TextCacheExportContract(unittest.TestCase):
+    @staticmethod
+    def append_reference(key, value, positions, cu_query, cache_key, cache_value):
+        # CPU stand-in for the CUDA writer: this test isolates cache bookkeeping
+        # across torch.cond. GPU tests cover the writer's lengths and masks.
+        indices = positions[:, None, :, None].expand_as(key)
+        cache_key.scatter_(2, indices, key)
+        cache_value.scatter_(2, indices, value)
+
     @torch.inference_mode()
     def test_updates_survive_cond_and_mutate_only_cache_rows(self):
+        writer = patch("compiler.qwen35.model.append_kv_batched", self.append_reference)
+        writer.start()
+        self.addCleanup(writer.stop)
         model = CacheAfterCond().eval()
 
         def inputs(tokens):
             key = torch.arange(2 * tokens * 3, dtype=torch.float32).reshape(1, 2, tokens, 3)
-            positions = torch.arange(1, tokens + 1)
+            positions = torch.arange(1, tokens + 1)[None, :]
             state = [torch.full((1, 2, 8, 3), fill) for fill in (-3.0, -7.0)]
             return key, positions, state
 
@@ -67,12 +89,12 @@ class TextCacheExportContract(unittest.TestCase):
             model,
             inputs(2),
             strict=True,
-            dynamic_shapes=({2: tokens}, {0: tokens}, [None, None]),
+            dynamic_shapes=({2: tokens}, {1: tokens}, [None, None]),
         )
         self.assertEqual(
             sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), 1
         )
-        updates = sum(n.target == torch.ops.aten.index_copy_.default for n in exported.graph.nodes)
+        updates = sum(n.target == torch.ops.aten.scatter_.src for n in exported.graph.nodes)
         self.assertEqual(updates, 2)
         compiled_graph = exported.module()
         for length in (2, 3, 4, 6):
@@ -82,8 +104,8 @@ class TextCacheExportContract(unittest.TestCase):
                     before = [t.clone() for t in (key, positions, *state)]
                     pointers = [t.data_ptr() for t in state]
                     updated_key = key + (1 if length <= 3 else 2)
-                    expected_key = state[0].index_copy(2, positions, updated_key)
-                    expected_value = state[1].index_copy(2, positions, updated_key + 10)
+                    expected_key = state[0].index_copy(2, positions.flatten(), updated_key)
+                    expected_value = state[1].index_copy(2, positions.flatten(), updated_key + 10)
                     expected = (expected_key, expected_value, expected_key, expected_value)
                     actual = function(key, positions, state)
                     self.assertEqual(len(actual), len(expected))

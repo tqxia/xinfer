@@ -9,7 +9,7 @@ from compiler.common.artifacts import canonical_json, read_json, require, sha256
 
 
 SCHEMA_VERSION = 5
-RUNTIME_ABI_VERSIONS = {"qwen3": 4, "qwen35": 1}
+RUNTIME_ABI_VERSIONS = {"qwen3": 4, "qwen35": 2}
 FIELDS = (
     "schema_version",  # Version of this metadata format.
     "runtime_abi_version",  # Compiled calling convention, state ownership and attention ABI.
@@ -116,7 +116,7 @@ def make_metadata(
         eos_token_ids=eos,
         checkpoint=copy.deepcopy(checkpoint),
         state=states,
-        export_options=dict(backed_size_oblivious=model_type == "qwen3"),
+        export_options=dict(backed_size_oblivious=True),
         tf32=False,
         triton_enable_fp_fusion=triton_enable_fp_fusion,
         model_specific=copy.deepcopy(model_specific),
@@ -159,7 +159,6 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and (entry_point is None or m["entry_point"] == entry_point),
         "entry_point",
     )
-    # The shape-only extent input has capacity + 1 elements.
     _check(_integer(m["cache_length"], 512) and m["cache_length"] < 2**63 - 1, "cache_length")
     _check(_integer(m["vocab_size"], 1), "vocab_size")
     tokens = m["token_range"]
@@ -196,7 +195,7 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         "checkpoint",
     )
     _check(
-        _same_json(m["export_options"], {"backed_size_oblivious": m["model_type"] == "qwen3"}),
+        _same_json(m["export_options"], {"backed_size_oblivious": True}),
         "export_options",
     )
     _check(m["tf32"] is False, "tf32")
@@ -225,7 +224,7 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
             isinstance(shape, list)
             and len(shape) == (3 if kind == "conv" else 4)
             and all(_integer(n, 1) for n in shape)
-            and shape[0] == (8 if m["model_type"] == "qwen3" else 1)
+            and shape[0] == 8
             and math.prod(shape) <= (2**63 - 1) // 4,
             "state",
         )

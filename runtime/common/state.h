@@ -38,8 +38,9 @@ public:
 
   const std::vector<at::Tensor> &tensors() const { return tensors_; }
 
-  void accept(const std::vector<at::Tensor> &outputs) {
+  void accept(const std::vector<at::Tensor> &outputs, int64_t batch_size) {
     require(outputs.size() == output_count_, "Incorrect package output count");
+    require(batch_size >= 1 && batch_size <= specs_[0].shape[0], "Invalid state batch size");
 
     // Validate the complete return before replacing any functional state.
     for (size_t i = 0; i < specs_.size(); ++i) {
@@ -48,7 +49,9 @@ public:
         continue;
 
       const auto &next = outputs[*item.output_index];
-      require(next.defined() && next.sizes() == at::IntArrayRef(item.shape) &&
+      auto shape = item.shape;
+      shape[0] = batch_size;
+      require(next.defined() && next.sizes() == at::IntArrayRef(shape) &&
                   next.scalar_type() == item.dtype && next.device() == device_ &&
                   next.is_contiguous(),
               "Incorrect state shape/dtype/device/layout");
@@ -58,9 +61,16 @@ public:
                 "KV outputs must alias caller-owned buffers");
     }
 
-    for (size_t i = 0; i < specs_.size(); ++i)
-      if (!specs_[i].inplace)
-        tensors_[i] = outputs[*specs_[i].output_index];
+    for (size_t i = 0; i < specs_.size(); ++i) {
+      if (specs_[i].inplace)
+        continue;
+      const auto &next = outputs[*specs_[i].output_index];
+      const auto remaining = specs_[i].shape[0] - batch_size;
+      // Preserve omitted rows and the original functional input. The full-batch
+      // path adopts the package output directly; smaller batches retain the tail.
+      tensors_[i] =
+          remaining ? at::cat({next, tensors_[i].narrow(0, batch_size, remaining)}, 0) : next;
+    }
   }
 
 private:

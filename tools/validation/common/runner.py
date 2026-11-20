@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 import torch
 
 from compiler.common.artifacts import require
-from compiler.common.attention import cache_extent
 from compiler.common.metadata import read_package_metadata
 from compiler.common.tests.tensors import bits_equal, cpu_copy
+from tools.validation.common.validation import disk_snapshot
 from compiler.common.weights import SharedWeights, validate_shared_weights
 from tools.common import prompt_chunks
 from tools.packages import validate_model_metadata
@@ -87,33 +87,30 @@ class ExplicitRuntime:
             dtype=torch.int64,
             device="cuda",
         )
-        # Qwen3's logits-only entry uses per-row inputs at every supported batch size.
-        if self.logits_only:
-            positions = torch.tensor(
-                [
-                    list(range(start, end)) + [0] * (length - count)
-                    for start, end, count in zip(self.positions, ends, counts)
-                ],
-                dtype=torch.int64,
-                device="cuda",
-            )
-            attention_inputs = (
-                torch.tensor(ends, dtype=torch.int32),
-                torch.tensor(counts, dtype=torch.int32),
-            )
-        else:
-            positions = torch.arange(self.position, self.position + length, device="cuda")
-            attention_inputs = (cache_extent(ends[0]),)
+        positions = torch.tensor(
+            [
+                list(range(start, end)) + [0] * (length - count)
+                for start, end, count in zip(self.positions, ends, counts)
+            ],
+            dtype=torch.int64,
+            device="cuda",
+        )
+        attention_inputs = (
+            torch.tensor(ends, dtype=torch.int32),
+            torch.tensor(counts, dtype=torch.int32),
+        )
         before = tuple(t.clone() for t in (ids, positions, *self.state))
         pointers = [t.data_ptr() for t in self.state]
         result = self.functions["decode" if length == 1 else "prefill"](
             ids,
             positions,
-            tuple(t[:batch_size] for t in self.state) if self.logits_only else self.state,
+            tuple(t[:batch_size] for t in self.state)
+            if self.logits_only
+            else [t[:batch_size] for t in self.state],
             *attention_inputs,
         )
         if self.logits_only:
-            logits, state = result, self.state
+            logits, state = result, [t[:batch_size] for t in self.state]
         else:
             require(len(result) == len(self.specs) + 1, "Incorrect output/state count")
             logits, state = result[0], list(result[1:])
@@ -127,7 +124,7 @@ class ExplicitRuntime:
         for index, (incoming, output, original, spec) in enumerate(
             zip(self.state, state, before[2:], self.specs)
         ):
-            require(list(output.shape) == spec["shape"], "Incorrect state shape")
+            require(list(output.shape) == [batch_size, *spec["shape"][1:]], "Incorrect state shape")
             require(output.dtype == getattr(torch, spec["dtype"]), "Incorrect state dtype")
             require(
                 output.device == incoming.device and output.is_contiguous(), "Invalid state layout"
@@ -138,8 +135,8 @@ class ExplicitRuntime:
                     "KV output lost caller-owned storage",
                 )
                 require(
-                    bits_equal(output[batch_size:], original[batch_size:]),
-                    "Unused KV row overwritten",
+                    bits_equal(incoming[batch_size:], original[batch_size:]),
+                    "Unused state row overwritten",
                 )
                 for row, (start, end) in enumerate(zip(self.positions, ends)):
                     require(
@@ -155,8 +152,23 @@ class ExplicitRuntime:
                             not bits_equal(output[row, :, start:end], original[row, :, start:end]),
                             "Cache update missing",
                         )
+                state[index] = incoming
             else:
                 require(bits_equal(incoming, original), "Functional input state mutated")
+                require(output.data_ptr() != incoming.data_ptr(), "Functional output aliases input")
+                state[index] = (
+                    torch.cat((output, incoming[batch_size:]), dim=0)
+                    if batch_size < incoming.shape[0]
+                    else output
+                )
+            for row, count in enumerate(counts):
+                if count == 0:
+                    require(bits_equal(state[index][row], original[row]), "Inactive state changed")
+        for row, count in enumerate(counts):
+            if count == 0:
+                require(
+                    torch.count_nonzero(logits[row]).item() == 0, "Inactive logits must be zero"
+                )
         require(all(bool(torch.isfinite(t).all()) for t in (logits, *state)), "Nonfinite output")
         self.state = list(state)
         self.positions[:batch_size] = ends
@@ -215,8 +227,10 @@ def capture_state(runtime, specs, fill=0):
     return cpu_copy(tensors)
 
 
-def teacher_trace(runtime, cases, specs, capture_states):
+def teacher_trace(runtime, cases, specs, capture_states, *, state_directory=None):
     result = Trace(compact_states=getattr(runtime, "capacity", 0) > 1024)
+    if state_directory is not None:
+        state_directory.mkdir(parents=True, exist_ok=False)
     names = set()
     for case in cases:
         name = case["name"]
@@ -241,7 +255,13 @@ def teacher_trace(runtime, cases, specs, capture_states):
             result.raw_logits[key] = cpu_copy((logits,))[0]
             result.logits[key] = cpu_copy((logits.float(),))[0]
             if capture_states(case, step):
-                result.states[key] = capture_state(runtime, specs, fill)
+                state = capture_state(runtime, specs, fill)
+                result.states[key] = (
+                    disk_snapshot(state_directory / f"{name}.{step}.states", state)
+                    if state_directory is not None
+                    else state
+                )
+                del state
             if "same_as" in case:
                 original = case["same_as"], step
                 require(original in result.logits, "Missing clean/repeated case")
@@ -259,7 +279,9 @@ def teacher_trace(runtime, cases, specs, capture_states):
                                 bits_equal(actual[:1, :, :position], expected[:1, :, :position]),
                                 "Reset/poison changed valid KV",
                             )
-                            require(bool((actual[1:] == fill).all()), "Unused KV row overwritten")
+                            require(
+                                bool((actual[1:] == fill).all()), "Unused state row overwritten"
+                            )
                             if not result.compact_states:
                                 require(
                                     bool((actual[:, :, position:] == fill).all()),
@@ -319,8 +341,8 @@ def greedy(runtime, prompt, limit, eos):
     return dict(ids=ids, rows=rows, state=state, position=runtime.position)
 
 
-def run_stage(runtime, cases, chats, specs, capture_states, eos):
-    result = teacher_trace(runtime, cases, specs, capture_states)
+def run_stage(runtime, cases, chats, specs, capture_states, eos, *, state_directory=None):
+    result = teacher_trace(runtime, cases, specs, capture_states, state_directory=state_directory)
     for case in chats:
         name = case["name"]
         require(name not in result.greedy, "Duplicate generation case")

@@ -1,4 +1,4 @@
-"""Qwen3.5 gated full attention over the populated caller-owned KV prefix."""
+"""Qwen3.5 gated attention over independent, right-padded KV prefixes."""
 
 import torch
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Attention, apply_rotary_pos_emb
@@ -34,14 +34,8 @@ class FlashAttention(torch.nn.Module):
     ):
         if self.training or kwargs.get("output_attentions", False):
             raise ValueError("Flash adapter supports inference without attention weights")
-        if (
-            attention_mask is not None
-            or not isinstance(past_key_values, TextCache)
-            or past_key_values.extent is None
-        ):
-            raise ValueError(
-                "Flash adapter requires an unpadded TextCache with its valid-prefix extent"
-            )
+        if attention_mask is not None or not isinstance(past_key_values, TextCache):
+            raise ValueError("Flash adapter requires TextCache with per-row lengths")
         a = self.original
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, a.head_dim)
@@ -55,8 +49,14 @@ class FlashAttention(torch.nn.Module):
         cos, sin = position_embeddings
         query, key = apply_rotary_pos_emb(query, key, cos, sin)
         key, value = past_key_values.update(key, value, a.layer_idx)
-        output = torch.ops.xinfer.flash_attention(
-            query.contiguous(), key, value, past_key_values.extent, a.scaling
+        output = torch.ops.xinfer.batched_flash_attention(
+            query,
+            key,
+            value,
+            past_key_values.offsets,
+            past_key_values.cuda_offsets,
+            past_key_values.blocks,
+            a.scaling,
         )
         output = output.transpose(1, 2).reshape(*input_shape, -1).contiguous()
         output = output * torch.sigmoid(gate)

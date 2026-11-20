@@ -29,7 +29,7 @@ class DeltaCore(torch.nn.Module):
         ):
             raise ValueError("Fused DeltaNet requires a bias-free width-4 SiLU convolution")
 
-    def forward(self, hidden, conv, state):
+    def forward(self, hidden, conv, state, query_lengths=None):
         block = self.block
         batch, tokens, _ = hidden.shape
         core, next_conv, next_recurrent = fused(
@@ -41,6 +41,7 @@ class DeltaCore(torch.nn.Module):
             block.conv1d.weight.squeeze(1),
             block.A_log,
             block.dt_bias,
+            query_lengths,
         )
         z = block.in_proj_z(hidden).reshape(-1, block.head_v_dim)
         core = block.norm(core.reshape(-1, block.head_v_dim), z)
@@ -53,10 +54,13 @@ class DeltaNet(DeltaCore):
 
     def forward(self, hidden_states, cache_params, attention_mask=None, **kwargs):
         if attention_mask is not None:
-            raise ValueError("DeltaNet expects unpadded token inputs")
+            raise ValueError("DeltaNet uses TextCache lengths instead of attention masks")
         layer = cache_params.layers[self.block.layer_idx]
         output, conv, recurrent = super().forward(
-            hidden_states, layer.conv_states[0], layer.recurrent_states[0]
+            hidden_states,
+            layer.conv_states[0],
+            layer.recurrent_states[0],
+            cache_params.query_lengths,
         )
         layer.conv_states[0] = conv
         cache_params.update_recurrent_state(recurrent, self.block.layer_idx)

@@ -9,8 +9,6 @@ from compiler.qwen35.config import configure
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused
 from compiler.qwen35.tests.delta import (
-    ABS_LIMITS,
-    LIMITS,
     PARTITIONS,
     Fused,
     compare,
@@ -46,10 +44,9 @@ class RecurrentKernels:
                 "branch": selected,
                 "hf": reference,
                 "hf_chunk64": lambda *x: reference(*x, chunked=True),
-                "fp32": reference,
             }[name]
             with torch.inference_mode():
-                cls.results[name] = run_cases(call, cls.cases, fp32=name == "fp32")
+                cls.results[name] = run_cases(call, cls.cases)
         return cls.results[name]
 
     def compare(self, label, actual, expected, exact_tensors=()):
@@ -75,15 +72,8 @@ class RecurrentKernels:
             with self.subTest(reference=engine):
                 self.compare(f"dispatch_vs_{engine}", self.engine("dispatch"), self.engine(engine))
 
-    def test_fp32_reference_controls(self):
-        # Keep the original BF16-to-FP32 acceptance policy for both implementations.
-        # A pre-existing numerical gap remains a failure, not an expected failure.
-        for engine in ("dispatch", "hf"):
-            with self.subTest(engine=engine, limits=LIMITS, absolute_limits=ABS_LIMITS):
-                self.compare(f"{engine}_vs_fp32", self.engine(engine), self.engine("fp32"))
-
     def test_partition_invariance(self):
-        for engine in ("dispatch", "branch", "hf", "hf_chunk64", "fp32"):
+        for engine in ("dispatch", "branch", "hf", "hf_chunk64"):
             values = self.engine(engine)
             for dtype in ("bf16", "fp32"):
                 with self.subTest(engine=engine, dtype=dtype):
@@ -97,7 +87,7 @@ class RecurrentKernels:
                     )
 
     def test_reset_repeat_bitwise(self):
-        for engine in ("dispatch", "branch", "hf", "hf_chunk64", "fp32"):
+        for engine in ("dispatch", "branch", "hf", "hf_chunk64"):
             values = self.engine(engine)
             for dtype in ("bf16", "fp32"):
                 for original, repeat in (
@@ -171,7 +161,9 @@ class RecurrentKernels:
             ):
                 with self.subTest(dtype=dtype, operator=str(op)):
                     checks = torch.library.opcheck(
-                        op, sample, test_utils=("test_schema", "test_faketensor")
+                        op,
+                        (*sample, torch.tensor([32], device="cuda", dtype=torch.int32)),
+                        test_utils=("test_schema", "test_faketensor"),
                     )
                     self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
 

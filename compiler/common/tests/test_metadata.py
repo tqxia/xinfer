@@ -32,11 +32,11 @@ def metadata_pair(model_type="qwen3", *, cache_length=1024):
         specific = {}
     else:
         states = [
-            state_spec(0, "conv", [1, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [1, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
         ]
         states += [
-            state_spec(1, kind, [1, 2, cache_length, 256], "bfloat16", "inplace")
+            state_spec(1, kind, [8, 2, cache_length, 256], "bfloat16", "inplace")
             for kind in ("key", "value")
         ]
         specific = dict(delta_backend="triton_op")
@@ -89,18 +89,18 @@ class PackageMetadata(unittest.TestCase):
                     pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSIONS[model_type]
                 )
 
-    def test_qwen3_reserves_eight_rows_and_rejects_other_allocations(self):
-        pair = metadata_pair()
-        validate_metadata_pair(pair["prefill"], pair["decode"])
-        for batch_size in (1, 2, 4, 7, 9):
-            invalid = copy.deepcopy(pair["decode"])
-            invalid["state"][0]["shape"][0] = batch_size
-            with self.subTest(batch_size=batch_size), self.assertRaisesRegex(ValueError, "state"):
-                validate_metadata(invalid)
-        pair = metadata_pair("qwen35")
-        pair["decode"]["state"][0]["shape"][0] = 2
-        with self.assertRaisesRegex(ValueError, "state"):
-            validate_metadata(pair["decode"])
+    def test_both_models_reserve_eight_rows_and_reject_other_allocations(self):
+        for model_type in ("qwen3", "qwen35"):
+            pair = metadata_pair(model_type)
+            validate_metadata_pair(pair["prefill"], pair["decode"])
+            for batch_size in (1, 2, 4, 7, 9):
+                invalid = copy.deepcopy(pair["decode"])
+                invalid["state"][0]["shape"][0] = batch_size
+                with (
+                    self.subTest(model=model_type, batch_size=batch_size),
+                    self.assertRaisesRegex(ValueError, "state"),
+                ):
+                    validate_metadata(invalid)
 
     def test_capacity_is_separate_from_compiled_call_bounds_and_prompt_policy(self):
         for model_type in ("qwen3", "qwen35"):

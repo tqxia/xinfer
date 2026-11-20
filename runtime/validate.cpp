@@ -18,7 +18,7 @@ Options parse_options(int argc, char **argv) {
 }
 
 struct TraceLayout {
-  bool qwen3, selected_states, compact;
+  bool separate_logits, selected_states, compact;
 };
 
 struct Case {
@@ -113,10 +113,12 @@ std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::
     }
 
     const bool qwen3 = spec.model_type == ModelType::Qwen3;
+    const bool separate_logits =
+        qwen3 || !manifest.value("expected_directory", std::string()).empty();
     std::vector<std::string> suffixes;
-    if (qwen3 || c.greedy)
+    if (separate_logits || c.greedy)
       suffixes.push_back(".f32");
-    if (!qwen3)
+    if (!separate_logits)
       suffixes.push_back(".states");
     if (qwen3 && c.dump_cache)
       suffixes.push_back(".kv.bf16");
@@ -205,17 +207,19 @@ template <class Runtime> void check_reset(const Runtime &runtime, double fill) {
 }
 
 void check_state_update(const StateSpec &spec, const at::Tensor &input, const at::Tensor &before,
-                        const at::Tensor &after, int64_t start, int64_t end, bool qwen3) {
+                        const at::Tensor &after, int64_t start, int64_t end) {
   if (spec.inplace) {
     require(input.const_data_ptr() == after.const_data_ptr() && input.strides() == after.strides(),
             "KV output lost caller-owned storage");
     require(at::equal(before.slice(2, 0, start), after.slice(2, 0, start)), "Past KV overwritten");
     require(at::equal(before.slice(2, end), after.slice(2, end)), "Future KV overwritten");
-    if (qwen3 && end > start)
+    if (end > start)
       require(!at::equal(before.slice(2, start, end), after.slice(2, start, end)),
               "Cache update missing");
   } else {
     require(at::equal(input, before), "Functional input state mutated");
+    if (start == end)
+      require(at::equal(after, before), "Inactive functional state changed");
   }
 
   require(at::isfinite(after).all().item<bool>(), "Non-finite state");
@@ -252,7 +256,7 @@ void run_greedy_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
   row["rows"] = ids.size();
   row["stop"] = std::find(c.eos.begin(), c.eos.end(), ids.back()) != c.eos.end() ? "eos" : "limit";
 
-  if (!layout.qwen3)
+  if (!layout.separate_logits)
     write_state(states, runtime, layout.compact, 0);
 }
 
@@ -280,7 +284,11 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
     for (size_t row = rows.size(); row < starts.size(); ++row)
       require(runtime.positions()[row] == starts[row], "Unused row position changed");
 
-    if (layout.qwen3)
+    for (size_t row = 0; row < rows.size(); ++row)
+      if (rows[row].empty())
+        require(score[row].eq(0).all().template item<bool>(), "Inactive logits must be zero");
+
+    if (layout.separate_logits)
       write_logits(logits, score);
     else
       write_tensor(states, score);
@@ -291,8 +299,8 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
       for (size_t row = 0; row < starts.size(); ++row)
         check_state_update(runtime.spec().state[i], inputs[i].narrow(0, row, 1),
                            before[i].narrow(0, row, 1), after.narrow(0, row, 1), starts[row],
-                           runtime.positions()[row], layout.qwen3);
-      if (!layout.qwen3 && !layout.selected_states)
+                           runtime.positions()[row]);
+      if (!layout.separate_logits && !layout.selected_states)
         write_tensor(states, after);
     }
     check_persistent(runtime, persistent);
@@ -312,7 +320,7 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
   row["kv_inputs_updated_in_place"] = row["non_kv_inputs_unchanged"] =
       row["kv_write_regions_preserved"] = true;
 
-  if (layout.qwen3 && c.dump_cache && !layout.selected_states) {
+  if (runtime.spec().model_type == ModelType::Qwen3 && c.dump_cache && !layout.selected_states) {
     auto cache = output_file(output / (c.name + ".kv.bf16"), true);
     for (const auto &tensor : runtime.state())
       write_tensor(cache, tensor);
@@ -330,9 +338,9 @@ Json run_case(Runtime &runtime, const Case &c, const TraceLayout &layout, const 
   }
 
   std::ofstream logits, states;
-  if (layout.qwen3 || c.greedy)
+  if (layout.separate_logits || c.greedy)
     logits = output_file(output / (c.name + ".f32"), true);
-  if (!layout.qwen3)
+  if (!layout.separate_logits)
     states = output_file(output / (c.name + ".states"), true);
 
   if (c.greedy)
@@ -351,7 +359,7 @@ Json run_case(Runtime &runtime, const Case &c, const TraceLayout &layout, const 
 
   row["position"] = runtime.position();
   row["positions"] = runtime.positions();
-  if (layout.qwen3)
+  if (runtime.spec().model_type == ModelType::Qwen3)
     row["stable_storage"] = true;
   row["stable_kv_storage"] = true;
   row["prefill_calls"] = runtime.prefill_calls();
@@ -405,10 +413,10 @@ void run_validation(const Options &options) {
 
   with_model(options.packages, [&](const auto &spec, auto make_runtime) {
     const auto cases = parse_cases(manifest, spec, options.output);
-    const TraceLayout layout{spec.model_type == ModelType::Qwen3, selected_states,
-                             selected_states && spec.capacity > 1024};
-    require(expected.empty() || (layout.qwen3 && selected_states),
-            "Expected traces require Qwen3 trace format 2");
+    const TraceLayout layout{spec.model_type == ModelType::Qwen3 || !expected.empty(),
+                             selected_states, selected_states && spec.capacity > 1024};
+    require(expected.empty() || (layout.separate_logits && selected_states),
+            "Expected traces require separate logits and trace format 2");
 
     c10::InferenceMode inference;
     auto runtime = make_runtime();
@@ -420,7 +428,7 @@ void run_validation(const Options &options) {
 
     Json report = {
         {"cases", Json::array()}, {"loader_pairs", 1}, {"state_tensors", spec.state.size()}};
-    if (layout.qwen3)
+    if (spec.model_type == ModelType::Qwen3)
       report["cache_buffers"] = persistent.size();
 
     for (const auto &c : cases) {

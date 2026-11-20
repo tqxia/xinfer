@@ -210,12 +210,12 @@ def metadata_mutations(metadata):
         ),
         (
             "mixed_export_options",
-            lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=True),
+            lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=False),
             "Package metadata differs: export_options",
         ),
         (
             "invalid_export_options",
-            lambda m: [v["export_options"].update(backed_size_oblivious=True) for v in m.values()],
+            lambda m: [v["export_options"].update(backed_size_oblivious=False) for v in m.values()],
             "Unsupported package metadata: export_options",
         ),
         (
@@ -470,7 +470,13 @@ def run_python_reference(args, metadata, teacher, chats, capital, eos):
     print("Python AOTI reference", flush=True)
     try:
         expected = run_stage(
-            runtime, teacher, chats, metadata["decode"]["state"], capture_runtime_state, eos
+            runtime,
+            teacher,
+            chats,
+            metadata["decode"]["state"],
+            capture_runtime_state,
+            eos,
+            state_directory=args.output / "python_aoti",
         )
         capital_result = expected.greedy["capital"]
         forced = dict(capital, name="forced_eos", eos=[capital_result["ids"][0]])

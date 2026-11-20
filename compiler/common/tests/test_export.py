@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from compiler.common.export import ExportInputError, check_symbolic_config, prepare_export
+from compiler.common.export import ExportInputError, prepare_export
 
 
 class ExportPreflight(unittest.TestCase):
@@ -67,14 +67,6 @@ class ExportPreflight(unittest.TestCase):
             (root / "config.json").unlink()
             with self.assertRaises(FileNotFoundError):
                 prepare_export(root, root / "output", None, 512)
-
-    def test_symbolic_configuration_error_is_not_a_usage_error(self):
-        from torch.fx.experimental import _config
-
-        with patch.object(_config, "backed_size_oblivious", True):
-            with self.assertRaisesRegex(ValueError, "backed_size_oblivious disabled") as error:
-                check_symbolic_config()
-        self.assertNotIsInstance(error.exception, ExportInputError)
 
 
 if __name__ == "__main__":

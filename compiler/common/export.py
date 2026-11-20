@@ -51,13 +51,6 @@ def prepare_export(model_dir, output, max_context_length, max_prefill):
     return capacity
 
 
-def check_symbolic_config():
-    from torch.fx.experimental import _config as symbolic_config
-
-    if symbolic_config.backed_size_oblivious:
-        raise ValueError("Flash must export with backed_size_oblivious disabled")
-
-
 def report_export(model_type, kind, *, strict, diagnostics, **fields):
     """Keep build diagnostics in export logs, separate from deployment metadata."""
     print(

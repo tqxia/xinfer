@@ -42,6 +42,7 @@ class HFStage:
         self.position = 0
 
     def reset(self, fill=0):
+        self.fill = fill
         if self.dynamic:
             require(fill == 0, "DynamicCache control requires an unpoisoned initial cache")
             self.cache = DynamicCache(config=self.model.config)
@@ -70,14 +71,16 @@ class HFStage:
                 if kind == "linear_attention"
                 else (layer.keys, layer.values)
             )
-        if not self.dynamic:
-            return tensors
-        return [
-            torch.nn.functional.pad(tensor, (0, 0, 0, self.capacity - self.position))
-            if spec["kind"] in ("key", "value")
-            else tensor
-            for spec, tensor in zip(self.specs, tensors)
-        ]
+        result = []
+        for tensor, spec in zip(tensors, self.specs):
+            if self.dynamic and spec["update"] == "inplace":
+                tensor = torch.nn.functional.pad(tensor, (0, 0, 0, self.capacity - self.position))
+            tail = tensor.new_full(
+                (spec["shape"][0] - 1, *tensor.shape[1:]),
+                self.fill if spec["update"] == "inplace" else 0,
+            )
+            result.append(torch.cat((tensor, tail), dim=0))
+        return result
 
     def step(self, tokens):
         length = len(tokens)
@@ -231,7 +234,9 @@ class Suite:
         model, wrapper, functions = load_model(self.model_dir), None, None
         try:
             require(
-                state_specs(model.config, self.capacity) == self.specs, "State descriptors differ"
+                state_specs(model.config, self.capacity, batch_size=self.specs[0]["shape"][0])
+                == self.specs,
+                "State descriptors differ",
             )
             bounds = dict(
                 max_prefill=getattr(self, "max_prefill", 512),
@@ -280,7 +285,9 @@ class Suite:
         )
         try:
             require(
-                state_specs(model.config, self.capacity) == self.specs, "State descriptors differ"
+                state_specs(model.config, self.capacity, batch_size=self.specs[0]["shape"][0])
+                == self.specs,
+                "State descriptors differ",
             )
             yield runtime
         finally:

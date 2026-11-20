@@ -157,8 +157,10 @@ class DeltaAdapterNumerics(unittest.TestCase):
                     )
                     cache = TextCache(
                         ["linear_attention"],
-                        torch.arange(position, position + tokens, device="cuda"),
+                        torch.arange(position, position + tokens, device="cuda")[None, :],
                         [conv, state],
+                        torch.tensor([position + tokens], dtype=torch.int32),
+                        torch.tensor([tokens], dtype=torch.int32),
                     )
                     actual = adapter(hidden, cache_params=cache)
                     next_conv, next_state = cache.tensors()
@@ -183,7 +185,7 @@ class DeltaAdapterNumerics(unittest.TestCase):
                     self.check_numerical(actual, expected, config.hidden_size, 0.05)
                     self.assertTrue(bits_equal(next_conv, reference_conv))
                     self.check_numerical(next_state, reference_state, 128 * 128, 0.05)
-                    with self.assertRaisesRegex(ValueError, "unpadded"):
+                    with self.assertRaisesRegex(ValueError, "attention masks"):
                         adapter(hidden, cache_params=cache, attention_mask=torch.empty(0))
                     conv, state = next_conv, next_state
                     position += tokens

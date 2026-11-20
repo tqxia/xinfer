@@ -1,5 +1,7 @@
 """Shared validation measurements and report records; callers own acceptance policy."""
 
+import hashlib
+
 import torch
 
 from compiler.common.artifacts import require
@@ -69,6 +71,35 @@ def token_differences(actual, expected):
 
 def raw_bytes(tensor):
     return tensor.contiguous().view(torch.uint8).numpy().tobytes()
+
+
+def write_trace(path, tensors):
+    """Preserve every byte, storing all-zero chunks as sparse file holes."""
+    digest = hashlib.sha256()
+    with path.open("wb") as stream:
+        for tensor in tensors:
+            data = raw_bytes(tensor)
+            digest.update(data)
+            for offset in range(0, len(data), 65536):
+                chunk = data[offset : offset + 65536]
+                if chunk.count(0) == len(chunk):
+                    stream.seek(len(chunk), 1)
+                else:
+                    stream.write(chunk)
+        stream.truncate()
+    return digest.hexdigest()
+
+
+def disk_snapshot(path, tensors):
+    """Keep complete snapshots without retaining every state allocation in RAM."""
+    write_trace(path, tensors)
+    data = torch.from_file(str(path), shared=False, size=path.stat().st_size, dtype=torch.uint8)
+    result, offset = [], 0
+    for tensor in tensors:
+        width = tensor.numel() * tensor.element_size()
+        result.append(data[offset : offset + width].view(tensor.dtype).reshape(tensor.shape))
+        offset += width
+    return tuple(result)
 
 
 def compare_file(path, tensors):

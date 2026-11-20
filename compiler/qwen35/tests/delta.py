@@ -17,7 +17,7 @@ LENGTHS = (1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
 PARTITIONS = (1, 2, 3, 4, 5, 31, 32, 33, 64, 65, 272)
 KEY_HEADS, HEAD_DIM, CONV_WIDTH = 16, 128, 4
 STATE_FIELDS = ("conv", "state", "weight", "A_log", "dt_bias")
-# Predeclared normalized error limits; FP32 reference uses the same input values.
+# Normalized error limits for kernel/HF comparisons at matching input dtypes.
 LIMITS = {"bf16": 0.01, "fp32": 0.0001}
 # Nearly orthogonal Q/K can make a whole output row tiny. Retain normalized
 # metrics, but permit FP32 absolute roundoff below 1e-7 (see experiment record).
@@ -74,8 +74,8 @@ class BlockStep(torch.nn.Module):
 
 
 class Fused(torch.nn.Module):
-    def forward(self, qkv, b, a, conv, state, weight, A_log, dt_bias):
-        return fused(qkv, b, a, conv, state, weight, A_log, dt_bias)
+    def forward(self, qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=None):
+        return fused(qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths)
 
 
 def reference(qkv, b, a, conv, state, weight, A_log, dt_bias, *, chunked=False):
@@ -249,17 +249,19 @@ def inputs_for(case):
 def selected(*inputs):
     """Explicit branch control, independent of torch.cond lowering."""
     branch = short if inputs[0].shape[1] <= SHORT_THRESHOLD else long
-    return branch(*(x.contiguous() for x in inputs))
+    lengths = torch.full(
+        (inputs[0].shape[0],), inputs[0].shape[1], device=inputs[0].device, dtype=torch.int32
+    )
+    return branch(*(x.contiguous() for x in inputs), lengths)
 
 
-def run_cases(call, cases, fp32=False):
+def run_cases(call, cases):
     results = {}
     for case in cases:
         # .contiguous() leaves unused B=1 strides unchanged. Force the exact
         # packed strides expected by AOTI guards.
         convert = lambda x: x.to(
             device="cuda",
-            dtype=torch.float32 if fp32 else x.dtype,
             copy=True,
             memory_format=torch.contiguous_format,
         )

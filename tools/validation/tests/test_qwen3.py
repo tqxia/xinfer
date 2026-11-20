@@ -28,7 +28,7 @@ if QWEN3_ENVIRONMENT:
 @unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
 class LiveHFReferences(unittest.TestCase):
     def test_batch_fixtures_cover_supported_rows_and_capacity(self):
-        from tools.validation.qwen3 import validate_batch
+        from tools.validation.common import batch as validate_batch
 
         tokenizer = Mock()
         tokenizer.encode.return_value = [11, 12, 13]
@@ -246,7 +246,7 @@ class LiveHFReferences(unittest.TestCase):
 @unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
 class BatchValidation(unittest.TestCase):
     def test_sparse_traces_preserve_all_bytes_and_trailing_zeros(self):
-        from tools.validation.qwen3.validate_batch import write_trace
+        from tools.validation.common.batch import write_trace
         from tools.validation.common.validation import raw_bytes
 
         values = (
@@ -281,7 +281,16 @@ class BatchValidation(unittest.TestCase):
                 seen = []
 
                 def execute(
-                    actual_args, group, texts, cases, actual_meta, hf, actual_eager, actual_aoti
+                    actual_args,
+                    group,
+                    texts,
+                    cases,
+                    actual_meta,
+                    hf,
+                    actual_eager,
+                    actual_aoti,
+                    *,
+                    collect_reference,
                 ):
                     self.assertIs(actual_args, args)
                     self.assertIs(actual_meta, meta)
@@ -326,7 +335,7 @@ class BatchValidation(unittest.TestCase):
                 aoti.close.assert_called_once_with()
 
     def test_one_native_run_preserves_failures_and_requires_complete_parity(self):
-        from tools.validation.qwen3 import validate_batch as batch
+        from tools.validation.common import batch
         from compiler.common.artifacts import read_json, write_json
 
         groups = {f"b{size}": ["prompt"] for size in range(1, 9)}

@@ -1,6 +1,7 @@
 """Execute one HF → eager → Python AOTI → C++ AOTI validation chain."""
 
 from contextlib import closing
+from pathlib import Path
 
 import torch
 
@@ -116,7 +117,7 @@ def _describe_validation(suite, policy, native, report):
     report["native_sha256"] = sha256(native)
 
 
-def _run_eager_stages(suite, specs, policy, report):
+def _run_eager_stages(suite, specs, policy, report, output):
     hf = eager = None
     cases = chats = None
     seen = set()
@@ -141,6 +142,7 @@ def _run_eager_stages(suite, specs, policy, report):
                     specs,
                     suite.capture_states,
                     suite.eos,
+                    state_directory=output / name,
                 )
                 if name == "hf":
                     for case in chats:
@@ -177,11 +179,19 @@ def _run_eager_stages(suite, specs, policy, report):
     return hf, eager, cases, chats
 
 
-def _run_python_aoti(suite, packages, cases, chats, specs, report):
+def _run_python_aoti(suite, packages, cases, chats, specs, report, output):
     print("Stage: python_aoti", flush=True)
     runtime = load_aoti_runtime(packages, model_type=suite.model_type, specs=specs)
     try:
-        compiled = run_stage(runtime, cases, chats, specs, suite.capture_states, suite.eos)
+        compiled = run_stage(
+            runtime,
+            cases,
+            chats,
+            specs,
+            suite.capture_states,
+            suite.eos,
+            state_directory=output / "python_aoti",
+        )
         lengths = (
             (2, 22, 64, 65, 96, 97, 98, 511, 512)
             if suite.model_type == "qwen35"
@@ -234,15 +244,16 @@ def _compare_native(
 
 @torch.inference_mode()
 def validate_chain(suite, packages, native, output, metadata, report):
+    output = Path(output)
     specs = suite.specs
     policy = Policy(state_rows=getattr(suite, "state_rows", None))
     _describe_validation(suite, policy, native, report)
-    hf, eager, cases, chats = _run_eager_stages(suite, specs, policy, report)
+    hf, eager, cases, chats = _run_eager_stages(suite, specs, policy, report, output)
     # Repeated-generation state checks finish inside run_stage. Subsequent
     # HF/eager comparisons use their greedy logits and tokens, not these caches.
     for generation in (*hf.greedy.values(), *eager.greedy.values()):
         del generation["state"]
-    compiled = _run_python_aoti(suite, packages, cases, chats, specs, report)
+    compiled = _run_python_aoti(suite, packages, cases, chats, specs, report, output)
     compare_traces(report, "python_aoti", "eager", compiled, eager, specs, policy)
     del eager
     compare_traces(report, "python_aoti", "hf", compiled, hf, specs, policy)

@@ -50,6 +50,9 @@ One invocation exports both entries to a new or empty directory. Omitted
 ceiling. Select a smaller capacity explicitly, for example
 `--max-context-length 16384`; valid capacities are 512 through that ceiling.
 Both entries must be re-exported to change capacity.
+Capacity is per row, and the runtime reserves eight rows even for B=1. At the
+0.8B config's full ceiling, KV storage alone requires 24 GiB; select a smaller
+capacity for L20, such as the 1,024-slot validation profile.
 
 Export uses ordinary strict tracing, linear packing, BF16 cast emulation and
 TF32 disabled. `--enable-inductor-optimization` optionally enables
@@ -63,26 +66,34 @@ eager-numerics selector.
 ## Model interface and state
 
 Both entries use the same explicit interface:
-`step(input_ids, cache_position, state, kv_extent) -> last_logits, *next_state`.
-Batch size is one, weights/activations are BF16, and RoPE frequencies and recurrent
-state use FP32. `C` below is the compiled context capacity.
+`step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
+One bundle supports dynamic B=1..8. Weights/activations are BF16; RoPE frequencies
+and recurrent state use FP32. `C` is the compiled context capacity.
 
-| Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | KV shape |
+| Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | Allocated KV shape |
 | --- | ---: | ---: | ---: | ---: | --- |
-| 0.8B | 24 | 18 | 6 | 48 | `[1,2,C,256]` |
-| 4B | 32 | 24 | 8 | 64 | `[1,4,C,256]` |
+| 0.8B | 24 | 18 | 6 | 48 | `[8,2,C,256]` |
+| 4B | 32 | 24 | 8 | 64 | `[8,4,C,256]` |
 
-KV inputs are caller-owned buffers updated only at appended positions. Returned
-KV tensors alias those buffers. Conv/recurrent inputs remain unchanged; fresh
-returned tensors replace the previous state. There is no per-token full-cache
-copy. The common state policy handles both update rules; the model runtime header
-checks the supported ABI.
+IDs and positions are CUDA int64 `[B,T]`; both length vectors are CPU int32
+`[B]`. Each row appends `query_lengths[row]` real tokens, ending at
+`kv_lengths[row]`. Inputs are right-padded. The runtime allocates all eight state
+rows and passes active-prefix views. KV updates only real appended positions;
+DeltaNet returns fresh convolution/recurrent state for active rows. Omitted rows
+retain their state. Logits select each row's last real token; inactive rows
+return zero logits and leave all state unchanged.
 
-Inputs are unpadded contiguous appends. Prefill accepts 2–512 tokens per call;
-decode accepts one, including at position zero. Shared generation chunks longer
-prompts, with prompt and output sharing the bundle capacity. The shape-only CPU
-`kv_extent` identifies the populated prefix without reading a CUDA scalar.
-See [runtime ABI 1](../../docs/package-metadata.md#runtime-abi-1).
+Prefill accepts padded widths 2–512; decode accepts width one. Scalar generation
+uses B=1 and chunks longer prompts, with prompt and output sharing capacity.
+The [dynamic batch contract](../../docs/package-metadata.md#dynamic-batch-interfaces)
+defines admission, ownership and ABI 2. Previous ABI 1 bundles require re-export.
+The text-only RoPE calculation matches HF bitwise while avoiding its redundant
+cross-grid slice assignments and their singleton-batch export guard.
+
+Linear packing remains enabled; [projection passes](#projection-passes) describes
+the dynamic graph's GEMV limitation.
+The [validation status](../../docs/validation-status.md) distinguishes functional
+batch support from numerical acceptance and untested model/device profiles.
 
 Full-attention layers preserve HF projections, Q/K normalization, RoPE and sigmoid
 output gating around the shared read-only FlashAttention operator. Query/KV
@@ -101,19 +112,28 @@ The threshold is provisional: an isolated-kernel crossover does not establish
 an optimal full-model threshold on every device.
 
 The operator is
-`fused(qkv, b, a, conv, state, weight, A_log, dt_bias) -> core, next_conv, next_recurrent`.
+`fused(qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=None)`
+returns `core, next_conv, next_recurrent`.
+
+The standalone kernel supports dynamic B=1..8. Optional CUDA int32 `[B]`
+`query_lengths` supplies each row's valid prefix in 0..T; omission means all T
+inputs are real. Padding produces zero core outputs and does not advance
+convolution or recurrent state. Dispatch uses the padded width T, so shorter
+rows in a long batch also use the chunked path. Both state outputs are fresh;
+inputs remain unchanged. The full-model adapters supply these per-row lengths.
+
 Both geometries use 16 key heads, key/value dimension 128 and width-four bias-free
 SiLU convolution. Value-head count is 16 for 0.8B and 32 for 4B:
 
 | Tensor | 0.8B | 4B |
 | --- | --- | --- |
-| QKV | `[1,T,6144]` | `[1,T,8192]` |
-| A/B gates | `[1,T,16]` | `[1,T,32]` |
-| Convolution state | `[1,6144,4]` | `[1,8192,4]` |
+| QKV | `[B,T,6144]` | `[B,T,8192]` |
+| A/B gates | `[B,T,16]` | `[B,T,32]` |
+| Convolution state | `[B,6144,4]` | `[B,8192,4]` |
 | Convolution weights | `[6144,4]` | `[8192,4]` |
 | Decay parameters | `[16]` | `[32]` |
-| Recurrent state | `[1,16,128,128]` | `[1,32,128,128]` |
-| Core output | `[1,T,16,128]` | `[1,T,32,128]` |
+| Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` |
+| Core output | `[B,T,16,128]` | `[B,T,32,128]` |
 
 Inputs/parameters support matching BF16 or FP32, with recurrent state always
 FP32. Gates and recurrent state belong to value heads; grouped value heads reuse
@@ -147,10 +167,12 @@ reduces launches, not weight bytes; output copies can cost time during prefill.
 The policy version is in metadata, while detailed source/group mappings live in
 export logs and `prefill.packing.json` / `decode.packing.json` diagnostics.
 
-Decode then replaces the five profiled 0.8B singleton BF16 projection geometries
-with a shared Triton GEMV operator. FP32 accumulation uses four rows/program for
-`K=1024`, one for `K>=2048`, four warps and one stage. The vocabulary head and
-unsupported geometries keep the existing linear implementation. Preserve
+The existing GEMV pass targets five profiled 0.8B singleton BF16 projection
+geometries. It does not match dynamic-batch graphs, whose linear operations
+remain eligible for ordinary Inductor lowering. Its shared Triton kernel's FP32
+accumulation uses four rows/program for `K=1024`, one for `K>=2048`, four warps
+and one stage. The vocabulary head and unsupported geometries keep the existing
+linear implementation. Preserve
 eligibility and alignment guards when extending the pass.
 
 The [GEMV case study](../../docs/experiments/qwen35-gemv-2026-11-13.md) explains
@@ -174,6 +196,9 @@ build/qwen35/xinfer_aoti artifacts/qwen35/0.8b/text \
 
 "$Q35_PY" -m tools.validation.validate \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation-new
+"$Q35_PY" -m tools.validation.qwen35.validate_batch \
+  --packages artifacts/qwen35/0.8b/text --model-dir work/qwen35/0.8b/text \
+  --output artifacts/qwen35/0.8b/batch-validation-new
 "$Q35_PY" -m tools.validation.qwen35.validate_runtime \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/runtime-new
 ```
@@ -191,22 +216,29 @@ these checks with CUDA visible and the native attention library built:
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest compiler.common.tests.test_projection_gemv
 "$Q35_PY" -m unittest compiler.common.tests.test_attention \
   compiler.common.tests.test_projection_gemv_cuda compiler.qwen35.tests.test_export
-"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_kernels
+"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_kernels \
+  compiler.qwen35.tests.test_batch compiler.qwen35.tests.test_chunked
 "$Q35_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
 ```
 
 Synthetic kernel tests cover both geometries, BF16/FP32, carried/reset state,
 gate extremes, partitioning, dispatch boundaries, layouts and streams. Existing
 kernel limits are 1% BF16 and 0.01% FP32, with a 1e-7 FP32 absolute-roundoff
-allowance. HF and independent FP32 controls remain required; known failures are
-not waived by a full-model pass.
+allowance. Comparisons use matching input dtypes: BF16 kernel against HF BF16,
+and FP32 kernel against HF FP32. BF16 acceptance has no upcast FP32 control;
+recurrent state and internal FP32 accumulation remain as defined by the algorithm.
+Output and carried-state bounds remain required independently of full-model results.
 
 `test_export` checks the production graph and passes with a small random mixed
 model; it needs no checkpoint or full-model AOTI compilation.
 `test_kernels_aoti` compiles BF16/FP32 prefill/decode for both geometries and
 requires exact direct-kernel/Python AOTI core/state parity, including canonical
-singleton strides and nondefault streams. Temporary packages are cleaned up.
-There is no kernel C++ runner; full-model validation supplies native coverage.
+singleton strides and nondefault streams. Its batched 0.8B tests compile one
+prefill/decode pair per dtype for B=1..8, check the 97/98 dispatch boundary,
+carried/inactive rows, and reject B=0/9 with runtime input guards enabled.
+Temporary packages are cleaned up. Standalone C++ batching evidence is recorded
+in [validation status](../../docs/validation-status.md#current-validation);
+the native proof harness remains scratch code.
 GEMV's packaging tests have the separate FP32 fusion qualification in the case
 study. Run affected component tests separately from full-model validation.
 
@@ -234,4 +266,4 @@ tokens at a zero-margin tie. This cannot be attributed solely to compilation.
 Use matched partitions for numerical attribution and retain independent greedy
 sequences/margins as diagnostics. Do not infer FP32 accuracy from a matching
 argmax. [Validation status](../../docs/validation-status.md) records the tested
-profiles, remaining logit failures and historical sources.
+profiles and remaining logit failures.

@@ -179,11 +179,33 @@ apply in the compiled stage. All stages receive the same teacher-forced tokens
 and partitions; comparisons cover adjacent stages plus a direct AOTI/HF anchor.
 Native/Python execution of the same packages must be bitwise.
 
+Teacher-forced state snapshots are sparse, memory-mapped files under each
+Python stage's output directory. This retains all selected tensors, including
+unused batch rows, without keeping the entire trace in RAM. Qwen3.5 runtime
+validation uses the same storage under `python_aoti/`.
+
 Long-context cases retain every logit row and selected state checkpoints:
 populated KV prefixes and complete functional states. Untouched future KV is
 checked separately. Eager validation selects the bundled prefill attention
 implementation; native/package execution uses standard AOTI loading. See
 [attention loading](flash-attention.md#build-and-deployment).
+
+For the dynamic batch matrix, use the matching model's `validate_batch` entry:
+
+```bash
+"$Q35_PY" -m tools.validation.qwen35.validate_batch \
+  --packages artifacts/qwen35/0.8b/text --model-dir work/qwen35/0.8b/text \
+  --native build/qwen35/xinfer_validate --output artifacts/qwen35/0.8b/batch-validation
+```
+
+Qwen3 uses `tools.validation.qwen3.validate_batch`. Both reuse shared fixtures,
+comparison policy and C++ parity handling. Reports cover every B=1..8 and batch
+transitions, with independent per-request BF16 HF references and all allocated
+state rows included in native parity. Padding, row isolation, inactive/resumed
+rows, reset, full capacity and overflow remain required. Qwen3.5 adds the 97/98
+DeltaNet dispatch boundary and compares packed eager graphs with AOTI. Numerical
+failures remain in per-group reports and produce a nonzero exit after native
+checks; a passing native comparison does not resolve them.
 
 The runtime-contract tools separately exercise shipping CLIs and deployment:
 
@@ -245,11 +267,14 @@ Structural violations abort validation and are recorded as errors. These checks
 are outside the tensor-comparison count.
 
 Full-model validation retains the unmodified BF16 HF reference and does not load
-a separate FP32 HF control model. Focused kernel/block tests keep their own
-output and carried-state tolerances, including standalone FP32 controls, and run
-separately. Historical reports retain their original policies, failures and
-labels. Earlier unified Qwen3.5 reports required state bounds and end-to-end
-token agreement. Changing their classification does not fix the numerical
+a separate FP32 HF control model. Focused kernel/block tests run separately
+and keep their own output and carried-state tolerances. DeltaNet comparisons
+use matching input dtypes: BF16 kernels against HF's BF16 tensor operations,
+including their algorithm-defined FP32 accumulation and recurrent state.
+FP32 DeltaNet support tests use FP32 references; BF16 acceptance does not require
+an upcast FP32 control. Historical reports retain their original policies,
+failures and labels. Earlier unified Qwen3.5 reports required state bounds and
+end-to-end token agreement. Changing their classification does not fix the numerical
 differences or establish a fresh validation result.
 Performance experiments may separately record a predeclared baseline-relative
 continuation criterion; it does not replace the project validation result or

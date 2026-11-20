@@ -16,6 +16,8 @@ from compiler.qwen35.config import (
     configure,
     deltanet_state_shapes,
 )
+from compiler.common.attention import batched_attention_metadata
+from compiler.common.kernels.kv_cache import append_kv_batched
 from compiler.common.metadata import state_spec
 from compiler.common.context import resolve_context_length
 
@@ -44,10 +46,10 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     return model.eval().requires_grad_(False).to("cuda")
 
 
-def state_specs(config, capacity=None):
+def state_specs(config, capacity=None, *, batch_size=1):
     capacity = resolve_context_length(config, capacity)
-    conv_shape, recurrent_shape = deltanet_state_shapes(config)
-    kv_shape = (1, config.num_key_value_heads, capacity, config.head_dim)
+    conv_shape, recurrent_shape = deltanet_state_shapes(config, batch_size)
+    kv_shape = (batch_size, config.num_key_value_heads, capacity, config.head_dim)
     specs = []
     for layer, kind in enumerate(config.layer_types):
         if kind == "linear_attention":
@@ -65,10 +67,10 @@ def state_specs(config, capacity=None):
     return specs
 
 
-def zero_state(config, capacity=None):
+def zero_state(config, capacity=None, *, batch_size=1):
     return [
         torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"]))
-        for s in state_specs(config, capacity)
+        for s in state_specs(config, capacity, batch_size=batch_size)
     ]
 
 
@@ -86,9 +88,12 @@ class LayerState:
 
 
 class TextCache:
-    def __init__(self, kinds, position, state, extent=None):
+    def __init__(self, kinds, position, state, kv_lengths, query_lengths):
         self.position = position
-        self.extent = extent
+        self.offsets, self.cuda_offsets, self.blocks = batched_attention_metadata(
+            kv_lengths, query_lengths, position.device
+        )
+        self.query_lengths = self.cuda_offsets[0, 1:] - self.cuda_offsets[0, :-1]
         self.kinds = kinds
         self.layers = []
         for i, kind in enumerate(kinds):
@@ -110,8 +115,7 @@ class TextCache:
 
     def update(self, key, value, layer_idx):
         layer = self.layers[layer_idx]
-        layer.kv[0].index_copy_(2, self.position, key)
-        layer.kv[1].index_copy_(2, self.position, value)
+        append_kv_batched(key, value, self.position, self.cuda_offsets[0], *layer.kv)
         return tuple(layer.kv)
 
     def tensors(self):
@@ -125,6 +129,16 @@ class TextCache:
         return result
 
 
+def text_rotary(rotary, positions, dtype):
+    # Text uses identical positions in all three MRoPE grids. HF's in-place
+    # recomposition is redundant here and meta_copy_ introduces a B >= 2 guard.
+    # Compute the same frequencies without those cross-grid slice assignments.
+    frequencies = positions[..., None].float() * rotary.inv_freq.float()
+    cos = frequencies.cos() * rotary.attention_scaling
+    sin = frequencies.sin() * rotary.attention_scaling
+    return tuple(torch.cat((value, value), dim=-1).to(dtype) for value in (cos, sin))
+
+
 class TextStep(torch.nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -133,24 +147,28 @@ class TextStep(torch.nn.Module):
         install_attention(model)
         self.original = model
 
-    def forward(self, input_ids, cache_position, state, kv_extent):
+    def forward(self, input_ids, cache_position, state, kv_lengths, query_lengths):
         model = self.original.model
-        cache = TextCache(model.config.layer_types, cache_position, state, kv_extent)
+        cache = TextCache(
+            model.config.layer_types, cache_position, state, kv_lengths, query_lengths
+        )
         hidden = model.embed_tokens(input_ids)
-        positions = cache_position.view(1, 1, -1).expand(3, 1, -1)
-        rotary = model.rotary_emb(hidden, positions)
-        for kind, layer in zip(model.config.layer_types, model.layers):
+        rotary = text_rotary(model.rotary_emb, cache_position, hidden.dtype)
+        for layer in model.layers:
             hidden = layer(
                 hidden,
                 position_embeddings=rotary,
                 attention_mask=None,
-                position_ids=cache_position[None, :],
+                position_ids=cache_position,
                 past_key_values=cache,
                 use_cache=True,
             )
         hidden = model.norm(hidden)
-        logits = self.original.lm_head(hidden[:, -1:, :])[:, 0, :]
-        return (logits, *cache.tensors())
+        counts = cache.query_lengths.to(torch.int64)
+        indices = (counts - 1).clamp_min(0)
+        last = hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
+        logits = self.original.lm_head(last)[:, 0, :]
+        return (logits.masked_fill(counts[:, None] == 0, 0), *cache.tensors())
 
 
 def configure_text():

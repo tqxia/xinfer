@@ -19,7 +19,7 @@ class TransformTileContract(unittest.TestCase):
                 patch.object(chunked.torch, "empty") as allocate,
             ):
                 with self.assertRaisesRegex(ValueError, "TRANSFORM_TILE must"):
-                    chunked.launch_chunked(q, q, q, other, other, other, other, other)
+                    chunked.launch_chunked(q, q, q, other, other, other, other, other, other)
                 allocate.assert_not_called()
 
 
@@ -54,6 +54,7 @@ class TransformTiles(unittest.TestCase):
                         prefix,
                         u,
                         w,
+                        torch.tensor([tokens], device="cuda", dtype=torch.int32),
                         tokens,
                         heads,
                         dim,
@@ -78,7 +79,17 @@ class TransformTiles(unittest.TestCase):
         for tile in (32, 64):
             output, final = torch.empty_like(v), torch.empty_like(state)
             with patch.object(chunked, "TRANSFORM_TILE", tile):
-                chunked.launch_chunked(q, k, v, g, beta, state, output, final)
+                chunked.launch_chunked(
+                    q,
+                    k,
+                    v,
+                    g,
+                    beta,
+                    state,
+                    output,
+                    final,
+                    torch.tensor([tokens], device="cuda", dtype=torch.int32),
+                )
             results.append((output, final))
         for expected, actual in zip(*results):
             torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)

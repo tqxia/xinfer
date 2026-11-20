@@ -13,6 +13,12 @@ from tools.validation.qwen35 import model
 
 
 class HFCacheProtocol(unittest.TestCase):
+    def specs(self):
+        return [
+            dict(kind=kind, shape=[8], update="inplace" if kind in ("key", "value") else "replace")
+            for kind in ("conv", "recurrent", "key", "value")
+        ]
+
     def original(self, dtype=torch.bfloat16):
         original = Mock()
         original.config = SimpleNamespace(
@@ -53,7 +59,7 @@ class HFCacheProtocol(unittest.TestCase):
 
     def test_static_reset_uses_capacity_and_poisons_only_attention(self):
         original, cache = self.original(), self.cache()
-        stage = model.HFStage(original, [], 8)
+        stage = model.HFStage(original, self.specs(), 8)
         stage.position = 5
         self.cpu_allocations()
         with patch.object(model, "StaticCache", return_value=cache) as constructor:
@@ -73,15 +79,19 @@ class HFCacheProtocol(unittest.TestCase):
             attention.values,
         ]
         self.assertEqual(len(stage.state), 4)
-        self.assertTrue(all(actual is wanted for actual, wanted in zip(stage.state, expected)))
+        self.assertTrue(
+            all(torch.equal(actual[:1], wanted) for actual, wanted in zip(stage.state, expected))
+        )
+        self.assertTrue(all(torch.count_nonzero(t[1:]) == 0 for t in stage.state[:2]))
+        self.assertTrue(all((t[1:] == 7).all() for t in stage.state[2:]))
         self.assertTrue(bool((attention.keys == 7).all()))
         self.assertTrue(bool((attention.values == 7).all()))
-        self.assertTrue(bool((stage.state[0] == 1).all()))
-        self.assertTrue(bool((stage.state[1] == 1).all()))
+        self.assertTrue(bool((stage.state[0][:1] == 1).all()))
+        self.assertTrue(bool((stage.state[1][:1] == 1).all()))
 
     def test_dynamic_reset_rejects_poison_and_pads_only_attention_state(self):
         original, cache = self.original(), self.cache(length=3)
-        specs = [{"kind": kind} for kind in ("conv", "recurrent", "key", "value")]
+        specs = self.specs()
         stage = model.HFStage(original, specs, 8, dynamic=True)
         with patch.object(model, "DynamicCache", return_value=cache) as constructor:
             with self.assertRaisesRegex(ValueError, "unpoisoned"):
@@ -92,11 +102,12 @@ class HFCacheProtocol(unittest.TestCase):
         self.assertEqual(stage.position, 0)
         stage.position = 3
         conv, recurrent, key, value = stage.state
-        self.assertIs(conv, cache.layers[0].conv_states[0])
-        self.assertIs(recurrent, cache.layers[0].recurrent_states[0])
+        torch.testing.assert_close(conv[:1], cache.layers[0].conv_states[0])
+        torch.testing.assert_close(recurrent[:1], cache.layers[0].recurrent_states[0])
         for actual, expected in ((key, cache.layers[1].keys), (value, cache.layers[1].values)):
-            self.assertEqual(actual.shape, (1, 1, 8, 2))
-            torch.testing.assert_close(actual[:, :, :3], expected)
+            self.assertEqual(actual.shape, (8, 1, 8, 2))
+            torch.testing.assert_close(actual[:1, :, :3], expected)
+            self.assertTrue(bool((actual[1:] == 0).all()))
             self.assertTrue(bool((actual[:, :, 3:] == 0).all()))
 
     def test_static_and_dynamic_prefill_decode_masks_positions_and_dtypes(self):
@@ -157,7 +168,7 @@ class ValidationStages(unittest.TestCase):
     def setUp(self):
         self.suite = model.Suite.__new__(model.Suite)
         self.suite.model_dir = Path("unused-checkpoint")
-        self.suite.specs = []
+        self.suite.specs = [dict(shape=[8])]
         self.suite.capacity = 1024
         self.suite.max_prefill = 512
         self.suite.vocab_size = 16

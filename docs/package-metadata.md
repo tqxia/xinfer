@@ -3,7 +3,7 @@
 Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.pt`,
 `prefill.json` and `decode.json` together. The JSON sidecars use
 `schema_version: 5`; Qwen3 uses `runtime_abi_version: 4`, and Qwen3.5 uses
-runtime ABI 1. The shared archive uses format 2.
+runtime ABI 2. The shared archive uses format 2.
 These versions describe different contracts and evolve independently.
 
 `compiler/common/metadata.py` writes and validates the common format.
@@ -58,58 +58,51 @@ from these descriptors and the runtime ABI. They are not duplicated under
 `model_specific`. Reset retains KV allocations and fills them with the requested
 value; replacement state is initialized to zero.
 
-## Runtime ABI 1
+## Dynamic batch interfaces
 
-This is the Qwen3.5 text interface.
+Qwen3 uses runtime ABI 4; Qwen3.5 uses runtime ABI 2. One prefill/decode bundle
+accepts every batch size B=1..8, including scalar generation. The range is
+hardcoded; all state descriptors specify eight allocated rows. Export and
+compilation enable `backed_size_oblivious` to retain B=1 in the symbolic range.
 
-- Batch size is one; model activations and logits are BF16. State descriptors
-  retain individual dtypes, including FP32 recurrent state.
-- Flat inputs are CUDA int64 IDs, CUDA int64 cache positions, ordered contiguous
-  state tensors, then a CPU uint8 extent vector of length `valid_length + 1`.
-  Only the extent's shape is read. The extra element avoids size-one specialization.
-- KV buffers have full compiled capacity. Adapters update only appended K/V
-  positions in place; the read-only Flash operator attends to the valid prefix.
-- Convolution/recurrent inputs remain unchanged. Returned tensors replace them.
-- Qwen3.5 returns last-token logits `[1, vocab_size]` followed by every state
-  tensor in descriptor order.
-  Returned K/V must alias the corresponding caller-owned buffers.
-
-The common state policy checks returned shape, dtype, device, contiguity and
-required aliases before adopting replacement state. Changing extent semantics,
-input/output order or mutation behavior requires a new runtime ABI. Changing
-weights or compiler tuning does not by itself change the calling convention.
-
-## Runtime ABI 4: dynamic Qwen3 batches
-
-One Qwen3 bundle accepts every batch size `B=1..8`. The range is hardcoded;
-state descriptors specify the full eight-row allocation `[8,8,C,128]`.
-Export and compilation enable `backed_size_oblivious` so AOTI retains B=1
-in the symbolic range. HF rotary positions are flattened for the RoPE call
-and restored afterward, avoiding a singleton-batch matmul specialization.
-
-- Python inputs: `(input_ids, cache_position, kv, kv_lengths, query_lengths)`.
-  IDs and positions are CUDA int64 `[B,T]`. `kv` contains 56 contiguous BF16
-  views `[B,8,C,128]` into the first B rows of the caller's allocation.
-- Flat AOTI inputs: IDs, positions, 56 KV tensors, KV lengths, query lengths.
-  There are always 60 inputs, independent of B.
-- The two length inputs are CPU int32 tensors `[B]`. Their values give each
-  row's populated length after this call and real input count. The graph builds
-  cumulative lengths and a CUDA copy once per call, shared across all layers.
-- IDs are right-padded. Only real inputs update KV at that row's positions.
-  A row must start with tokens; later it can consume 0–512 tokens per call.
-  At least one row must be active. Width one selects decode; 2–512 selects prefill.
-- Output is BF16 `[B,vocab_size]`, containing each row's last-real-token logits.
-  Empty rows return zero logits without advancing state or position.
-- Cache allocation and row identity persist across calls. Smaller B omits tail
-  rows without modifying them. Larger B resumes those rows or initializes unused
-  rows with their first tokens. Reset clears all eight rows without reallocating.
+- Python inputs: `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
+  IDs and positions are CUDA int64 `[B,T]`. State inputs are contiguous views
+  into the first B rows of the full eight-row allocations.
+- Flat AOTI inputs: IDs, positions, ordered state tensors, KV lengths, query
+  lengths. Qwen3 has 56 state tensors / 60 inputs; Qwen3.5-0.8B has 48 / 52;
+  Qwen3.5-4B has 64 / 68.
+- The two length inputs are CPU int32 `[B]`: populated length after this call
+  and real input count for each row. The graph builds cumulative lengths and
+  their CUDA copy once, shared across layers.
+- IDs are right-padded. A row starts with tokens; later it may consume 0–512
+  tokens per call. At least one row must be active. Width one selects decode;
+  widths 2–512 select prefill. Per-row positions identify contiguous appends.
+- Logits are BF16 `[B,vocab_size]` for each row's last real token. Empty rows
+  return zero logits without advancing any state or position.
+- Qwen3 returns only logits and updates KV in place. Qwen3.5 returns logits
+  followed by all state tensors: KV outputs alias input buffers, while fresh
+  convolution/recurrent outputs replace the active rows. Recurrent state is FP32.
+- State allocation and row identity persist across calls. Smaller B omits tail
+  rows without modifying them. Larger B resumes those rows or starts unused rows
+  with their first tokens. The runtime retains eight rows, combining functional
+  outputs with the unchanged tail without modifying the previous functional
+  input. Full-batch functional outputs can be adopted directly.
+- Reset clears all rows; KV storage is retained. The state policy checks returned
+  shape, dtype, device, contiguity and required aliases before adopting outputs.
 - The runner validates every supplied row before execution. `positions()` exposes
   all eight row counts; `position()` is their maximum for trace handling.
 
+Qwen3 flattens independent positions around HF's RoPE call to avoid singleton
+matmul specialization. Qwen3.5 computes the equivalent text-only frequencies
+without HF's redundant cross-grid slice writes, which otherwise introduce a
+`B >= 2` guard during export. Component tests require bitwise HF agreement.
+
 Scalar generation and benchmark commands execute B=1 from the same bundle.
 `xinfer_validate` accepts explicit `batch_steps`. Per-row request replacement and
-continuous-batching scheduling are not implemented. Qwen3 ABI 1/2/3 packages
-must be re-exported; editing sidecars cannot change their compiled signature.
+continuous-batching scheduling are not implemented. Qwen3 ABI 1/2/3 and
+Qwen3.5 ABI 1 packages must be re-exported; editing sidecars cannot change their
+compiled signatures. Changing weights or compiler tuning alone does not change
+an ABI.
 
 ## Shared-weight archive and ownership
 
@@ -168,11 +161,6 @@ with the current exporter by default. Packages with embedded weights, the old
 attention interface or an external attention dependency require re-export;
 sidecar conversion cannot supply missing code or change the compiled ABI.
 
-For a verified Qwen3.5 schema 3/4 bundle that already embeds attention and satisfies
-runtime ABI 1, metadata-only conversion may reuse the immutable packages and
-archive. Preserve the original directory, set schema 5 in both copied sidecars,
-remove `max_prompt_length` if present, and validate the new pair with current
-readers. Preserve capacity, token ranges, state and numerical/integrity fields.
-Conversion does not increase capacity. Older schemas require validating their
-fixed ABI descriptions first; do not assign an ABI version blindly. Keep legacy
-bundles with their matching runtimes when retaining them as evidence.
+Keep legacy bundles with their matching runtimes when retaining them as evidence.
+Current Qwen3.5 bundles require re-export with the dynamic batch ABI; metadata-only
+conversion cannot supply the new inputs, state shapes or compiled kernels.

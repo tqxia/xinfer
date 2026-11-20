@@ -78,8 +78,8 @@ class Qwen3PackageContract(unittest.TestCase):
     def test_qwen3_tag_does_not_accept_functional_deltanet_state(self):
         item = metadata()
         item["state"] = [
-            state_spec(0, "conv", [1, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [1, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
         ]
         self.reject(item, "Unsupported package metadata: state")
 

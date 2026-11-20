@@ -1,109 +1,79 @@
 # Validation status and known issues
 
-Updated November 19, 2026. Results apply to the recorded packages and workloads;
-validate each new export using the [validation tools](development-tools.md#python-validation-tools).
+Updated November 20, 2026. Results apply to the bundles and workloads below.
 The [shared BF16 policy](development-tools.md#shared-numerical-policy) requires
-logit relative L2 and peak-relative error within 5%, native/Python bitwise parity
-and state/runtime contracts. HF state and token differences remain diagnostic.
+matched-input logit relative L2 and peak-relative error within 5%, native/Python
+bitwise parity and state/runtime contracts. HF state and token differences are
+diagnostic. Validate each new export with the [validation tools](development-tools.md#python-validation-tools).
 
-## Tested profiles
+## Current validation
 
-The L20 runs use Torch 2.13.0+cu126; the GB10 run uses 2.13.0+cu130. Checkpoint
-pins and usage are in the [Qwen3](../compiler/qwen3/README.md) and
-[Qwen3.5](../compiler/qwen35/README.md) guides. Capacity is allocated context per row.
+Both models have been tested on L20 with Torch 2.13.0+cu126, dynamic B=1..8 and
+1,024-token context capacity per row. Checkpoint pins and model contracts are in
+the [Qwen3](../compiler/qwen3/README.md) and [Qwen3.5](../compiler/qwen35/README.md)
+guides. Qwen3.5 uses linear packing and default Inductor options; the
+singleton-only GEMV pass does not match its dynamic-batch graphs.
 
-| Model / device | Capacity | Result |
-| --- | ---: | --- |
-| Qwen3-0.6B / L20, ABI 4, B=1 | 1,024 | Scalar suite passed all 713 required comparisons: 122 teacher-forced calls and seven greedy cases. Worst AOTI/HF relative L2: 4.0647%. |
-| Qwen3-0.6B / L20, ABI 4, B=1..8 | 1,024 | Native parity and state contracts passed. Numerical acceptance remains open: 120 of 1,749 required comparisons failed. See the batch results below. |
-| Qwen3.5-0.8B / L20 and GB10, GEMV profiles | 1,024 | Both passed the shared BF16 policy with zero required failures. Native parity passed; HF state/token diagnostics remain. [November 13 case study](experiments/qwen35-gemv-2026-11-13.md#correctness-and-compilation-caveat). |
-| Qwen3.5-4B / L20 | 1,024 / 16,384 | Native execution and parity passed; numerical acceptance remains open with 75 / 209 logit failures respectively. At 16K, worst AOTI/HF errors were 10.62% relative L2 and 8.43% peak-relative. [1K evidence][q35-4b], [16K evidence][q35-scaling]. |
-| Qwen3.5-0.8B / L20 | 16,384 / 262,144 | Native parity and full-capacity execution passed. Numerical acceptance has not been rerun under the current policy; the 262K bundle's numerical prompts reached only 513 tokens. [16K evidence][q35-scaling], [262K evidence][default-context]. |
+| Model / ABI | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
+| --- | ---: | ---: | ---: |
+| Qwen3-0.6B / ABI 4 | 142 / 583 | **120 / 1,749** | 7.0358% |
+| Qwen3.5-0.8B / ABI 2 | 166 / 663 | **68 / 1,989** | 10.9454% |
 
-Current Qwen3 ABI 4 bundles still need expanded-context and GB10 validation.
-Qwen3.5 expanded contexts and 4B still need GB10 validation. A 1K-context pass
-does not establish either. The batching runs used a busy GPU and provide no
-performance conclusion.
+Both passed native bitwise parity for logits and all allocated state rows,
+including unused rows. Finite values, positions, ownership, valid writes,
+padding, row isolation, reset/resumption, batch-size transitions and overflow
+checks passed. Generation, CLI and rejection checks also passed. Native execution
+loaded no Python library. **Full-model numerical acceptance remains open.**
 
-## Qwen3 batching
+Each required batch entry compares one matched-input call at one stage
+(eager/HF, AOTI/eager or AOTI/HF), using the worst per-row error. These counts
+are not vocabulary elements or individual failed rows.
 
-The L20 bundle supports B=1..8 with eight allocated cache rows. All **142 cases
-and 583 calls** passed Python/C++ AOTI bitwise logit parity and exact comparison
-of all 56 final KV tensors, including unused rows. Finite values, positions,
-cache ownership, write regions, padding, row isolation, reset/resumption and
-overflow checks passed. Native execution loaded no Python library.
+Additional coverage:
 
-Required entries compare matched-input logits across eager/HF, AOTI/eager and
-AOTI/HF. Counts below are comparison entries, not tensor elements. Transition
-cases are listed separately, matching the current validator's report groups.
-
-| Group | Failed / required entries | Worst AOTI/HF relative L2 |
-| --- | ---: | ---: |
-| B=1 | 0 / 93 | 3.1203% |
-| B=2 | 10 / 216 | 5.9798% |
-| B=3 | 9 / 228 | 5.9798% |
-| B=4 | 18 / 231 | 6.9150% |
-| B=5 | 18 / 234 | 6.2206% |
-| B=6 | 17 / 237 | 6.5294% |
-| B=7 | 26 / 240 | 6.0066% |
-| B=8 | 19 / 246 | 5.9798% |
-| Batch transitions | 3 / 24 | 7.0358% |
-| **Total** | **120 / 1,749** | **7.0358%** |
-
-The 8→1→3→5→8 sequence retains three HF-comparison failures: two after
-shrinking to B=1 and one after returning to B=8. The 1→3→8 sequence passes
-all numerical bounds. Both sequences pass state contracts and native parity;
-those passes do not resolve the HF divergence.
-
-The scalar CLI/deployment suite also passed three generation fixtures,
-56 rejection cases and seven boundary cases across 67 native processes.
-Operator, adapter, export and native ownership checks passed, including the
-symbolic B=1 range and scalar prefill after a batched call.
+- Qwen3's full B=1 scalar suite passed all 713 required comparisons.
+- Qwen3.5's focused scalar chain passed 28 teacher-forced calls and one greedy
+  case with zero required failures.
+- DeltaNet BF16 component output/carried-state tests passed against HF BF16
+  tensor operations. Standalone AOTI/C++ parity passed all 90 BF16/FP32 calls.
 
 ## Open numerical issues
 
-- **Qwen3 attention arithmetic:** an appended-prefill probe found the first
-  difference in layer 0's attention output at both B=1 and B=2, with identical
-  Q/K/V and causal positions. HF used memory-efficient SDPA; the adapter used
-  FlashAttention. At 2,560 populated tokens, final-logit relative L2 reached
-  4.2084% at B=1 and 6.2050% at B=2. This lies outside the current 1,024-slot
-  batch suite. One-token differences also reproduced between unmodified HF
-  batch sizes. These findings do not explain every current batch failure.
-  [Probe evidence][q3-attention].
-- **Qwen3 focused logit regression:** a 98-token case reached 6.21265% AOTI/HF
-  relative L2 in retained larger-context bundles. It still needs rechecking
-  with the current ABI; the 1K pass does not close it. [Evidence][default-context].
-  RoPE/RMSNorm rounding sensitivity is covered in the
-  [model notes](../compiler/qwen3/README.md#numerical-considerations).
-- **Q35-NUM-001:** a lost BF16 rounding boundary before gated RMSNorm was
-  isolated on Torch 2.7. Reproduction on the current stack remains pending;
-  it is not an explanation for all full-model discrepancies. See the
-  [diagnostic and model notes](../compiler/qwen35/README.md#numerical-considerations).
-- **Q35-NUM-002:** full-prompt and partitioned HF execution can select different
-  tokens at a tie. Use matched partitions for attribution; independent greedy
-  differences remain diagnostic.
-- **GEMV FP fusion:** the tested AOTI stack omitted a launch-level fusion option,
-  allowing eager and packaged FP32 kernels to differ. Preserve the independent
-  controls and dtype-specific checks in the
-  [case study](experiments/qwen35-gemv-2026-11-13.md#correctness-and-compilation-caveat).
+- **Qwen3:** attention arithmetic differs between HF SDPA and FlashAttention
+  from layer 0 at both B=1 and B=2 with identical Q/K/V inputs; it does not
+  explain every batch failure. The 8→1→3→5→8 sequence retains three HF-comparison
+  failures despite passing state contracts and native parity.
+  [Attention probe][q3-attention]. The focused 98-token larger-context logit
+  regression still needs rechecking with the current ABI.
+- **Qwen3.5:** eager/HF fails 29/663 comparisons, AOTI/eager 11/663 and AOTI/HF
+  28/663. The largest AOTI/HF relative L2 error is in B=5
+  `prompt_prefix_teacher` decode. Batch-shape-sensitive BF16 projection rounding
+  has been observed, but attribution of the full-model errors remains open.
+  Both shrinking/growing batch sequences pass numerical bounds and native parity.
+- **Q35-NUM-001:** the lost BF16 rounding boundary before gated RMSNorm still
+  needs verification on the current toolchain. See the
+  [model notes](../compiler/qwen35/README.md#numerical-considerations).
+
+## Validation gaps
+
+- Current ABIs need expanded-context and GB10 validation; Qwen3.5-4B also needs
+  re-export and validation with ABI 2.
+- Qwen3.5 needs the complete scalar numerical suite beyond the focused regression.
+- Batch performance is unmeasured. These correctness runs used a busy GPU.
 
 ## Evidence
 
-Qwen3 results cover the batching implementation in `06c668b` and bundle
-`artifacts/qwen3-dynamic-batch-v2/`. Retained reports:
+Raw reports and traces remain in local artifact directories. Per-case failures,
+metrics and package identities belong there; keep this file a current status summary.
 
-- Full batch matrix: `artifacts/validation-dynamic-batch-reuse/`.
-- Scalar chain: `artifacts/validation-dynamic-batch-single/summary.json`.
-- CLI/deployment: `artifacts/runtime-dynamic-batch/summary.json`.
-- Current fixture grouping: `artifacts/validation-batch-groups-smoke/`.
-  The grouping preserves the full matrix's fixtures and coverage; its focused
-  14-case, 56-call rerun matched the previous metrics and digests. The full GPU
-  matrix was not repeated after regrouping.
-
-Update tested profiles, required failures and validation gaps when new evidence
-changes them. Keep raw reports and traces in ignored artifact directories.
+- **Qwen3 bundle:** `artifacts/qwen3-dynamic-batch-v2/`.
+  Batch results: `artifacts/validation-dynamic-batch-reuse/`;
+  scalar results: `artifacts/validation-dynamic-batch-single/summary.json`;
+  runtime results: `artifacts/runtime-dynamic-batch/summary.json`.
+- **Qwen3.5 bundle:** `artifacts/qwen35-dynamic-batch-v2/`.
+  Batch results: `artifacts/qwen35-batch-validation-v3/`;
+  focused scalar results: `artifacts/qwen35-dynamic-scalar-focused-v2/summary.json`;
+  runtime results: `artifacts/qwen35-dynamic-runtime-v2/summary.json`.
+- **DeltaNet component results:** `artifacts/deltanet-batch/`.
 
 [q3-attention]: https://github.com/tqxia/xinfer/blob/06c668b606c58d339dd06ff5c90e144eea1eded2/docs/validation-status.md#qwen3-batched-prefill-attention-divergence--november-18
-[q35-scaling]: https://github.com/tqxia/xinfer/blob/60e730611cdad7d312374d7d098eaa6e121ee449/docs/experiments/qwen35.md#full-model-context-scaling--2026-11-06
-[q35-4b]: https://github.com/tqxia/xinfer/blob/60e730611cdad7d312374d7d098eaa6e121ee449/docs/experiments/qwen35.md#full-4b-l20-validation-2026-11-04
-[default-context]: https://github.com/tqxia/xinfer/blob/60e730611cdad7d312374d7d098eaa6e121ee449/docs/experiments/common-runtime.md#model-derived-capacity-and-request-budgets--2026-11-07
