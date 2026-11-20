@@ -140,7 +140,7 @@ def text_rotary(rotary, positions, dtype):
     return tuple(torch.cat((value, value), dim=-1).to(dtype) for value in (cos, sin))
 
 
-class TextStep(torch.nn.Module):
+class ModelStep(torch.nn.Module):
     def __init__(self, model):
         super().__init__()
         from compiler.qwen35.adapters.attention import install_attention

@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from transformers import DynamicCache, GenerationConfig, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, require
-from compiler.qwen3.model import FlashStep, load_model
+from compiler.qwen3.model import ModelStep, load_model
 from compiler.common.context import model_context_limit
 from tools.packages import validate_qwen3_metadata as validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL
@@ -320,7 +320,7 @@ class Suite:
                 yield Stage("hf_dynamic", runtime)
             finally:
                 runtime.close()
-            adapter = FlashStep(model)
+            adapter = ModelStep(model)
             runtime = ExplicitRuntime(
                 dict(prefill=adapter, decode=adapter),
                 self.specs,

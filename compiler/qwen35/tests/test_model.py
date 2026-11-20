@@ -83,7 +83,7 @@ class ModelLoading(unittest.TestCase):
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
-class BatchedTextStep(unittest.TestCase):
+class BatchedModelStep(unittest.TestCase):
     @torch.inference_mode()
     def test_unequal_appends_select_real_logits_and_preserve_inactive_state(self):
         configure()
@@ -108,7 +108,7 @@ class BatchedTextStep(unittest.TestCase):
         original.to(device="cuda", dtype=torch.bfloat16)
         original.model.rotary_emb = model.Qwen3_5TextRotaryEmbedding(config).to("cuda")
         install_delta(original)
-        step = model.TextStep(original)
+        step = model.ModelStep(original)
         state = model.zero_state(config, 512, batch_size=2)
         independent = [model.zero_state(config, 512) for _ in range(2)]
         starts = torch.zeros(2, dtype=torch.int32)

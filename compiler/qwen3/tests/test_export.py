@@ -77,7 +77,7 @@ class ExportGraph(unittest.TestCase):
         )
         config._attn_implementation = "sdpa"
         model = Qwen3ForCausalLM(config).eval().requires_grad_(False)
-        cls.step = export.FlashStep(model.to(device="cuda", dtype=torch.bfloat16))
+        cls.step = export.ModelStep(model.to(device="cuda", dtype=torch.bfloat16))
 
     @classmethod
     def tearDownClass(cls):

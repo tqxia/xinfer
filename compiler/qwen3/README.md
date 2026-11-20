@@ -95,7 +95,7 @@ logs are build diagnostics. The
 ## Model interface
 
 [model.py](model.py) owns loading, KV allocation, `KVCache` and the full-model
-`FlashStep`. [adapters/attention.py](adapters/attention.py) owns the
+`ModelStep`. [adapters/attention.py](adapters/attention.py) owns the
 `FlashAttention` layer replacement and its installation.
 
 The adapter retains the original embedding, rotary embedding, decoder layers,

@@ -221,7 +221,7 @@ class ValidationStages(unittest.TestCase):
                 delta, "install_delta", side_effect=lambda _: self.events.append("adapter")
             )
         )
-        self.wrapper = self.enterContext(patch.object(model, "TextStep"))
+        self.wrapper = self.enterContext(patch.object(model, "ModelStep"))
         self.export_step = self.enterContext(patch.object(export, "export_step"))
         self.runtime = self.enterContext(
             patch.object(model, "ExplicitRuntime", return_value=sentinel.eager)

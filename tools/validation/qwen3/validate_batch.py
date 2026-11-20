@@ -9,7 +9,7 @@ from transformers import DynamicCache
 
 from compiler.common.artifacts import read_json, require
 from compiler.common.metadata import read_package_metadata
-from compiler.qwen3.model import FlashStep, load_model
+from compiler.qwen3.model import ModelStep, load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
@@ -50,7 +50,7 @@ def validate_python(args, meta):
     tokenizer = load_tokenizer(args.model_dir)
     groups = case_groups(tokenizer, meta["cache_length"])
     hf = load_model(args.model_dir)
-    adapted = FlashStep(load_model(args.model_dir))
+    adapted = ModelStep(load_model(args.model_dir))
     eager = ExplicitRuntime(
         dict(prefill=adapted, decode=adapted),
         meta["state"],

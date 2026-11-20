@@ -64,7 +64,7 @@ class FlashAttention(torch.nn.Module):
 
 
 def install_attention(model):
-    """Reuse original HF weights and keep repeated TextStep construction safe."""
+    """Reuse original HF weights and keep repeated ModelStep construction safe."""
     replacements = []
     for kind, layer in zip(model.config.layer_types, model.model.layers):
         if kind == "full_attention" and not isinstance(layer.self_attn, FlashAttention):

@@ -66,7 +66,7 @@ eager-numerics selector.
 
 ## Model interface and state
 
-Both entries use the same explicit interface:
+Both entries use the same explicit `ModelStep` interface:
 `step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
 One bundle supports dynamic B=1..8. Weights/activations are BF16; RoPE frequencies
 and recurrent state use FP32. `C` is the compiled context capacity.

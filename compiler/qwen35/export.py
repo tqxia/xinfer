@@ -26,7 +26,7 @@ from compiler.common.export import (
     report_export,
 )
 from compiler.common.metadata import make_metadata
-from compiler.qwen35.model import TextStep, load_model, state_specs, zero_state
+from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD
@@ -58,7 +58,7 @@ def export_step(model, kind, capacity=None):
     shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
     # Retain the singleton batch in AOTI guards, including the torch.cond branches.
     with symbolic_config.patch(backed_size_oblivious=True):
-        exported = torch.export.export(TextStep(model), inputs, strict=True, dynamic_shapes=shapes)
+        exported = torch.export.export(ModelStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
     packing = pack_linears(exported)
     if kind == "decode":

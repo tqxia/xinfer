@@ -52,7 +52,7 @@ class KVCache(Cache):
         return k, v
 
 
-class FlashStep(torch.nn.Module):
+class ModelStep(torch.nn.Module):
     """Install adapters once; drive unchanged HF decoder layers with tensor state.
 
     This small loop avoids HF's automatic mask construction. Causality lives in the

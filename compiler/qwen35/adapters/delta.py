@@ -50,7 +50,7 @@ class DeltaCore(torch.nn.Module):
 
 
 class DeltaNet(DeltaCore):
-    """HF module interface for the explicit HybridCache used by TextStep."""
+    """HF module interface for the explicit HybridCache used by ModelStep."""
 
     def forward(self, hidden_states, cache_params, attention_mask=None, **kwargs):
         if attention_mask is not None:

@@ -314,7 +314,7 @@ class BatchValidation(unittest.TestCase):
                     patch.object(
                         batch, "load_model", side_effect=[sentinel.hf, sentinel.base]
                     ) as loader,
-                    patch.object(batch, "FlashStep", return_value=sentinel.adapter) as adapter,
+                    patch.object(batch, "ModelStep", return_value=sentinel.adapter) as adapter,
                     patch.object(batch, "ExplicitRuntime", return_value=eager),
                     patch.object(batch, "load_aoti_runtime", return_value=aoti) as compiled,
                     patch.object(batch, "validate_python_group", side_effect=execute),

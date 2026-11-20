@@ -20,7 +20,7 @@ from compiler.common.export import (
 )
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
-from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, FlashStep, allocate_cache, load_model
+from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, ModelStep, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL
 
 
@@ -117,7 +117,7 @@ def export_model(*, model_dir, output, max_context_length=None):
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     model = load_model(model_dir)
-    step = FlashStep(model)
+    step = ModelStep(model)
     manifest = read_json(model_dir / MODEL_MANIFEST_NAME)
     revision = manifest["revision"]
     checkpoint = dict(model_id=manifest["repo_id"], revision=revision, manifest=manifest)

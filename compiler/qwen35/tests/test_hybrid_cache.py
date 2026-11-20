@@ -49,7 +49,7 @@ class CacheAfterCond(torch.nn.Module):
 
     def forward(self, key, positions, state):
         # The cache must exist before cond, as it does before the first
-        # DeltaNet layer in TextStep. Creating it afterwards misses the bug.
+        # DeltaNet layer in ModelStep. Creating it afterwards misses the bug.
         cache = HybridCache(
             ["full_attention"],
             positions,

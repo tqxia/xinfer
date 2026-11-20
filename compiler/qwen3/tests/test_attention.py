@@ -12,7 +12,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
 from compiler.common.attention import load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen3.adapters.attention import FlashAttention
-from compiler.qwen3.model import FlashStep, KVCache
+from compiler.qwen3.model import ModelStep, KVCache
 from transformers.cache_utils import Cache
 
 
@@ -206,7 +206,7 @@ class PrefixFlashAdapter(unittest.TestCase):
         model.model.layers = torch.nn.ModuleList(layers)
         model.eval()
         parameters = {id(parameter) for parameter in model.parameters()}
-        step = FlashStep(model)
+        step = ModelStep(model)
         self.assertEqual(parameters, {id(parameter) for parameter in step.parameters()})
         self.assertIs(step.model, model)
         self.assertTrue(all(before is after for before, after in zip(layers, model.model.layers)))

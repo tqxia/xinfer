@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, DynamicCache, StaticCache
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from compiler.qwen35.config import TEXT_DIR, configure
 from tools.prepare.qwen35 import REVISIONS
-from compiler.qwen35.model import TextStep, load_model, state_specs
+from compiler.qwen35.model import ModelStep, load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts
@@ -263,7 +263,7 @@ class Suite:
                     for kind in ("prefill", "decode")
                 }
             else:
-                wrapper = TextStep(model)
+                wrapper = ModelStep(model)
                 functions = dict(prefill=wrapper, decode=wrapper)
             yield Stage(
                 "eager",
