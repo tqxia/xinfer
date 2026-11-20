@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import torch
 
-from compiler.qwen35.model import TextCache, state_specs
+from compiler.qwen35.model import HybridCache, state_specs
 
 
 class StateCapacity(unittest.TestCase):
@@ -50,7 +50,7 @@ class CacheAfterCond(torch.nn.Module):
     def forward(self, key, positions, state):
         # The cache must exist before cond, as it does before the first
         # DeltaNet layer in TextStep. Creating it afterwards misses the bug.
-        cache = TextCache(
+        cache = HybridCache(
             ["full_attention"],
             positions,
             state,
@@ -62,7 +62,7 @@ class CacheAfterCond(torch.nn.Module):
         return attended_key, attended_value, *cache.tensors()
 
 
-class TextCacheExportContract(unittest.TestCase):
+class HybridCacheExportContract(unittest.TestCase):
     @staticmethod
     def append_reference(key, value, positions, cu_query, cache_key, cache_value):
         # CPU stand-in for the CUDA writer: this test isolates cache bookkeeping

@@ -13,7 +13,7 @@ from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.delta import DeltaCore, DeltaNet, install_delta
 from compiler.qwen35.config import configure
 from compiler.qwen35.kernels.recurrent import fused
-from compiler.qwen35.model import TextCache
+from compiler.qwen35.model import HybridCache
 from compiler.qwen35.tests.delta import BlockStep, reference
 
 
@@ -155,7 +155,7 @@ class DeltaAdapterNumerics(unittest.TestCase):
                     expected, reference_conv, reference_state = hf(
                         hidden, reference_conv, reference_state
                     )
-                    cache = TextCache(
+                    cache = HybridCache(
                         ["linear_attention"],
                         torch.arange(position, position + tokens, device="cuda")[None, :],
                         [conv, state],

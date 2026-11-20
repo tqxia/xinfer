@@ -4,7 +4,7 @@ import torch
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Attention, apply_rotary_pos_emb
 
 from compiler.common.attention import load_attention_ops
-from compiler.qwen35.model import TextCache
+from compiler.qwen35.model import HybridCache
 
 
 class FlashAttention(torch.nn.Module):
@@ -34,8 +34,8 @@ class FlashAttention(torch.nn.Module):
     ):
         if self.training or kwargs.get("output_attentions", False):
             raise ValueError("Flash adapter supports inference without attention weights")
-        if attention_mask is not None or not isinstance(past_key_values, TextCache):
-            raise ValueError("Flash adapter requires TextCache with per-row lengths")
+        if attention_mask is not None or not isinstance(past_key_values, HybridCache):
+            raise ValueError("Flash adapter requires HybridCache with per-row lengths")
         a = self.original
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, a.head_dim)

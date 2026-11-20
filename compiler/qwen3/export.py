@@ -20,8 +20,7 @@ from compiler.common.export import (
 )
 from compiler.common.weights import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
-from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, allocate_cache, load_model
+from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, FlashStep, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL
 
 

@@ -9,8 +9,7 @@ from transformers import DynamicCache
 
 from compiler.common.artifacts import read_json, require
 from compiler.common.metadata import read_package_metadata
-from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import load_model
+from compiler.qwen3.model import FlashStep, load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime

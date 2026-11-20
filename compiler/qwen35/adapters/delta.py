@@ -50,11 +50,11 @@ class DeltaCore(torch.nn.Module):
 
 
 class DeltaNet(DeltaCore):
-    """HF module interface for the explicit TextCache used by TextStep."""
+    """HF module interface for the explicit HybridCache used by TextStep."""
 
     def forward(self, hidden_states, cache_params, attention_mask=None, **kwargs):
         if attention_mask is not None:
-            raise ValueError("DeltaNet uses TextCache lengths instead of attention masks")
+            raise ValueError("DeltaNet uses HybridCache lengths instead of attention masks")
         layer = cache_params.layers[self.block.layer_idx]
         output, conv, recurrent = super().forward(
             hidden_states,

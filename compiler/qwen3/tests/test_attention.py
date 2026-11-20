@@ -11,7 +11,8 @@ from transformers.models.qwen3.modeling_qwen3 import (
 
 from compiler.common.attention import load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
-from compiler.qwen3.adapters.qwen3_flash import FlashAttention, FlashStep, KVCache
+from compiler.qwen3.adapters.attention import FlashAttention
+from compiler.qwen3.model import FlashStep, KVCache
 from transformers.cache_utils import Cache
 
 

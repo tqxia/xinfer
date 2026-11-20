@@ -13,7 +13,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from compiler.common.attention import cache_extent, load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
-from compiler.qwen35.model import TextCache, configure_text
+from compiler.qwen35.model import HybridCache, configure_text
 
 
 TEST_CAPACITY = 16384
@@ -75,7 +75,7 @@ class GatedPrefixFlash:
                 ]
                 states = [[tensor.clone() for tensor in initial] for _ in range(2)]
                 caches = [
-                    TextCache(
+                    HybridCache(
                         ["full_attention"],
                         positions[None, :],
                         state,
@@ -119,7 +119,7 @@ class GatedPrefixFlash:
                 poisoned = [tensor.clone() for tensor in initial]
                 for tensor, value in zip(poisoned, (100.0, -100.0)):
                     tensor[:, :, length:].fill_(value)
-                poisoned_cache = TextCache(
+                poisoned_cache = HybridCache(
                     ["full_attention"],
                     positions[None, :],
                     poisoned,
@@ -151,7 +151,7 @@ class GatedPrefixFlash:
                     for _ in range(2)
                 ]
                 state = [tensor.clone() for tensor in initial]
-                cache = TextCache(
+                cache = HybridCache(
                     ["full_attention"],
                     positions,
                     state,

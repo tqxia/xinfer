@@ -62,8 +62,7 @@ HF state differences remain diagnostic. See
 Run from the repository root with `Q3_PY` selected through the environment guide.
 Build `xinfer_attention_ops` and the native executables in `build/qwen3/` before
 export. Export-time Torch and native LibTorch must come from the same installation.
-The adapter checks its pinned Transformers version before importing private HF
-implementation code. Dependency pins live in the per-device
+Dependency pins live in the per-device
 [requirements files](../../environments/README.md#requirements-and-targets).
 
 ```bash
@@ -94,6 +93,10 @@ logs are build diagnostics. The
 [shared attention guide](../../docs/flash-attention.md) explains native packaging.
 
 ## Model interface
+
+[model.py](model.py) owns loading, KV allocation, `KVCache` and the full-model
+`FlashStep`. [adapters/attention.py](adapters/attention.py) owns the
+`FlashAttention` layer replacement and its installation.
 
 The adapter retains the original embedding, rotary embedding, decoder layers,
 final normalization and vocabulary head. Each attention wrapper reuses HF

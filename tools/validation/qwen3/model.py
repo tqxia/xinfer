@@ -9,8 +9,7 @@ import torch.nn.functional as F
 from transformers import DynamicCache, GenerationConfig, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, require
-from compiler.qwen3.adapters.qwen3_flash import FlashStep
-from compiler.qwen3.model import load_model
+from compiler.qwen3.model import FlashStep, load_model
 from compiler.common.context import model_context_limit
 from tools.packages import validate_qwen3_metadata as validate_model_metadata
 from compiler.qwen3.config import DEFAULT_MODEL

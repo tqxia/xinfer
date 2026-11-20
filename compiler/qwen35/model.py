@@ -87,7 +87,9 @@ class LayerState:
             self.kv = [a, b]
 
 
-class TextCache:
+class HybridCache:
+    """Caller-owned KV buffers and replacement DeltaNet state."""
+
     def __init__(self, kinds, position, state, kv_lengths, query_lengths):
         self.position = position
         self.offsets, self.cuda_offsets, self.blocks = batched_attention_metadata(
@@ -149,7 +151,7 @@ class TextStep(torch.nn.Module):
 
     def forward(self, input_ids, cache_position, state, kv_lengths, query_lengths):
         model = self.original.model
-        cache = TextCache(
+        cache = HybridCache(
             model.config.layer_types, cache_position, state, kv_lengths, query_lengths
         )
         hidden = model.embed_tokens(input_ids)
