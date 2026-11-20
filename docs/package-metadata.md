@@ -34,7 +34,8 @@ source mappings separately from their archive checksum.
 `inductor_configs` retains the required flags `emulate_precision_casts=True`,
 `aot_inductor.package_constants_in_so=False` and
 `always_keep_tensor_constants=True`. Other resolved compiler options, dependency
-versions, graph/packing diagnostics and timings belong in JSON export-log events.
+versions, graph diagnostics and timings belong in JSON export-log events.
+Detailed packing reports are saved as separate export diagnostics.
 There are no package `provenance`, `diagnostics` or source-code-hash fields.
 Retain the export log when investigating a build.
 

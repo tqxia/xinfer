@@ -106,21 +106,7 @@ def entry_metadata(model, kind, checkpoint, capacity):
     )
 
 
-def model_diagnostics(model, packing, enable_inductor_optimization):
-    return dict(
-        linear_packing=packing,
-        hidden_size=model.config.hidden_size,
-        layer_types=model.config.layer_types,
-        parameter_dtypes=sorted({str(p.dtype) for p in model.parameters()}),
-        rope_frequency_dtype=str(model.model.rotary_emb.inv_freq.dtype),
-        tied_embeddings=model.lm_head.weight is model.model.embed_tokens.weight,
-        enable_inductor_optimization=enable_inductor_optimization,
-    )
-
-
-def export_entry(
-    kind, staging_directory, *, model, checkpoint, capacity, enable_inductor_optimization
-):
+def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
     start = time.perf_counter()
     exported, packing = export_step(model, kind, capacity)
     (staging_directory / f"{kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
@@ -153,10 +139,7 @@ def export_entry(
             kind,
             strict=True,
             package_bytes=compiled_path.stat().st_size,
-            diagnostics=dict(
-                **diagnostics,
-                **model_diagnostics(model, packing, enable_inductor_optimization),
-            ),
+            diagnostics=diagnostics,
         )
         return metadata
 
@@ -179,7 +162,6 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
         model=model,
         checkpoint=checkpoint,
         capacity=capacity,
-        enable_inductor_optimization=enable_inductor_optimization,
     )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         load_attention_ops(model="qwen35")

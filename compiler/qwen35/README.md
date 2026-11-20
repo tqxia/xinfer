@@ -58,7 +58,7 @@ TF32 disabled. `configure()` sets one CPU thread and disables TF32; export leave
 SDPA backend selection unchanged and uses the explicit FlashAttention adapter.
 `--enable-inductor-optimization` optionally enables
 `combo_kernels=True` and `benchmark_combo_kernel=True`; it is off by default.
-The flag and resolved options are recorded in export logs. Validate each new
+Resolved compiler options are recorded in export logs. Validate each new
 bundle because these options and autotuning can alter floating-point results.
 The [package contract](../../docs/package-metadata.md) defines the five deployment
 files and shared-weight ownership. There is no packing, attention-backend or
@@ -166,7 +166,7 @@ For 0.8B, 48 groups reduce 187 linear calls to 97 across DeltaNet inputs, MLP
 gate/up and attention QKV. Outputs retain BF16 and contiguous layouts. Packing
 reduces launches, not weight bytes; output copies can cost time during prefill.
 The policy version is in metadata, while detailed source/group mappings live in
-export logs and `prefill.packing.json` / `decode.packing.json` diagnostics.
+`prefill.packing.json` / `decode.packing.json` diagnostics.
 
 The existing GEMV pass targets five profiled 0.8B singleton BF16 projection
 geometries. It does not match dynamic-batch graphs, whose linear operations
