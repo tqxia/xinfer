@@ -10,7 +10,8 @@ from compiler.common.artifacts import read_json, require
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.adapters.delta import install_delta
 from compiler.qwen35.export import export_step
-from compiler.qwen35.model import configure_text, load_model
+from compiler.qwen35.config import configure
+from compiler.qwen35.model import load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.batch import case_groups, validate_python_group, validate_native
@@ -65,7 +66,7 @@ def collect_hf(factory, steps):
 
 @torch.inference_mode()
 def validate_python(args, meta):
-    configure_text()
+    configure()
     load_packaged_attention_ops(args.packages)
     groups = case_groups(load_tokenizer(args.model_dir), meta["cache_length"])
     for name, (_, cases) in groups.items():

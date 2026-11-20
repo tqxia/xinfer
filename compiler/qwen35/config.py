@@ -1,7 +1,5 @@
 """Qwen3.5 execution settings and DeltaNet state shapes."""
 
-import importlib.metadata
-import importlib.util
 from pathlib import Path
 
 
@@ -28,13 +26,6 @@ def deltanet_state_shapes(config, batch_size=1):
 def configure():
     import torch
 
-    if importlib.metadata.version("transformers") != "5.20.2":
-        raise RuntimeError("This adapter targets transformers==5.20.2")
-    for package in ("fla", "causal_conv1d"):
-        if importlib.util.find_spec(package) is not None:
-            raise RuntimeError(
-                f"Use an environment without {package} for the PyTorch fallback baseline"
-            )
     torch.set_num_threads(1)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False

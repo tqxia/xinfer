@@ -71,42 +71,11 @@ class EnvironmentContract(unittest.TestCase):
     def test_collection_records_all_requested_native_and_model_packages(self):
         with (
             patch.object(environment, "package_version", side_effect=REQUIREMENTS.get) as versions,
-            patch.object(
-                environment.importlib.util, "find_spec", wraps=environment.importlib.util.find_spec
-            ) as modules,
             patch.object(environment, "native_tool", return_value={}),
         ):
-            actual = environment.collect("qwen3", REQUIREMENTS)
+            actual = environment.collect(REQUIREMENTS)
         self.assertEqual(actual["packages"], REQUIREMENTS)
         self.assertTrue(set(REQUIREMENTS) <= {call.args[0] for call in versions.call_args_list})
-        self.assertNotIn("optional_backends", actual)
-        self.assertFalse(
-            any(call.args[0] in ("fla", "causal_conv1d") for call in modules.call_args_list)
-        )
-
-    def test_qwen35_detects_forbidden_backends_without_importing_them(self):
-        find_spec = environment.importlib.util.find_spec
-
-        def available(name, *args, **kwargs):
-            return (
-                object() if name in ("fla", "causal_conv1d") else find_spec(name, *args, **kwargs)
-            )
-
-        with (
-            patch.object(environment.importlib.util, "find_spec", side_effect=available),
-            patch.object(environment, "native_tool", return_value={}),
-        ):
-            collected = environment.collect("qwen35", REQUIREMENTS)
-        self.assertEqual(collected["optional_backends"], dict(fla=True, causal_conv1d=True))
-        actual = observed()
-        actual["optional_backends"] = collected["optional_backends"]
-        self.assertEqual(
-            environment.validate(actual, PROFILE, REQUIREMENTS),
-            [
-                "Qwen3.5 requires an environment without fla",
-                "Qwen3.5 requires an environment without causal_conv1d",
-            ],
-        )
 
     def test_matching_stack_and_distribution_version_without_cuda_suffix(self):
         self.assertEqual(environment.validate(observed(), PROFILE, REQUIREMENTS), [])
@@ -204,7 +173,7 @@ class EnvironmentContract(unittest.TestCase):
                 first = json.loads(stdout.getvalue())
                 self.assertEqual(first["requirements"], REQUIREMENTS)
                 self.assertEqual(first["expected"], PROFILE)
-                collect.assert_called_once_with("qwen35", REQUIREMENTS, None)
+                collect.assert_called_once_with(REQUIREMENTS, None)
                 requirements.write_text(
                     requirements.read_text().replace("cmake==4.3.4", "cmake==4.4.0")
                 )

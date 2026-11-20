@@ -5,12 +5,13 @@ import gc
 from pathlib import Path
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
-from compiler.qwen35.config import TEXT_DIR
+from compiler.qwen35.config import TEXT_DIR, configure
 from tools.prepare.qwen35 import REVISIONS
-from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs
+from compiler.qwen35.model import TextStep, load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts
@@ -95,14 +96,16 @@ class HFStage:
             device="cuda",
             dtype=self.dtype,
         ).triu(self.position + 1)
-        logits = self.model(
-            ids,
-            position_ids=positions[None, :],
-            attention_mask={"full_attention": mask, "linear_attention": None},
-            past_key_values=self.cache,
-            use_cache=True,
-            logits_to_keep=1,
-        ).logits[:, 0, :]
+        # Preserve the HF reference backend without changing export or benchmark policy.
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            logits = self.model(
+                ids,
+                position_ids=positions[None, :],
+                attention_mask={"full_attention": mask, "linear_attention": None},
+                past_key_values=self.cache,
+                use_cache=True,
+                logits_to_keep=1,
+            ).logits[:, 0, :]
         self.position += length
         return logits
 
@@ -122,7 +125,7 @@ class Suite:
         self.capacity = pair["decode"]["cache_length"]
         self.max_prefill = pair["prefill"]["token_range"][1]
         self.eos = pair["decode"]["eos_token_ids"]
-        configure_text()
+        configure()
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
         for metadata in pair.values():
             validate_model_metadata(metadata)

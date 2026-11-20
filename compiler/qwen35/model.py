@@ -13,7 +13,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 
 from compiler.qwen35.config import (
     TEXT_DIR,
-    configure,
     deltanet_state_shapes,
 )
 from compiler.common.attention import batched_attention_metadata
@@ -171,11 +170,3 @@ class TextStep(torch.nn.Module):
         last = hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
         logits = self.original.lm_head(last)[:, 0, :]
         return (logits.masked_fill(counts[:, None] == 0, 0), *cache.tensors())
-
-
-def configure_text():
-    configure()
-    torch.backends.cuda.enable_flash_sdp(False)
-    torch.backends.cuda.enable_mem_efficient_sdp(True)
-    torch.backends.cuda.enable_math_sdp(False)
-    torch.backends.cuda.enable_cudnn_sdp(False)

@@ -3,6 +3,7 @@
 import unittest
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import DynamicCache
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5Attention,
@@ -13,7 +14,8 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from compiler.common.attention import cache_extent, load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
-from compiler.qwen35.model import HybridCache, configure_text
+from compiler.qwen35.config import configure
+from compiler.qwen35.model import HybridCache
 
 
 TEST_CAPACITY = 16384
@@ -27,7 +29,7 @@ class GatedPrefixFlash:
 
     @classmethod
     def setUpClass(cls):
-        configure_text()
+        configure()
         load_attention_ops(model="qwen35")
         torch.manual_seed(35)
         cls.config = Qwen3_5TextConfig(
@@ -46,6 +48,7 @@ class GatedPrefixFlash:
         cls.rotary = Qwen3_5TextRotaryEmbedding(cls.config).eval().to("cuda")
 
     @torch.inference_mode()
+    @sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)
     def test_gated_attention_and_cache_writes(self):
         self.assertFalse(torch.backends.cuda.flash_sdp_enabled())
         self.assertTrue(torch.backends.cuda.mem_efficient_sdp_enabled())
@@ -135,6 +138,7 @@ class GatedPrefixFlash:
                     self.assertTrue(bool((updated[:, :, length:] == value).all()))
 
     @torch.inference_mode()
+    @sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)
     def test_unequal_rows_against_independent_hf_attention(self):
         capacity, starts = 256, (7, 33)
         for tokens, counts in ((1, (0, 1)), (2, (1, 2)), (98, (97, 98))):
@@ -240,7 +244,7 @@ class GatedPrefixFlash4B(GatedPrefixFlash, unittest.TestCase):
 class PrefixFlashGeometry(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        configure_text()
+        configure()
         load_attention_ops(model="qwen35")
 
     @staticmethod

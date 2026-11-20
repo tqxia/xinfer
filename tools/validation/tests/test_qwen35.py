@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, call, patch, sentinel
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.qwen35 import export
 from compiler.qwen35.adapters import delta
@@ -146,6 +147,39 @@ class HFCacheProtocol(unittest.TestCase):
                     stage.close()
                     self.assertIsNone(stage.model)
                     self.assertIsNone(stage.cache)
+
+    def test_hf_attention_backend_is_scoped_and_restored_after_errors(self):
+        self.cpu_allocations()
+
+        def backends():
+            return (
+                torch.backends.cuda.flash_sdp_enabled(),
+                torch.backends.cuda.mem_efficient_sdp_enabled(),
+                torch.backends.cuda.math_sdp_enabled(),
+                torch.backends.cuda.cudnn_sdp_enabled(),
+            )
+
+        for fail in (False, True):
+            with self.subTest(fail=fail), sdpa_kernel(SDPBackend.MATH):
+                original = self.original()
+                stage = model.HFStage(original, [], 8)
+                selected = backends()
+
+                def forward(*args, **kwargs):
+                    self.assertEqual(backends(), (False, True, False, False))
+                    if fail:
+                        raise RuntimeError("HF forward failed")
+                    return original.return_value
+
+                original.side_effect = forward
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, "HF forward failed"):
+                        stage.step([1])
+                    self.assertEqual(stage.position, 0)
+                else:
+                    stage.step([1])
+                    self.assertEqual(stage.position, 1)
+                self.assertEqual(backends(), selected)
 
     def test_invalid_steps_leave_cache_and_position_unchanged(self):
         for dynamic in (False, True):

@@ -28,9 +28,8 @@ can differ between models. JSON profiles contain OS, CPU architecture and GPU
 capability checks; they do not duplicate package pins.
 
 Qwen3 and Qwen3.5 use separate environments for their pinned Transformers
-implementations. Qwen3.5 additionally requires `fla` and `causal_conv1d` to be
-absent for its HF tensor baseline. Setup uses official matching wheels by default
-and permits a local Torch wheel override. For an offline image, use the distinct
+implementations. Setup uses official matching wheels by default and permits a
+local Torch wheel override. For an offline image, use the distinct
 [L20 Docker workflow](l20/docker/README.md).
 
 ## Create model environments

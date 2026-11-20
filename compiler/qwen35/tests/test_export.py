@@ -32,7 +32,7 @@ class ExportContextLength(unittest.TestCase):
                     argv.append("--enable-inductor-optimization")
                 with (
                     self.subTest(optimize=optimize),
-                    patch.object(export, "configure_text"),
+                    patch.object(export, "configure"),
                     patch.object(export, "load_model"),
                     patch.object(export, "install_delta"),
                     patch.object(export, "load_attention_ops"),
@@ -81,7 +81,7 @@ class ExportContextLength(unittest.TestCase):
                 with (
                     self.subTest(capacity=capacity),
                     patch("sys.argv", argv + arguments),
-                    patch.object(export, "configure_text"),
+                    patch.object(export, "configure"),
                     patch.object(
                         export, "load_model", side_effect=RuntimeError("GPU load reached")
                     ) as load,
@@ -100,7 +100,7 @@ class ExportContextLength(unittest.TestCase):
 class ExportGraph(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        export.configure_text()
+        export.configure()
         torch.manual_seed(35)
         config = Qwen3_5TextConfig(
             vocab_size=128,

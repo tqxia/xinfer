@@ -11,23 +11,25 @@ import os
 from pathlib import Path
 
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoTokenizer
 from transformers.models.qwen3_5 import modeling_qwen3_5
 
-from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR, configure
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256
 from compiler.qwen35.tests.delta import BlockStep
-from compiler.qwen35.model import configure_text, load_model, zero_state
+from compiler.qwen35.model import load_model, zero_state
 
 
 @torch.inference_mode()
+@sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
     parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "rounding-probe")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
-    configure_text()
+    configure()
     os.environ["TRITON_DEFAULT_FP_FUSION"] = "0"
     from torch._inductor.decomposition import decompositions
     from torch._inductor.lowering import make_fallback

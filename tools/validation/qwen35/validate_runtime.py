@@ -10,14 +10,13 @@ import subprocess
 import torch
 from transformers import AutoTokenizer
 
-from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR, configure
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
 from compiler.common.metadata import read_package_metadata
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.packages import validate_shared_weights
 from tools.common import native_environment, prompt_chunks, run
 from tools.prepare.common import encode_prompt
-from compiler.qwen35.model import configure_text
 from tools.validation.qwen35.common import fixtures
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.runner import greedy, load_aoti_runtime, run_stage
@@ -350,7 +349,7 @@ def preflight(args):
     for entry in metadata.values():
         validate_model_metadata(entry)
     validate_shared_weights(args.packages, metadata["prefill"], metadata["decode"])
-    configure_text()
+    configure()
     for kind, meta in metadata.items():
         assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
         assert meta["checkpoint"]["manifest"] == json.loads(

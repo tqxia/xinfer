@@ -12,7 +12,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
 from compiler.common.context import resolve_context_length
 from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.passes.projection_gemv import replace_projection_gemv
-from compiler.qwen35.config import ARTIFACT_DIR, MAX_BATCH_SIZE, MAX_PREFILL, TEXT_DIR
+from compiler.qwen35.config import ARTIFACT_DIR, MAX_BATCH_SIZE, MAX_PREFILL, TEXT_DIR, configure
 from compiler.common.weights import compile_shared
 from compiler.common.attention import (
     attention_library,
@@ -26,7 +26,7 @@ from compiler.common.export import (
     report_export,
 )
 from compiler.common.metadata import make_metadata
-from compiler.qwen35.model import TextStep, configure_text, load_model, state_specs, zero_state
+from compiler.qwen35.model import TextStep, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
 from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
 from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD
@@ -167,7 +167,7 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
     """Load one adapted model and publish its paired shared-weight bundle."""
     model_dir, output = Path(model_dir), Path(output)
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
-    configure_text()
+    configure()
     model = load_model(model_dir)
     install_delta(model)
     checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)

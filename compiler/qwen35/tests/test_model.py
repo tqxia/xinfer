@@ -13,6 +13,7 @@ from transformers import Qwen3_5ForCausalLM
 from compiler.common.artifacts import MODEL_MANIFEST_NAME
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35 import model
+from compiler.qwen35.config import configure
 from compiler.qwen35.adapters.delta import install_delta
 
 
@@ -85,7 +86,7 @@ class ModelLoading(unittest.TestCase):
 class BatchedTextStep(unittest.TestCase):
     @torch.inference_mode()
     def test_unequal_appends_select_real_logits_and_preserve_inactive_state(self):
-        model.configure_text()
+        configure()
         torch.manual_seed(3508)
         config = model.Qwen3_5TextConfig(
             vocab_size=128,

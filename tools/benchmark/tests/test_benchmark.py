@@ -122,7 +122,7 @@ class HFEagerBaseline(unittest.TestCase):
     def test_both_model_hooks_use_the_shared_hf_loader(self):
         for family, module in (("qwen3", qwen3_benchmark), ("qwen35", qwen35_benchmark)):
             with self.subTest(model=family):
-                model = SimpleNamespace(load_model=Mock(), configure_text=Mock())
+                model = SimpleNamespace(load_model=Mock())
                 sentinel = object()
                 with (
                     patch.dict(sys.modules, {f"compiler.{family}.model": model}),
@@ -131,7 +131,6 @@ class HFEagerBaseline(unittest.TestCase):
                 ):
                     self.assertIs(module.eager_loader(), sentinel)
                 helper.assert_called_once_with(model.load_model)
-                model.configure_text.assert_not_called()
                 if family == "qwen35":
                     configure.assert_called_once_with()
                 else:
@@ -148,7 +147,7 @@ class HFEagerBaseline(unittest.TestCase):
                 torch.backends.cuda.cudnn_sdp_enabled(),
             )
 
-        model = SimpleNamespace(load_model=Mock(), configure_text=Mock())
+        model = SimpleNamespace(load_model=Mock())
         selected = backends()
         self.addCleanup(
             setattr, torch.backends.cuda.matmul, "allow_tf32", torch.backends.cuda.matmul.allow_tf32
@@ -158,13 +157,10 @@ class HFEagerBaseline(unittest.TestCase):
         )
         with (
             patch.dict(sys.modules, {"compiler.qwen35.model": model}),
-            patch("compiler.qwen35.config.importlib.metadata.version", return_value="5.20.2"),
-            patch("compiler.qwen35.config.importlib.util.find_spec", return_value=None),
             patch("torch.set_num_threads"),
         ):
             qwen35_benchmark.eager_loader()
             self.assertEqual(backends(), selected)
-        model.configure_text.assert_not_called()
         model.load_model.assert_not_called()
 
     def test_eager_worker_identifies_the_hf_dynamic_baseline(self):

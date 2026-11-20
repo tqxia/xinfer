@@ -40,8 +40,7 @@ For 4B, keep the prepared checkpoint and compiled bundle separate:
 Preparation verifies source shards and extracts only language-model tensors into
 `text.safetensors`, with `model_manifest.json`. Reuse prepared directories after
 that one-time step. Both checkpoints require tied embeddings and default RoPE.
-The model checks its pinned Transformers version and requires `fla` and
-`causal_conv1d` to be absent so HF reference operations use the tested tensor path.
+Dependency pins live in the per-device requirements files.
 See [preparation](../../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 for verification, offline mode and tokenization.
 
@@ -55,7 +54,9 @@ Capacity is per row, and the runtime reserves eight rows even for B=1. At the
 capacity for L20, such as the 1,024-slot validation profile.
 
 Export uses ordinary strict tracing, linear packing, BF16 cast emulation and
-TF32 disabled. `--enable-inductor-optimization` optionally enables
+TF32 disabled. `configure()` sets one CPU thread and disables TF32; export leaves
+SDPA backend selection unchanged and uses the explicit FlashAttention adapter.
+`--enable-inductor-optimization` optionally enables
 `combo_kernels=True` and `benchmark_combo_kernel=True`; it is off by default.
 The flag and resolved options are recorded in export logs. Validate each new
 bundle because these options and autotuning can alter floating-point results.

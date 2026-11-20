@@ -2,7 +2,6 @@
 
 import argparse
 import importlib.metadata
-import importlib.util
 import json
 import os
 import platform
@@ -84,17 +83,13 @@ def configured_build(directory):
     return result
 
 
-def collect(model, requirements, build=None):
+def collect(requirements, build=None):
     actual = dict(
         python=dict(version=platform.python_version(), executable=sys.executable),
         platform=dict(system=platform.system(), machine=platform.machine()),
         packages={name: package_version(name) for name in requirements},
         native_tools={name: native_tool(name) for name in ("c++", "nvcc")},
     )
-    if model == "qwen35":
-        actual["optional_backends"] = {
-            name: importlib.util.find_spec(name) is not None for name in ("fla", "causal_conv1d")
-        }
     if build is not None:
         actual["build"] = configured_build(build)
     try:
@@ -143,9 +138,6 @@ def validate(actual, profile, requirements):
     for name, version in requirements.items():
         if name != "torch":
             expect(name, actual["packages"].get(name), version)
-    for name, available in actual.get("optional_backends", {}).items():
-        if available:
-            issues.append(f"Qwen3.5 requires an environment without {name}")
     torch = actual["torch"]
     if "error" in torch:
         issues.append("Torch cannot be imported: " + torch["error"])
@@ -190,7 +182,7 @@ def check_environment(target, model, build=None):
     """Collect and check the selected environment, returning its complete report."""
     profile = json.loads((ROOT / "environments" / target / "profile.json").read_text())
     requirements = model_requirements(target, model)
-    actual = collect(model, requirements, build)
+    actual = collect(requirements, build)
     issues = validate(actual, profile, requirements)
     return dict(
         target=target,
