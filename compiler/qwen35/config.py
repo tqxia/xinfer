@@ -1,4 +1,4 @@
-"""Qwen3.5 execution settings and DeltaNet state shapes."""
+"""Qwen3.5 default paths, limits and execution settings."""
 
 from pathlib import Path
 
@@ -7,20 +7,6 @@ TEXT_DIR = Path("work/qwen35/0.8b/text")
 ARTIFACT_DIR = Path("artifacts/qwen35/0.8b")
 MAX_PREFILL = 512
 MAX_BATCH_SIZE = 8
-
-
-def deltanet_state_shapes(config, batch_size=1):
-    key_width = config.linear_num_key_heads * config.linear_key_head_dim
-    value_width = config.linear_num_value_heads * config.linear_value_head_dim
-    return (
-        (batch_size, 2 * key_width + value_width, config.linear_conv_kernel_dim),
-        (
-            batch_size,
-            config.linear_num_value_heads,
-            config.linear_key_head_dim,
-            config.linear_value_head_dim,
-        ),
-    )
 
 
 def configure():

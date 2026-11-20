@@ -11,10 +11,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextRotaryEmbedding,
 )
 
-from compiler.qwen35.config import (
-    TEXT_DIR,
-    deltanet_state_shapes,
-)
+from compiler.qwen35.config import TEXT_DIR
 from compiler.common.attention import batched_attention_metadata
 from compiler.common.kernels.kv_cache import append_kv_batched
 from compiler.common.metadata import state_spec
@@ -43,6 +40,20 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
     model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(config)
     return model.eval().requires_grad_(False).to("cuda")
+
+
+def deltanet_state_shapes(config, batch_size=1):
+    key_width = config.linear_num_key_heads * config.linear_key_head_dim
+    value_width = config.linear_num_value_heads * config.linear_value_head_dim
+    return (
+        (batch_size, 2 * key_width + value_width, config.linear_conv_kernel_dim),
+        (
+            batch_size,
+            config.linear_num_value_heads,
+            config.linear_key_head_dim,
+            config.linear_value_head_dim,
+        ),
+    )
 
 
 def state_specs(config, capacity=None, *, batch_size=1):
