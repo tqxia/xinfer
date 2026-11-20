@@ -15,7 +15,7 @@ concise; detailed run histories and per-case results belong in local artifacts.
   `compiler/common/kernels/` owns shared native kernels and their C shims.
 - `runtime/common/` owns shared native loading, state and generation.
   Model-specific runtime headers validate their model's ABI.
-- `tools/` owns preparation, numerical validation, benchmarking and diagnostics.
+- `tools/` owns preparation, numerical validation and benchmarking.
   C++ tool drivers and helpers live in `tools/benchmark/native/` and
   `tools/validation/native/`, separate from Python orchestration.
   Production compiler code must not depend on tooling.

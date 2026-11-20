@@ -252,15 +252,7 @@ and rounding the compiled values through BF16 restored equality. This persisted
 with cast emulation and pattern matching disabled. Native reduction fallbacks
 did not remove the output difference; an experimental native-cast workaround
 failed to load and was not adopted. This identifies one contributor, not every
-full-model discrepancy. Reproduce against the selected stack with:
-
-```bash
-"$Q35_PY" -m tools.diagnostics.qwen35.probe_rounding \
-  --model-dir work/qwen35/0.8b/text --output artifacts/qwen35/rounding-probe-new
-```
-
-Exit zero means reproduced, not fixed. The probe exposes intermediate outputs
-only in its diagnostic graph and uses the prepared full text checkpoint.
+full-model discrepancy.
 
 **Q35-NUM-002** showed full-prompt and partitioned HF selecting different greedy
 tokens at a zero-margin tie. This cannot be attributed solely to compilation.

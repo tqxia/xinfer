@@ -178,9 +178,9 @@ One command runs the numerical chain for either family, selected from metadata:
 paths default from package identity; `--model-dir` and `--native` override them.
 HF references are generated during the run, without saved-reference preparation.
 Qwen3.5 HF reference calls use memory-efficient SDPA in a scoped context that
-restores the caller's backend settings afterward. Attention reference tests and
-the rounding diagnostic select the same backend locally. Export and the HF
-benchmark leave SDPA selection unchanged.
+restores the caller's backend settings afterward. Attention reference tests
+select the same backend locally. Export and the HF benchmark leave SDPA selection
+unchanged.
 Qwen3 additionally cross-checks manual HF greedy decoding against `HF.generate()`.
 
 The chain is **HF → adapted/optimized eager → Python AOTI → C++ AOTI**.
@@ -237,7 +237,7 @@ The shared pipeline lives in `tools/validation/common/`; family `model.py` hooks
 supply loading, eager transformations, fixtures and the independent BF16 baseline.
 Prompts are shared in `common/prompts.py`. Component/kernel tests are separate
 required checks and are not invoked by full-model validation. The model guides
-list their coverage and the Qwen3.5 rounding diagnostic.
+list their coverage.
 
 ### Shared numerical policy
 
