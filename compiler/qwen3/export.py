@@ -24,10 +24,11 @@ from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, ModelStep, allocat
 from compiler.qwen3.config import DEFAULT_MODEL
 
 
-def example_inputs(config, kind, capacity):
+def export_step(step, kind, capacity):
+    """Build tracing inputs and export the adapted model for one entry point."""
     batch_size = 2
     length = 1 if kind == "decode" else 16
-    cache = allocate_cache(config, capacity, batch_size)
+    cache = allocate_cache(step.model.config, capacity, batch_size)
     starts = [16 + 8 * row for row in range(batch_size)]
     counts = [max(1, length // (row + 1)) for row in range(batch_size)]
     inputs = (
@@ -48,10 +49,6 @@ def example_inputs(config, kind, capacity):
         {0: batch},
         {0: batch},
     )
-    return inputs, shapes
-
-
-def export_step(step, inputs, shapes):
     # Keep B=1 inside the symbolic range used by AOTI's input guards.
     with symbolic_config.patch(backed_size_oblivious=True):
         exported = torch.export.export(step, inputs, dynamic_shapes=shapes, strict=False)
@@ -85,14 +82,14 @@ def entry_metadata(model, kind, checkpoint, capacity, cache_shape):
 
 
 def export_entry(kind, staging_directory, *, model, step, checkpoint, capacity):
-    inputs, shapes = example_inputs(model.config, kind, capacity)
     start = time.perf_counter()
-    exported = export_step(step, inputs, shapes)
+    exported = export_step(step, kind, capacity)
     # Text dumps expose mutation/shape behavior without another copy of the weights.
     (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
     print(f"Exported {kind}; compiling...", flush=True)
 
     def metadata_factory(_compiled_path):
+        inputs = exported.example_inputs[0]
         cache_shape = (MAX_BATCH_SIZE, *inputs[2][0].shape[1:])
         metadata = entry_metadata(model, kind, checkpoint, capacity, cache_shape)
         report_export(

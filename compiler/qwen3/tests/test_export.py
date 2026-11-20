@@ -86,8 +86,8 @@ class ExportGraph(unittest.TestCase):
     @torch.inference_mode()
     def test_dynamic_batch_export_and_cache_writes(self):
         for kind in ("prefill", "decode"):
-            example, shapes = export.example_inputs(self.step.model.config, kind, 512)
-            program = export.export_step(self.step, example, shapes)
+            program = export.export_step(self.step, kind, 512)
+            example = program.example_inputs[0]
             ids = next(node for node in program.graph.nodes if node.target == "input_ids")
             batch_range = program.range_constraints[ids.meta["val"].shape[0].node.expr]
             # Exported Python can accept B=1 even with a [2,8] range; AOTI cannot.
