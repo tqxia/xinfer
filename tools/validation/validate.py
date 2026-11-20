@@ -23,7 +23,7 @@ def build_parser():
 
 def prepare_validation(packages, model_dir, native):
     from tools.validation.common.attention import load_packaged_attention_ops
-    from compiler.common.weights import validate_shared_weights
+    from tools.packages import validate_shared_weights
     from compiler.common.artifacts import require
 
     pair = read_package_metadata(packages)

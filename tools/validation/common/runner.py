@@ -8,9 +8,9 @@ from compiler.common.artifacts import require
 from compiler.common.metadata import read_package_metadata
 from compiler.common.tests.tensors import bits_equal, cpu_copy
 from tools.validation.common.validation import disk_snapshot
-from compiler.common.weights import SharedWeights, validate_shared_weights
+from compiler.common.weights import SharedWeights
 from tools.common import prompt_chunks
-from tools.packages import validate_model_metadata
+from tools.packages import validate_model_metadata, validate_shared_weights
 
 
 @dataclass

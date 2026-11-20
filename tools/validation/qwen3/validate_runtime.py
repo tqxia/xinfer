@@ -9,7 +9,7 @@ import subprocess
 import numpy as np
 import torch
 
-from compiler.common.weights import SharedWeights, validate_shared_weights
+from compiler.common.weights import SharedWeights
 from compiler.common.artifacts import (
     MODEL_MANIFEST_NAME,
     default_build_dir,
@@ -24,6 +24,7 @@ from compiler.common.metadata import (
     validate_metadata,
 )
 from tools.packages import validate_qwen3_metadata as validate_model_metadata
+from tools.packages import validate_shared_weights
 from compiler.qwen3.config import DEFAULT_MODEL
 from tools.common import native_environment, prompt_chunks
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids

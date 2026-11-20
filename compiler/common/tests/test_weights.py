@@ -1,6 +1,5 @@
 """CPU roundtrip and rejection coverage for externally owned AOTI weights."""
 
-import copy
 import gc
 import json
 from pathlib import Path
@@ -20,9 +19,8 @@ from compiler.common.weights import (
     SHARED_WEIGHT_OPTIONS,
     SharedWeights,
     compile_shared,
-    validate_shared_weights,
+    read_shared_weight_manifest,
 )
-from compiler.common.tests.test_metadata import metadata_pair
 
 
 class TiedViews(torch.nn.Module):
@@ -90,7 +88,6 @@ class SharedWeightBundle(unittest.TestCase):
         with patch("torch.jit.save", wraps=torch.jit.save) as save_archive:
             cls.contract = compile_bundle(cls.model, cls.bundle, cls.identity)
         cls.archive_writes = save_archive.call_count
-        cls.metadata = metadata(cls.bundle)
 
     def copy_bundle(self, source=None):
         temporary = tempfile.TemporaryDirectory(dir=self.root)
@@ -141,40 +138,10 @@ class SharedWeightBundle(unittest.TestCase):
             self.assertEqual(package["marker"], "preserved metadata")
             self.assertEqual(package["package_sha256"], sha256(self.bundle / (kind + ".pt2")))
             self.assertTrue((self.bundle / (kind + ".graph.txt")).is_file())
-        validate_shared_weights(self.bundle, prefill, decode)
+        read_shared_weight_manifest(self.bundle, self.contract)
         directory = self.copy_bundle()
         (directory / "weights.json").write_text("unused old sidecar")
-        validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
-
-    def versioned_metadata(self):
-        pair = metadata_pair()
-        for kind, value in pair.items():
-            package = self.bundle / f"{kind}.pt2"
-            value.update(
-                package_bytes=package.stat().st_size,
-                package_sha256=sha256(package),
-                shared_weights=self.contract,
-            )
-        return pair
-
-    def test_versioned_file_facts_fail_before_archive_access(self):
-        for kind in ("prefill", "decode"):
-            for field, value, error in (
-                ("package_bytes", 1, "Package file size mismatch"),
-                ("package_sha256", "0" * 64, "Package checksum mismatch"),
-            ):
-                with self.subTest(kind=kind, field=field):
-                    pair = self.versioned_metadata()
-                    pair[kind][field] = value
-                    with patch("compiler.common.weights._manifest") as archive:
-                        with self.assertRaisesRegex(ValueError, error):
-                            validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
-                        archive.assert_not_called()
-
-    def test_versioned_metadata_rejects_a_different_archive_model(self):
-        pair = self.versioned_metadata()
-        with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
-            validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
+        read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
     def test_model_identity_does_not_select_operator_payload_checks(self):
         for model in ("qwen3-0.6b", "qwen3.5"):
@@ -183,9 +150,7 @@ class SharedWeightBundle(unittest.TestCase):
                 contract = self.rewrite_archive(
                     directory, identity=dict(model=model, revision="cpu-fixture")
                 )
-                manifest = validate_shared_weights(
-                    directory, metadata(directory, "prefill"), metadata(directory, "decode")
-                )
+                manifest = read_shared_weight_manifest(directory, contract)
                 self.assertEqual(manifest["identity"]["model"], model)
                 pool = SharedWeights(directory, contract)
                 with torch.inference_mode():
@@ -196,7 +161,7 @@ class SharedWeightBundle(unittest.TestCase):
                         )
 
     def test_real_cpu_packages_share_tied_strided_storage(self):
-        manifest = validate_shared_weights(self.bundle, self.metadata, self.metadata)
+        manifest = read_shared_weight_manifest(self.bundle, self.contract)
         pool = SharedWeights(self.bundle, self.contract)
         source = {name: pool.tensors[key] for name, key in manifest["sources"].items()}
         names = ("weight", "tied", "sliced", "bias")
@@ -318,7 +283,7 @@ class SharedWeightBundle(unittest.TestCase):
         with torch.inference_mode():
             compile_shared(directory, prepare, identity=self.identity, inductor_configs={})
         self.assertEqual(kinds, ["prefill", "decode"])
-        validate_shared_weights(directory, metadata(directory, "prefill"), metadata(directory))
+        read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
     def test_second_compile_or_metadata_failure_leaves_no_published_bundle(self):
         real_compile = torch._inductor.aoti_compile_and_package
@@ -405,7 +370,7 @@ class SharedWeightBundle(unittest.TestCase):
                     side_effect=AssertionError("CUDA must not be queried"),
                 ):
                     with self.assertRaisesRegex(ValueError, message):
-                        validate_shared_weights(directory, self.metadata, self.metadata)
+                        read_shared_weight_manifest(directory, self.contract)
 
     def test_missing_embedded_mapping_is_rejected_without_cuda(self):
         directory = self.copy_bundle()
@@ -414,25 +379,12 @@ class SharedWeightBundle(unittest.TestCase):
             "torch.cuda.is_available", side_effect=AssertionError("CUDA must not be queried")
         ):
             with self.assertRaisesRegex(ValueError, "archive metadata is invalid"):
-                validate_shared_weights(
-                    directory, metadata(directory, "prefill"), metadata(directory)
-                )
+                read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
-    def test_contract_and_compiler_options_cannot_select_another_pool(self):
-        altered = copy.deepcopy(self.metadata)
-        altered["shared_weights"]["identity"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "contracts differ"):
-            validate_shared_weights(self.bundle, altered, self.metadata)
-        altered = copy.deepcopy(self.metadata)
-        altered["shared_weights"]["file"] = "../weights.pt"
+    def test_archive_contract_rejects_noncanonical_path(self):
+        altered = dict(self.contract, file="../weights.pt")
         with self.assertRaisesRegex(ValueError, "metadata is required"):
-            validate_shared_weights(self.bundle, altered, altered)
-        with self.assertRaisesRegex(ValueError, "metadata is required"):
-            validate_shared_weights(self.bundle, {}, self.metadata)
-        altered = copy.deepcopy(self.metadata)
-        altered["inductor_configs"]["aot_inductor.package_constants_in_so"] = True
-        with self.assertRaisesRegex(ValueError, "weightless package compiler options"):
-            validate_shared_weights(self.bundle, altered, altered)
+            read_shared_weight_manifest(self.bundle, altered)
 
     def test_archive_dtype_device_and_view_layout_are_checked(self):
         for field, value, message in (
@@ -474,7 +426,7 @@ class SharedWeightBundle(unittest.TestCase):
                     side_effect=AssertionError("CUDA must not be queried"),
                 ):
                     with self.assertRaisesRegex(ValueError, "archive checksum mismatch"):
-                        validate_shared_weights(directory, self.metadata, self.metadata)
+                        read_shared_weight_manifest(directory, self.contract)
 
     def test_owner_retains_borrowed_tensors_and_checks_exact_runtime_names(self):
         calls, pointers = [], []

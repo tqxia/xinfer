@@ -425,7 +425,7 @@ def worker_environment(gpu, native=False):
 
 
 def capture_environment(args, out, gpu, model_type, packages, validate_model):
-    from compiler.common.weights import validate_shared_weights
+    from tools.packages import validate_shared_weights
 
     binary = args.native.resolve()
     require(binary.is_file(), "Build xinfer_benchmark with -DXINFER_BUILD_BENCHMARK=ON first")

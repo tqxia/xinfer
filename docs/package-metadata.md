@@ -7,7 +7,9 @@ runtime ABI 2. The shared archive uses format 2.
 These versions describe different contracts and evolve independently.
 
 `compiler/common/metadata.py` writes and validates the common format.
-`tools/packages.py` adds model ABI checks for Python tooling.
+`tools/packages.py` owns model ABI and shared-weight bundle checks for Python
+tooling. `compiler/common/weights.py` owns archive compilation, verified manifest
+reading and shared tensor loading.
 `runtime/common/spec.h` is the C++ reader; `runtime/<model>/runtime.h` validates
 model-specific geometry and `runtime/common/state.h` implements state ownership.
 

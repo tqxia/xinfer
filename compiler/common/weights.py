@@ -17,7 +17,7 @@ from compiler.common.artifacts import (
     require,
     sha256,
 )
-from compiler.common.metadata import finalize_metadata, validate_metadata, validate_metadata_pair
+from compiler.common.metadata import finalize_metadata, validate_metadata_pair
 from compiler.common.package import compile_package
 
 
@@ -36,7 +36,8 @@ class _Archive(torch.nn.Module):
         return self.identity
 
 
-def _manifest(directory, contract):
+def read_shared_weight_manifest(directory, contract):
+    """Verify archive integrity and read its mappings without allocating tensor storage."""
     directory = Path(directory)
     require(
         isinstance(contract, dict)
@@ -92,44 +93,6 @@ def _manifest(directory, contract):
     return data
 
 
-def validate_shared_weights(directory, prefill, decode):
-    """Validate the complete bundle without allocating CUDA storage."""
-    require(
-        "shared_weights" in prefill and "shared_weights" in decode,
-        "Shared weights metadata is required; re-export both packages",
-    )
-    require(
-        prefill["shared_weights"] == decode["shared_weights"], "Shared weights contracts differ"
-    )
-    for metadata in (prefill, decode):
-        options = metadata.get("inductor_configs", {})
-        require(
-            all(
-                key in options and options[key] == value
-                for key, value in SHARED_WEIGHT_OPTIONS.items()
-            ),
-            "Shared weights require weightless package compiler options",
-        )
-        if "schema_version" in metadata:
-            validate_metadata(metadata)
-            package = Path(directory) / f"{metadata['entry_point']}.pt2"
-            require(package.is_file(), f"Package file is missing: {metadata['entry_point']}")
-            require(
-                package.stat().st_size == metadata["package_bytes"], "Package file size mismatch"
-            )
-            require(
-                sha256(package) == metadata["package_sha256"],
-                f"Package checksum mismatch: {metadata['entry_point']}",
-            )
-    manifest = _manifest(directory, decode["shared_weights"])
-    if "schema_version" in decode:
-        model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35"}.get(
-            manifest["identity"].get("model")
-        )
-        require(model_type == decode["model_type"], "Package model identity mismatch")
-    return manifest
-
-
 def _check_storage(tensor, descriptor):
     require(
         tensor.device.type == "cpu"
@@ -182,7 +145,7 @@ class SharedWeights:
 
     def __init__(self, directory, contract):
         self.directory = Path(directory)
-        self.manifest = _manifest(self.directory, contract)
+        self.manifest = read_shared_weight_manifest(self.directory, contract)
         cpu = _archive_storages(self.directory, self.manifest)
         self.storages = {
             name: value.to(device=descriptor["device"])

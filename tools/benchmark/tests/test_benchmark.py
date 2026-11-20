@@ -605,7 +605,7 @@ class ControllerContract(unittest.TestCase):
             patch.object(benchmark, "run_worker", side_effect=worker),
             patch.object(benchmark.platform, "platform", return_value="test-platform"),
             patch.object(benchmark.subprocess, "check_output", side_effect=query),
-            patch("compiler.common.weights.validate_shared_weights", return_value=weights),
+            patch("tools.packages.validate_shared_weights", return_value=weights),
             patch.object(hooks, "prepare_tokens", return_value=([7, 8], [9])) as prepare,
         ):
             if fail:
@@ -708,7 +708,7 @@ class ControllerContract(unittest.TestCase):
             write_json(args.output / "workload.json", {})
             with (
                 patch.object(benchmark.subprocess, "check_output", return_value="fixture"),
-                patch("compiler.common.weights.validate_shared_weights"),
+                patch("tools.packages.validate_shared_weights"),
             ):
                 environment = benchmark.capture_environment(
                     args,
