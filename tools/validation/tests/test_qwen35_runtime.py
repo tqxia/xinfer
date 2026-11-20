@@ -1,6 +1,5 @@
 """CPU preflight rejects incompatible metadata before archive or GPU loading."""
 
-import copy
 import json
 from pathlib import Path
 import re
@@ -8,15 +7,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from compiler.common.metadata import RUNTIME_ABI_VERSIONS, SCHEMA_VERSION, make_metadata, state_spec
+from compiler.common.metadata import make_metadata, state_spec
 from tools.validation.common.runner import load_aoti_runtime
-
-
-CONTRACT_FIELDS = ("runtime_abi_version", "export_options")
-INVALID_VALUES = {
-    "runtime_abi_version": RUNTIME_ABI_VERSIONS["qwen35"] + 1,
-    "export_options": {"backed_size_oblivious": False},
-}
 
 
 class ReachedArchiveValidation(Exception):
@@ -80,18 +72,11 @@ class AOTIRuntimeContract(unittest.TestCase):
             validate.assert_not_called()
             weights.assert_not_called()
 
-    def test_missing_contract_fields_are_rejected_before_loading(self):
-        for field in CONTRACT_FIELDS:
-            with self.subTest(field=field):
-                metadata = self.metadata()
-                for value in metadata.values():
-                    value.pop(field)
-                message = (
-                    "Unsupported runtime ABI version"
-                    if field == "runtime_abi_version"
-                    else f"Unsupported package metadata: {field}"
-                )
-                self.reject(metadata, message)
+    def test_missing_export_options_are_rejected_before_loading(self):
+        metadata = self.metadata()
+        for value in metadata.values():
+            value.pop("export_options")
+        self.reject(metadata, "Unsupported package metadata: export_options")
 
     def test_model_tags_are_required_and_checked_before_loading(self):
         for tags, message in (
@@ -109,64 +94,27 @@ class AOTIRuntimeContract(unittest.TestCase):
         metadata["prefill"].pop("model_type")
         self.reject(metadata, "Package model types differ")
 
-    def test_invalid_matching_contracts_are_rejected_before_loading(self):
-        for field, invalid in INVALID_VALUES.items():
-            with self.subTest(field=field):
+    def test_invalid_matching_export_options_are_rejected_before_loading(self):
+        metadata = self.metadata()
+        for value in metadata.values():
+            value["export_options"] = {"backed_size_oblivious": False}
+        self.reject(metadata, "Unsupported package metadata: export_options")
+
+    def test_mismatched_export_options_identify_the_field(self):
+        for kind in ("prefill", "decode"):
+            with self.subTest(kind=kind):
                 metadata = self.metadata()
-                for value in metadata.values():
-                    value[field] = copy.deepcopy(invalid)
-                message = (
-                    "Unsupported runtime ABI version"
-                    if field == "runtime_abi_version"
-                    else f"Unsupported package metadata: {field}"
-                )
-                self.reject(metadata, message)
+                metadata[kind]["export_options"] = {"backed_size_oblivious": False}
+                self.reject(metadata, "Package metadata differs: export_options")
 
-    def test_mismatched_contract_fields_identify_the_field(self):
-        for field, invalid in INVALID_VALUES.items():
-            for kind in ("prefill", "decode"):
-                with self.subTest(field=field, kind=kind):
-                    metadata = self.metadata()
-                    metadata[kind][field] = copy.deepcopy(invalid)
-                    message = (
-                        "Unsupported runtime ABI version"
-                        if field == "runtime_abi_version"
-                        else f"Package metadata differs: {field}"
-                    )
-                    self.reject(metadata, message)
-
-    def test_missing_contract_field_in_one_entry_is_rejected(self):
-        for field in CONTRACT_FIELDS:
-            for kind in ("prefill", "decode"):
-                with self.subTest(field=field, kind=kind):
-                    metadata = self.metadata()
-                    metadata[kind].pop(field)
-                    message = (
-                        "Unsupported runtime ABI version"
-                        if field == "runtime_abi_version"
-                        else f"Package metadata differs: {field}"
-                    )
-                    self.reject(metadata, message)
-
-    def test_unversioned_unknown_and_mixed_versions_are_rejected(self):
-        for versions in (
-            (None, None),
-            (1, 1),
-            (2, 2),
-            (999, 999),
-            (SCHEMA_VERSION, 999),
-            (True, True),
-        ):
-            with self.subTest(versions=versions):
+    def test_missing_export_options_in_one_entry_is_rejected(self):
+        for kind in ("prefill", "decode"):
+            with self.subTest(kind=kind):
                 metadata = self.metadata()
-                for kind, version in zip(("prefill", "decode"), versions):
-                    if version is None:
-                        metadata[kind].pop("schema_version")
-                    else:
-                        metadata[kind]["schema_version"] = version
-                self.reject(metadata, "Unsupported package metadata schema version")
+                metadata[kind].pop("export_options")
+                self.reject(metadata, "Package metadata differs: export_options")
 
-    def test_old_aliases_are_not_accepted_in_v3(self):
+    def test_old_aliases_are_not_accepted(self):
         for field in (
             "eager_numerics",
             "torch",
@@ -188,25 +136,6 @@ class AOTIRuntimeContract(unittest.TestCase):
                 for value in metadata.values():
                     value[field] = False
                 self.reject(metadata, f"Unsupported package metadata: {field}")
-
-    def test_runtime_abi_versions_are_strict_integers_before_loading(self):
-        for version in (
-            None,
-            -1,
-            0,
-            RUNTIME_ABI_VERSIONS["qwen35"] + 1,
-            True,
-            float(RUNTIME_ABI_VERSIONS["qwen35"]),
-            "1",
-            [],
-            {},
-        ):
-            for kinds in (("prefill",), ("decode",), ("prefill", "decode")):
-                with self.subTest(version=version, kinds=kinds):
-                    metadata = self.metadata()
-                    for kind in kinds:
-                        metadata[kind]["runtime_abi_version"] = version
-                    self.reject(metadata, "Unsupported runtime ABI version")
 
     def test_model_specific_backend_and_state_order_are_checked_before_loading(self):
         def reverse_state(metadata):
@@ -240,7 +169,7 @@ class AOTIRuntimeContract(unittest.TestCase):
             mutate(metadata)
             self.reject(metadata, error)
 
-    def test_valid_versioned_pair_reaches_archive_validation(self):
+    def test_valid_pair_reaches_archive_validation(self):
         metadata = self.metadata()
         self.write_metadata(metadata)
         with (

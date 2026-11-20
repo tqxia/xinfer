@@ -376,7 +376,7 @@ def compile_shared(
         )
         for kind, entry_metadata in metadata.items():
             package = staging / f"{kind}.pt2"
-            if "schema_version" in entry_metadata or "model_type" in entry_metadata:
+            if "model_type" in entry_metadata:
                 metadata[kind] = finalize_metadata(
                     entry_metadata,
                     package_path=package,
@@ -391,7 +391,7 @@ def compile_shared(
                     package_bytes=package.stat().st_size,
                     package_sha256=sha256(package),
                 )
-        if any("schema_version" in item for item in metadata.values()):
+        if any("model_type" in item for item in metadata.values()):
             validate_metadata_pair(metadata["prefill"], metadata["decode"])
         for kind, entry_metadata in metadata.items():
             (staging / f"{kind}.json").write_text(json.dumps(entry_metadata, indent=2) + "\n")

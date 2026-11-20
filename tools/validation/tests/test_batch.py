@@ -21,7 +21,7 @@ class BatchValidation(unittest.TestCase):
             dict(name=name, batch_steps=[[[1]]], state_steps=[0]) for name in ("prompts", "reset")
         ]
         runtime = SimpleNamespace(position=1, positions=[1] + [0] * 7)
-        meta = dict(runtime_abi_version=2, state=[])
+        meta = dict(state=[])
         with TemporaryDirectory() as temporary:
             output = Path(temporary)
             (output / "expected").mkdir()

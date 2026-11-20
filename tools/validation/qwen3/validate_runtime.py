@@ -18,8 +18,6 @@ from compiler.common.artifacts import (
     sha256,
 )
 from compiler.common.metadata import (
-    RUNTIME_ABI_VERSIONS,
-    SCHEMA_VERSION,
     read_package_metadata,
     validate_metadata,
 )
@@ -207,11 +205,6 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
     package_cases = (
         ("mixed_numerical_settings", "Package metadata differs: triton_enable_fp_fusion"),
         ("legacy_eager_numerics", "Unsupported package metadata: eager_numerics"),
-        ("missing_runtime_abi", "Unsupported runtime ABI version"),
-        ("unknown_runtime_abi", "Unsupported runtime ABI version"),
-        ("mixed_runtime_abi", "Unsupported runtime ABI version"),
-        ("boolean_runtime_abi", "Unsupported runtime ABI version"),
-        ("float_runtime_abi", "Unsupported runtime ABI version"),
         ("mixed_state_layout", "Package metadata differs: state"),
         ("odd_state_count", "Unsupported package metadata: state"),
         ("invalid_cache_shape", "Unsupported Flash cache shape"),
@@ -238,16 +231,6 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
                 metadata["eager_numerics"] = True
             elif name.startswith("legacy_field_"):
                 metadata[name.removeprefix("legacy_field_")] = False
-            elif name == "missing_runtime_abi":
-                del metadata["runtime_abi_version"]
-            elif name == "unknown_runtime_abi" or (
-                name == "mixed_runtime_abi" and kind == "prefill"
-            ):
-                metadata["runtime_abi_version"] = RUNTIME_ABI_VERSIONS["qwen3"] + 1
-            elif name == "boolean_runtime_abi":
-                metadata["runtime_abi_version"] = True
-            elif name == "float_runtime_abi":
-                metadata["runtime_abi_version"] = float(RUNTIME_ABI_VERSIONS["qwen3"])
             elif name == "mixed_state_layout" and kind == "prefill":
                 metadata["state"][0]["shape"][-1] += 1
             elif name == "odd_state_count":
@@ -257,11 +240,7 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
             elif name == "mixed_export_settings" and kind == "prefill":
                 metadata["export_options"]["backed_size_oblivious"] = False
             (mixed / (kind + ".json")).write_text(json.dumps(metadata))
-            if (
-                name.startswith("legacy_")
-                or type(metadata.get("runtime_abi_version")) is not int
-                or metadata["runtime_abi_version"] != RUNTIME_ABI_VERSIONS["qwen3"]
-            ):
+            if name.startswith("legacy_"):
                 try:
                     validate_metadata(metadata, model_type="qwen3")
                 except ValueError as error:
@@ -301,41 +280,6 @@ def metadata_with_sizes(packages):
 
 def reject_dispatch(packages, out, capital_prompt, env, run, report):
     # Dispatch failures must not require CUDA or an archive.
-    for name, version in (
-        ("missing_schema_version", None),
-        ("unknown_schema_version", 99),
-        ("mixed_schema_version", SCHEMA_VERSION + 1),
-    ):
-        directory = out / name
-        directory.mkdir()
-        for kind in ("prefill", "decode"):
-            item = json.loads((packages / f"{kind}.json").read_text())
-            if version is None:
-                item.pop("schema_version")
-            elif name != "mixed_schema_version" or kind == "decode":
-                item["schema_version"] = version
-            (directory / f"{kind}.json").write_text(json.dumps(item))
-            if version is None or item["schema_version"] != SCHEMA_VERSION:
-                try:
-                    validate_metadata(item, model_type="qwen3")
-                except ValueError as error:
-                    assert "Unsupported package metadata schema version" in str(error)
-                else:
-                    raise AssertionError(f"Python accepted invalid metadata version: {name}")
-        output = directory / "generated.ids"
-        result = run(
-            [directory, capital_prompt, output],
-            name,
-            environment=env | {"CUDA_VISIBLE_DEVICES": ""},
-            timeout=20,
-        )
-        assert (
-            result.returncode != 0
-            and "Unsupported package metadata schema version" in result.stderr
-        ), failure_detail(result, name)
-        assert not output.exists()
-        report["rejections"].append(name)
-
     for name, tags, message in (
         ("mixed_model_types", ("qwen3", "qwen35"), "Package model types differ"),
         ("missing_prefill_model_type", (None, "qwen3"), "Package model types differ"),

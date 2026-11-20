@@ -45,7 +45,7 @@ length tensors `[B]` once per step and shared across layers. No CUDA length read
 Each request's contiguous cache is viewed as one block when capacity is divisible
 by 256; other capacities pack valid K/V prefixes for the same batched call.
 This fixed block view is internal to attention; runtime cache ownership and
-[the runtime ABIs](package-metadata.md#dynamic-batch-interfaces) define the
+[the model interfaces](package-metadata.md#dynamic-batch-interfaces) define the
 eight-row allocation and active prefix views.
 
 The wrapper fixes `num_splits=1`, normalizes the singleton block-table stride and

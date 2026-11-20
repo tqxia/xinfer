@@ -586,7 +586,6 @@ def prepare_benchmark(
 
 def benchmark_summary(args, model_type, metadata, eager, records, workload, reference):
     summary = dict(
-        schema_version=1,
         model_type=model_type,
         status="provisional_shared_gpu" if args.allow_busy else "idle_boundaries_checked",
         rounds=args.rounds,

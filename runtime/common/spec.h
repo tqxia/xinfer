@@ -70,9 +70,7 @@ inline bool metadata_digest(const Json &value) {
 }
 
 inline const std::vector<std::string> &metadata_fields() {
-  static const std::vector<std::string> fields{"schema_version",
-                                               "runtime_abi_version",
-                                               "model_type",
+  static const std::vector<std::string> fields{"model_type",
                                                "entry_point",
                                                "token_range",
                                                "torch_version",
@@ -94,24 +92,6 @@ inline const std::vector<std::string> &metadata_fields() {
   return fields;
 }
 
-inline void check_metadata_schema(const Json &metadata) {
-  require(metadata.is_object() && metadata.contains("schema_version") &&
-              metadata_integer(metadata.at("schema_version"), 1) &&
-              metadata.at("schema_version") == 5,
-          "Unsupported package metadata schema version; convert retained metadata or re-export "
-          "both packages");
-}
-
-inline void check_runtime_abi(const Json &metadata) {
-  require(metadata.contains("runtime_abi_version") &&
-              metadata_integer(metadata.at("runtime_abi_version"), 1) &&
-              ((metadata.value("model_type", "") == "qwen3" &&
-                metadata.at("runtime_abi_version") == 4) ||
-               (metadata.value("model_type", "") == "qwen35" &&
-                metadata.at("runtime_abi_version") == 2)),
-          "Unsupported runtime ABI version; re-export both packages");
-}
-
 inline bool metadata_keys(const Json &value, const std::unordered_set<std::string> &keys) {
   if (!value.is_object() || value.size() != keys.size())
     return false;
@@ -122,11 +102,10 @@ inline bool metadata_keys(const Json &value, const std::unordered_set<std::strin
 }
 
 inline void validate_metadata(const Json &metadata, const std::string &entry) {
-  check_metadata_schema(metadata);
+  require(metadata.is_object(), "Unsupported package metadata: expected an object");
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
               (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
           "Unsupported model type");
-  check_runtime_abi(metadata);
 
   const auto &fields = metadata_fields();
   for (const auto &field : fields)
@@ -222,8 +201,8 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
 }
 
 inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
-  check_metadata_schema(prefill);
-  check_metadata_schema(decode);
+  require(prefill.is_object() && decode.is_object(),
+          "Unsupported package metadata: expected an object");
 
   require(prefill.value("model_type", Json()) == decode.value("model_type", Json()),
           "Package model types differ");
@@ -231,7 +210,6 @@ inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
     require(m->contains("model_type") && m->at("model_type").is_string() &&
                 (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
             "Unsupported model type");
-    check_runtime_abi(*m);
   }
 
   static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",

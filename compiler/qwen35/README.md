@@ -86,7 +86,7 @@ return zero logits and leave all state unchanged.
 Prefill accepts padded widths 2–512; decode accepts width one. Scalar generation
 uses B=1 and chunks longer prompts, with prompt and output sharing capacity.
 The [dynamic batch contract](../../docs/package-metadata.md#dynamic-batch-interfaces)
-defines admission, ownership and ABI 2. Previous ABI 1 bundles require re-export.
+defines admission, ownership and the compiled calling convention.
 The text-only RoPE calculation matches HF bitwise while avoiding its redundant
 cross-grid slice assignments and their singleton-batch export guard.
 

@@ -27,7 +27,6 @@ class Policy:
 
 def new_report(model_type, metadata=None):
     report = dict(
-        schema_version=1,
         model_type=model_type,
         stages=[],
         comparisons=[],

@@ -26,7 +26,7 @@ def validate_shared_weights(directory, prefill, decode):
             ),
             "Shared weights require weightless package compiler options",
         )
-        if "schema_version" in metadata:
+        if "model_type" in metadata:
             validate_metadata(metadata)
             package = Path(directory) / f"{metadata['entry_point']}.pt2"
             require(package.is_file(), f"Package file is missing: {metadata['entry_point']}")
@@ -38,7 +38,7 @@ def validate_shared_weights(directory, prefill, decode):
                 f"Package checksum mismatch: {metadata['entry_point']}",
             )
     manifest = read_shared_weight_manifest(directory, decode["shared_weights"])
-    if "schema_version" in decode:
+    if "model_type" in decode:
         model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35"}.get(
             manifest["identity"].get("model")
         )

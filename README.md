@@ -17,7 +17,7 @@ Numerical acceptance depends on the model, package and workload; see
 Python prepares the checkpoint, adapts the model to an explicit tensor/state
 interface, and exports both entry points in one invocation. Model-specific graph
 passes run before AOTInductor compilation. Shared helpers collect tensor constants,
-package native dependencies and write versioned metadata.
+package native dependencies and write package metadata.
 
 ![Compiler architecture: model adapters, graph optimization and AOTInductor produce one deployment bundle.](docs/diagrams/compiler-architecture.svg)
 

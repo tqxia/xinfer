@@ -1,10 +1,9 @@
 # Package metadata
 
 Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.pt`,
-`prefill.json` and `decode.json` together. The JSON sidecars use
-`schema_version: 5`; Qwen3 uses `runtime_abi_version: 4`, and Qwen3.5 uses
-runtime ABI 2. The shared archive uses format 2.
-These versions describe different contracts and evolve independently.
+`prefill.json` and `decode.json` together. Metadata and model interfaces follow
+the current implementation without separate version fields. The shared archive
+uses format 2.
 
 `compiler/common/metadata.py` writes and validates the common format.
 `tools/packages.py` owns model ABI and shared-weight bundle checks for Python
@@ -17,7 +16,7 @@ model-specific geometry and `runtime/common/state.h` implements state ownership.
 
 | Fields | Meaning |
 | --- | --- |
-| `schema_version`, `runtime_abi_version`, `model_type`, `entry_point`, `token_range` | Metadata format, calling convention, model selection and per-call bounds |
+| `model_type`, `entry_point`, `token_range` | Model selection and per-call bounds |
 | `torch_version`, `cxx11_abi`, `cuda_compute_capability` | Runtime compatibility |
 | `checkpoint`, `vocab_size`, `eos_token_ids` | Checkpoint identity/manifest, vocabulary and explicit EOS list |
 | `cache_length`, `state` | Allocated context capacity and ordered state descriptors |
@@ -27,7 +26,7 @@ model-specific geometry and `runtime/common/state.h` implements state ownership.
 
 Both entries must agree on stable fields, including `model_specific`.
 `entry_point`, `token_range`, package size and package hash may differ.
-Missing/unknown fields or versions, legacy aliases and mixed pairs are rejected.
+Missing/unknown fields, legacy aliases and mixed pairs are rejected.
 `COMPARISON_EXCLUDED_FIELDS` in the Python metadata module defines benchmark
 comparison exceptions; shared weights are compared by logical identity and
 source mappings separately from their archive checksum.
@@ -56,16 +55,16 @@ entries; editing metadata cannot enlarge compiled buffers or symbolic bounds.
 Each ordered state descriptor contains `layer`, `kind`, `shape`, `dtype` and
 `update`. KV uses `inplace`; convolution/recurrent state uses `replace`.
 Readers derive names, contiguous strides, model geometry and output positions
-from these descriptors and the runtime ABI. They are not duplicated under
-`model_specific`. Reset retains KV allocations and fills them with the requested
-value; replacement state is initialized to zero.
+from these descriptors and the model's calling convention. They are not duplicated
+under `model_specific`. Reset retains KV allocations and fills them with the
+requested value; replacement state is initialized to zero.
 
 ## Dynamic batch interfaces
 
-Qwen3 uses runtime ABI 4; Qwen3.5 uses runtime ABI 2. One prefill/decode bundle
-accepts every batch size B=1..8, including scalar generation. The range is
-hardcoded; all state descriptors specify eight allocated rows. Export and
-compilation enable `backed_size_oblivious` to retain B=1 in the symbolic range.
+One prefill/decode bundle accepts every batch size B=1..8, including scalar
+generation. The range is hardcoded; all state descriptors specify eight allocated
+rows. Export and compilation enable `backed_size_oblivious` to retain B=1 in the
+symbolic range.
 
 - Python inputs: `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
   IDs and positions are CUDA int64 `[B,T]`. State inputs are contiguous views
@@ -101,10 +100,9 @@ without HF's redundant cross-grid slice writes, which otherwise introduce a
 
 Scalar generation and benchmark commands execute B=1 from the same bundle.
 `xinfer_validate` accepts explicit `batch_steps`. Per-row request replacement and
-continuous-batching scheduling are not implemented. Qwen3 ABI 1/2/3 and
-Qwen3.5 ABI 1 packages must be re-exported; editing sidecars cannot change their
-compiled signatures. Changing weights or compiler tuning alone does not change
-an ABI.
+continuous-batching scheduling are not implemented. The runtime calls the
+current model interface directly; editing sidecars cannot change a package's
+compiled signature.
 
 ## Shared-weight archive and ownership
 
@@ -158,11 +156,13 @@ CPU instruction-set compatibility is not enforced; see
 
 ## Compatibility and retained bundles
 
-Current readers do not translate schema 1–4 or unversioned sidecars. Re-export
-with the current exporter by default. Packages with embedded weights, the old
-attention interface or an external attention dependency require re-export;
+Re-export with the current exporter by default. Packages with embedded weights,
+the old attention interface or an external attention dependency require re-export;
 sidecar conversion cannot supply missing code or change the compiled ABI.
 
 Keep legacy bundles with their matching runtimes when retaining them as evidence.
-Current Qwen3.5 bundles require re-export with the dynamic batch ABI; metadata-only
-conversion cannot supply the new inputs, state shapes or compiled kernels.
+For retained bundles with the current dynamic-batch interface, remove the retired
+`schema_version` and `runtime_abi_version` fields from both sidecars. This
+metadata-only cleanup leaves the package and weight archive bytes unchanged.
+Bundles with different inputs, state shapes or compiled kernels still need a
+matching runtime or re-export.

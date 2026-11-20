@@ -1,4 +1,4 @@
-"""Versioned full-model package metadata shared by exporters and consumers."""
+"""Full-model package metadata shared by exporters and consumers."""
 
 import copy
 import math
@@ -8,11 +8,7 @@ import re
 from compiler.common.artifacts import canonical_json, read_json, require, sha256
 
 
-SCHEMA_VERSION = 5
-RUNTIME_ABI_VERSIONS = {"qwen3": 4, "qwen35": 2}
 FIELDS = (
-    "schema_version",  # Version of this metadata format.
-    "runtime_abi_version",  # Compiled calling convention, state ownership and attention ABI.
     "model_type",  # Model family used to select runtime behavior.
     "entry_point",  # Package role: prefill or decode.
     "token_range",  # Inclusive [minimum, maximum] tokens accepted per call.
@@ -103,8 +99,6 @@ def make_metadata(
     eos = [eos_token_ids] if type(eos_token_ids) is int else list(eos_token_ids)
     states = copy.deepcopy(list(state))
     return dict(
-        schema_version=SCHEMA_VERSION,
-        runtime_abi_version=RUNTIME_ABI_VERSIONS[model_type],
         model_type=model_type,
         entry_point=entry_point,
         token_range=list(token_range),
@@ -123,32 +117,14 @@ def make_metadata(
     )
 
 
-def _schema(metadata):
-    require(
-        isinstance(metadata, dict)
-        and type(metadata.get("schema_version")) is int
-        and metadata["schema_version"] == SCHEMA_VERSION,
-        "Unsupported package metadata schema version; convert retained metadata or re-export both packages",
-    )
-
-
-def _runtime_abi(metadata):
-    require(
-        type(metadata.get("runtime_abi_version")) is int
-        and metadata["runtime_abi_version"] == RUNTIME_ABI_VERSIONS.get(metadata.get("model_type")),
-        "Unsupported runtime ABI version; re-export both packages",
-    )
-
-
 def validate_metadata(metadata, model_type=None, entry_point=None):
-    """Validate a complete v5 descriptor without loading Torch, files or CUDA."""
-    _schema(metadata)
+    """Validate a complete descriptor without loading Torch, files or CUDA."""
+    _check(isinstance(metadata, dict), "expected an object")
     require(
         metadata.get("model_type") in ("qwen3", "qwen35")
         and (model_type is None or metadata["model_type"] == model_type),
         "Unsupported model type",
     )
-    _runtime_abi(metadata)
     for field in FIELDS:
         _check(field in metadata, field)
     for field in metadata:
@@ -250,9 +226,9 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
 
 
 def validate_metadata_pair(prefill, decode, model_type=None):
-    """Reject mixed schema/model/contracts before file, archive or device access."""
+    """Reject mixed models/contracts before file, archive or device access."""
     for m in (prefill, decode):
-        _schema(m)
+        _check(isinstance(m, dict), "expected an object")
     require(prefill.get("model_type") == decode.get("model_type"), "Package model types differ")
     for m in (prefill, decode):
         require(
@@ -260,7 +236,6 @@ def validate_metadata_pair(prefill, decode, model_type=None):
             and (model_type is None or m["model_type"] == model_type),
             "Unsupported model type",
         )
-        _runtime_abi(m)
     for field in FIELDS:
         if field not in ENTRY_FIELDS:
             require(

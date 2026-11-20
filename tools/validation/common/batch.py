@@ -197,7 +197,6 @@ def validate_python_group(args, group, texts, cases, meta, hf, eager, aoti, *, c
         batch_size=batch_size,
         prompts=texts,
         prompt_tokens=[len(row) for row in cases[0]["batch_steps"][0]],
-        runtime_abi_version=meta["runtime_abi_version"],
         numerical_policy=dict(name="shared_bf16", version=1),
         comparisons=[],
         failures=[],

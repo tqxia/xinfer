@@ -331,7 +331,7 @@ permits functional harness checks and marks timings provisional. Idle checks
 alone do not prove healthy clocks or exclusive access; inspect telemetry and
 repeat controlled measurements before making performance claims.
 
-Reports use summary schema 1 and `model_type`; HF profiles record
+Reports identify the model with `model_type`; HF profiles record
 `eager_baseline: hf_dynamic_cache`. `environment.json` records GPU identity and
 package, binary and workload checksums. Summaries include reset, full-prompt
 prefill, reset-plus-prefill (`first_prediction_ms`), decode/per-token and whole-

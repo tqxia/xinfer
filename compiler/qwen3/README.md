@@ -121,9 +121,8 @@ All batch sizes use the same Python step signature:
 IDs and positions have shape `[B,T]`; the two CPU int32 length tensors have
 shape `[B]`. KV inputs are views of the first B rows of the eight-row allocation.
 Native AOTI always receives 60 flat inputs. See
-[runtime ABI 4](../../docs/package-metadata.md#dynamic-batch-interfaces)
-for padding, inactive rows and state ownership. Earlier Qwen3 ABI packages
-must be re-exported.
+[the dynamic batch interface](../../docs/package-metadata.md#dynamic-batch-interfaces)
+for padding, inactive rows and state ownership.
 Training, arbitrary masks and attention-weight outputs are unsupported.
 
 Prefill accepts padded widths 2–512 per call; decode accepts width one,

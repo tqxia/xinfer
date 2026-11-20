@@ -36,8 +36,6 @@ struct Bundle {
          {"update", "inplace"}},
     });
     Json metadata = {
-        {"schema_version", 5},
-        {"runtime_abi_version", 4},
         {"model_type", "qwen3"},
         {"torch_version", TORCH_VERSION},
         {"cxx11_abi", bool(_GLIBCXX_USE_CXX11_ABI)},
@@ -174,7 +172,7 @@ int main() {
       report["cases"].push_back({{"name", name}, {"passed", true}});
     };
 
-    check("schema5_context_contract_rejects_retired_prompt_field", [&] {
+    check("context_contract_rejects_retired_prompt_field", [&] {
       require(spec.capacity == 16384 && spec.max_prefill == 512,
               "Compiled context and per-call bounds differ from the metadata");
       const auto metadata = xinfer::read_json(bundle.directory / "prefill.json");
@@ -197,19 +195,6 @@ int main() {
         xinfer::validate_metadata(small, kind);
       }
 
-      for (const auto version : {3, 4}) {
-        auto old = metadata;
-        old["schema_version"] = version;
-        bool rejected = false;
-        try {
-          xinfer::validate_metadata(old, "prefill");
-        } catch (const std::runtime_error &error) {
-          rejected =
-              std::string(error.what()).find("Unsupported package metadata schema version") == 0;
-        }
-        require(rejected, "Retired metadata schema was accepted");
-      }
-
       auto retired_field = metadata;
       retired_field["max_prompt_length"] = 8192;
       bool rejected = false;
@@ -219,20 +204,6 @@ int main() {
         rejected = std::string(error.what()) == "Unsupported package metadata: max_prompt_length";
       }
       require(rejected, "A retired prompt field was accepted as package metadata");
-    });
-
-    check("retired_qwen3_abis_require_reexport", [&] {
-      for (int64_t version : {1, 2, 3}) {
-        auto metadata = xinfer::read_json(bundle.directory / "prefill.json");
-        metadata["runtime_abi_version"] = version;
-        bool rejected = false;
-        try {
-          xinfer::validate_metadata(metadata, "prefill");
-        } catch (const std::runtime_error &error) {
-          rejected = std::string(error.what()).find("Unsupported runtime ABI version") == 0;
-        }
-        require(rejected, "Retired Qwen3 ABI was accepted");
-      }
     });
 
     check("independent_row_admission", [&] {

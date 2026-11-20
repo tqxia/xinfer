@@ -1,4 +1,4 @@
-"""The same versioned contract describes both model families before loading."""
+"""The same metadata contract describes both model families before loading."""
 
 import copy
 import json
@@ -10,8 +10,6 @@ import unittest
 
 from compiler.common.artifacts import ROOT, sha256
 from compiler.common.metadata import (
-    RUNTIME_ABI_VERSIONS,
-    SCHEMA_VERSION,
     finalize_metadata,
     make_metadata,
     read_package_metadata,
@@ -85,9 +83,6 @@ class PackageMetadata(unittest.TestCase):
                     )
                 )
                 self.assertEqual(pair["decode"]["eos_token_ids"], [151645])
-                self.assertEqual(
-                    pair["decode"]["runtime_abi_version"], RUNTIME_ABI_VERSIONS[model_type]
-                )
 
     def test_both_models_reserve_eight_rows_and_reject_other_allocations(self):
         for model_type in ("qwen3", "qwen35"):
@@ -140,43 +135,6 @@ class PackageMetadata(unittest.TestCase):
         pair["prefill"]["token_range"] = [2, 8192]
         with self.assertRaisesRegex(ValueError, "Unsupported package metadata: token_range"):
             validate_metadata_pair(pair["prefill"], pair["decode"])
-
-    def test_schema_versions_are_required_and_do_not_alias_weight_format(self):
-        for version in (
-            None,
-            0,
-            1,
-            2,
-            3,
-            4,
-            SCHEMA_VERSION + 1,
-            True,
-            float(SCHEMA_VERSION),
-            str(SCHEMA_VERSION),
-        ):
-            with self.subTest(version=version):
-                pair = metadata_pair()
-                if version is None:
-                    pair["decode"].pop("schema_version")
-                else:
-                    pair["decode"]["schema_version"] = version
-                with self.assertRaisesRegex(
-                    ValueError, "Unsupported package metadata schema version"
-                ):
-                    validate_metadata_pair(pair["prefill"], pair["decode"])
-
-    def test_runtime_abi_is_required_and_strict_in_both_entries(self):
-        for entries in (("prefill",), ("decode",), ("prefill", "decode")):
-            for version in (None, 0, 1, 2, 3, 5, -1, True, 4.0, "4", [], {}):
-                with self.subTest(entries=entries, version=version):
-                    pair = metadata_pair()
-                    for kind in entries:
-                        if version is None:
-                            pair[kind].pop("runtime_abi_version")
-                        else:
-                            pair[kind]["runtime_abi_version"] = version
-                    with self.assertRaisesRegex(ValueError, "Unsupported runtime ABI version"):
-                        validate_metadata_pair(pair["prefill"], pair["decode"])
 
     def test_model_identity_and_stable_extras_must_match(self):
         for field, value in (

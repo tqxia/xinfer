@@ -14,10 +14,10 @@ the [Qwen3](../compiler/qwen3/README.md) and [Qwen3.5](../compiler/qwen35/README
 guides. Qwen3.5 uses linear packing and default Inductor options; the
 singleton-only GEMV pass does not match its dynamic-batch graphs.
 
-| Model / ABI | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
+| Model | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
 | --- | ---: | ---: | ---: |
-| Qwen3-0.6B / ABI 4 | 142 / 583 | **120 / 1,749** | 7.0358% |
-| Qwen3.5-0.8B / ABI 2 | 166 / 663 | **68 / 1,989** | 10.9454% |
+| Qwen3-0.6B | 142 / 583 | **120 / 1,749** | 7.0358% |
+| Qwen3.5-0.8B | 166 / 663 | **68 / 1,989** | 10.9454% |
 
 Both passed native bitwise parity for logits and all allocated state rows,
 including unused rows. Finite values, positions, ownership, valid writes,
@@ -44,7 +44,7 @@ Additional coverage:
   explain every batch failure. The 8→1→3→5→8 sequence retains three HF-comparison
   failures despite passing state contracts and native parity.
   [Attention probe][q3-attention]. The focused 98-token larger-context logit
-  regression still needs rechecking with the current ABI.
+  regression still needs rechecking with the current model interface.
 - **Qwen3.5:** eager/HF fails 29/663 comparisons, AOTI/eager 11/663 and AOTI/HF
   28/663. The largest AOTI/HF relative L2 error is in B=5
   `prompt_prefix_teacher` decode. Batch-shape-sensitive BF16 projection rounding
@@ -56,8 +56,8 @@ Additional coverage:
 
 ## Validation gaps
 
-- Current ABIs need expanded-context and GB10 validation; Qwen3.5-4B also needs
-  re-export and validation with ABI 2.
+- Current dynamic-batch interfaces need expanded-context and GB10 validation;
+  Qwen3.5-4B also needs re-export and validation with dynamic batching.
 - Qwen3.5 needs the complete scalar numerical suite beyond the focused regression.
 - Batch performance is unmeasured. These correctness runs used a busy GPU.
 

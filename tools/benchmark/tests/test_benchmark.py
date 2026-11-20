@@ -679,7 +679,6 @@ class ControllerContract(unittest.TestCase):
                             {"baseline", "candidate"} if mode == "compare" else {"hf", "cpp_aoti"}
                         )
                         self.assertEqual(set(summary["profiles"]), labels)
-                        self.assertEqual(summary["schema_version"], 1)
                         if mode == "compare":
                             self.assertNotIn("eager_baseline", summary)
                         else:
