@@ -13,9 +13,11 @@ concise; detailed run histories and per-case results belong in local artifacts.
 - `compiler/<model>/` owns model loading, adapters, kernels and export.
   `compiler/common/` owns shared compilation, metadata and weight helpers;
   `compiler/common/kernels/` owns shared native kernels and their C shims.
-- `runtime/common/` owns shared native loading, state, generation and measurement.
+- `runtime/common/` owns shared native loading, state and generation.
   Model-specific runtime headers validate their model's ABI.
 - `tools/` owns preparation, numerical validation, benchmarking and diagnostics.
+  C++ tool drivers and helpers live in `tools/benchmark/native/` and
+  `tools/validation/native/`, separate from Python orchestration.
   Production compiler code must not depend on tooling.
 - `environments/` owns setup, device/model requirements and hardware profiles.
 - `plugins/` owns coding-agent skills and their reusable performance-analysis

@@ -138,6 +138,13 @@ checks). Metadata selects the model ABI; native-path options override each tool'
 prompt chunking and dispatch. The [package contract](package-metadata.md)
 defines integrity checks, state ownership and compatibility.
 
+Python tools orchestrate workloads, references and reports. Their C++ workers live
+separately in [tools/benchmark/native](../tools/benchmark/native/) and
+[tools/validation/native](../tools/validation/native/); both reuse the shared
+runtime. `tools/CMakeLists.txt` builds these workers under the existing
+`XINFER_BUILD_BENCHMARK` and `XINFER_BUILD_VALIDATION` options. Executable paths
+and runtime installation are unchanged.
+
 Generation stops at EOS or its output budget and refuses existing output/trace
 files and path aliases. Prompt plus `--max-output-tokens` must fit compiled
 capacity; prompts are chunked into at most 512-token calls. Benchmark workloads

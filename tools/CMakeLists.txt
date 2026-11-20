@@ -1,0 +1,13 @@
+set(XINFER_TOOL_TARGETS)
+if(XINFER_BUILD_BENCHMARK)
+  xinfer_add_runtime_executable(xinfer_benchmark benchmark/native/benchmark.cpp)
+  list(APPEND XINFER_TOOL_TARGETS xinfer_benchmark)
+endif()
+if(XINFER_BUILD_VALIDATION)
+  xinfer_add_runtime_executable(xinfer_validate validation/native/validate.cpp)
+  list(APPEND XINFER_TOOL_TARGETS xinfer_validate)
+endif()
+if(XINFER_TOOL_TARGETS)
+  install(TARGETS ${XINFER_TOOL_TARGETS}
+    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime)
+endif()

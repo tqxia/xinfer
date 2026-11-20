@@ -112,12 +112,12 @@ done
 The compiler owns the `xinfer_attention_ops` target and its native sources in
 `compiler/common/kernels/`. It writes `libxinfer_attention_ops.so` into the same
 `build/<model>/` directory used by export and standalone operator tests.
-The runtime produces `xinfer_aoti`, `xinfer_benchmark` and `xinfer_validate` for
-both model families. The default root build includes compiler kernels and
-runtime executables. Selecting an explicit runtime target builds it
-independently; build `xinfer_attention_ops` separately before export or
-standalone attention tests. Model selection comes from package metadata;
-there is no separate full-model build switch. Kernel export/AOTI checks run
+The root build produces `xinfer_aoti` and, when enabled, the tooling workers
+`xinfer_benchmark` and `xinfer_validate` for both model families. The default
+build includes compiler kernels and the generation CLI. Selecting an explicit
+native target builds it independently; build `xinfer_attention_ops` separately
+before export or standalone attention tests. Model selection comes from package
+metadata; there is no separate full-model build switch. Kernel export/AOTI checks run
 through `compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel
 runner.
 Each model's Python tools default to executables in its `build/<model>/`

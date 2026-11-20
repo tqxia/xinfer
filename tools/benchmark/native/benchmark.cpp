@@ -1,5 +1,5 @@
 #include "common/model.h"
-#include "common/benchmark.h"
+#include "benchmark.h"
 
 #include <ATen/Parallel.h>
 

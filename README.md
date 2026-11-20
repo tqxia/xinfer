@@ -118,8 +118,8 @@ Use idle-GPU checks and repeated measurements for performance conclusions.
 | Location | Responsibility |
 | --- | --- |
 | [`compiler/`](compiler/) | Model loading, adapters, graph passes, kernels and paired export; common metadata, weight and packaging helpers. |
-| [`runtime/`](runtime/) | Shared C++ runner and executables; model-specific ABI checks. |
-| [`tools/`](tools/) | Checkpoint preparation, numerical validation, benchmarks and focused diagnostics. |
+| [`runtime/`](runtime/) | Shared C++ runner, generation CLI and model-specific ABI checks. |
+| [`tools/`](tools/) | Checkpoint preparation, numerical validation, benchmarks and focused diagnostics; native validation and benchmark drivers in their `native/` subdirectories. |
 | [`environments/`](environments/README.md) | Per-device/model dependency pins, setup, checks, builds and deployment. |
 | [`plugins/xinfer-perf/`](plugins/xinfer-perf/README.md) | Fusion and kernel optimization workflows for GB10 in Codex and Claude Code. |
 | [`docs/`](docs/) | [Development and tests](docs/development-tools.md), [metadata/ABI](docs/package-metadata.md), [attention](docs/flash-attention.md), [validation status](docs/validation-status.md) and the [GEMV case study](docs/experiments/qwen35-gemv-2026-11-13.md). |

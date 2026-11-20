@@ -11,5 +11,8 @@ separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 
 # Keep the CLI paths stable when building from the repository root.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+option(XINFER_BUILD_VALIDATION "Build native validation drivers" OFF)
+option(XINFER_BUILD_BENCHMARK "Build fixed-token native benchmarks" OFF)
 add_subdirectory(compiler)
 add_subdirectory(runtime)
+add_subdirectory(tools)
