@@ -1,4 +1,4 @@
-"""Load HF FP8 projections unchanged, then adapt their launches for strict export."""
+"""Fine-grained FP8 checkpoint loading and export adapters for HF linear modules."""
 
 import torch
 from safetensors import safe_open

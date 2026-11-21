@@ -6,8 +6,9 @@ prefill/decode packages, shared weights and explicit model state. Generation use
 families support dynamic batches of 1–8 through explicit steps with independent
 request lengths, using the same package.
 
-The model pipelines cover [Qwen3-0.6B](compiler/qwen3/README.md) and
-[Qwen3.5-0.8B / 4B and Qwen3.8-27B-FP8](compiler/qwen35/README.md) (text only).
+The model frontends cover [Qwen3-0.6B](compiler/qwen3/README.md),
+[Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) and
+[Qwen3.8-27B-FP8](compiler/qwen38/README.md) (text only).
 Device-specific setup and validation status are documented for
 [L20 and GB10](environments/README.md).
 Numerical acceptance depends on the model, package and workload; see
@@ -61,9 +62,10 @@ Native execution requires LibTorch/CUDA but loads neither Python nor
 1. Follow the [environment guide](environments/README.md) to create a fresh
    model venv and build compiler kernels and native executables in `build/<model>/`.
    Dependency pins live in `environments/<target>/<model>_requirements.txt`.
-2. Follow the [Qwen3](compiler/qwen3/README.md) or
-   [Qwen3.5](compiler/qwen35/README.md) guide to prepare a checkpoint, export a
-   bundle, encode a prompt and run native generation. Use fresh output paths.
+2. Follow the [Qwen3](compiler/qwen3/README.md),
+   [Qwen3.5](compiler/qwen35/README.md) or [Qwen3.8](compiler/qwen38/README.md) guide
+   to prepare a checkpoint, export a bundle, encode a prompt and run native
+   generation. Use fresh output paths.
 3. Run [numerical and runtime validation](docs/development-tools.md#python-validation-tools)
    for each new bundle, then measure it with the
    [benchmark tools](docs/development-tools.md#benchmark-hf-and-native-aoti).

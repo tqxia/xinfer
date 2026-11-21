@@ -208,7 +208,7 @@ class PreparedCheckpoint(unittest.TestCase):
             (
                 ["--model", "Qwen/Qwen3.8-27B-FP8"],
                 "Qwen/Qwen3.8-27B-FP8",
-                Path("work/qwen35/27b-fp8/text"),
+                Path("work/qwen38/27b-fp8/text"),
             ),
             (
                 ["--model", "Qwen/Qwen3.5-4B", "--output", "custom/text"],

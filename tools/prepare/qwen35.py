@@ -5,6 +5,7 @@ from pathlib import Path
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, require, sha256, write_json
 from compiler.qwen35.config import TEXT_DIR
+from compiler.qwen38.config import MODEL_ID as QWEN38_MODEL_ID, TEXT_DIR as QWEN38_TEXT_DIR
 from tools.prepare import common
 
 
@@ -12,7 +13,7 @@ MODEL_ID = "Qwen/Qwen3.5-0.8B"
 REVISIONS = {
     MODEL_ID: "2fc06364715b967f1860aea9cf38778875588b17",
     "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-    "Qwen/Qwen3.8-27B-FP8": "c3a462cc3d38cf351f3b26cbd763469eeb74ef81",
+    QWEN38_MODEL_ID: "c3a462cc3d38cf351f3b26cbd763469eeb74ef81",
 }
 MODEL_FILES = ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
 
@@ -21,17 +22,13 @@ def default_model_dir(model_id):
     require(
         isinstance(model_id, str) and model_id in REVISIONS, f"Unsupported checkpoint: {model_id}"
     )
-    if model_id == "Qwen/Qwen3.8-27B-FP8":
-        return Path("work/qwen35/27b-fp8/text")
+    if model_id == QWEN38_MODEL_ID:
+        return QWEN38_TEXT_DIR
     return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
 
 
 def model_files(model_id):
-    return (
-        (*MODEL_FILES, "generation_config.json")
-        if model_id == "Qwen/Qwen3.8-27B-FP8"
-        else MODEL_FILES
-    )
+    return (*MODEL_FILES, "generation_config.json") if model_id == QWEN38_MODEL_ID else MODEL_FILES
 
 
 def prepare(directory, model=MODEL_ID, cache_dir=None):

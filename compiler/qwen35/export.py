@@ -40,7 +40,7 @@ DELTA_OPERATORS = dict(
 def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
     if getattr(model.config, "quantization_config", None) is not None:
-        from compiler.qwen35.fp8_adapter import install_fp8
+        from compiler.common.fp8_adapter import install_fp8
 
         install_fp8(model)
     capacity = resolve_context_length(model.config, capacity)
@@ -150,7 +150,14 @@ def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
     return exported, metadata_factory
 
 
-def export_model(*, model_dir, output, max_context_length=None, enable_inductor_optimization=False):
+def export_model(
+    *,
+    model_dir,
+    output,
+    max_context_length=None,
+    enable_inductor_optimization=False,
+    build_model="qwen35",
+):
     """Load one adapted model and publish its paired shared-weight bundle."""
     model_dir, output = Path(model_dir), Path(output)
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
@@ -168,7 +175,7 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
         capacity=capacity,
     )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
-        load_attention_ops(model="qwen35")
+        load_attention_ops(model=build_model)
         compile_shared(
             output,
             prepare_entry,
@@ -180,8 +187,15 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
     print(f"Saved prefill/decode bundle to {output}", flush=True)
 
 
-def main(argv=None):
-    parser = export_parser(__doc__, model_dir=TEXT_DIR, output=ARTIFACT_DIR / "text")
+def main(
+    argv=None,
+    *,
+    description=__doc__,
+    model_dir=TEXT_DIR,
+    output=ARTIFACT_DIR / "text",
+    build_model="qwen35",
+):
+    parser = export_parser(description, model_dir=model_dir, output=output)
     parser.add_argument(
         "--enable-inductor-optimization",
         action="store_true",
@@ -189,7 +203,7 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
-        export_model(**vars(args))
+        export_model(**vars(args), build_model=build_model)
     except ExportInputError as error:
         parser.error(str(error))
 

@@ -1,6 +1,5 @@
 """FP8 checkpoint preservation and dynamic projection packaging contracts."""
 
-import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -12,30 +11,18 @@ from torch.fx.experimental import _config as symbolic_config
 from compiler.common.kernels.finegrained_fp8 import load_fp8_kernels
 from compiler.common.tests.tensors import bits_equal
 from compiler.common.weights import SharedWeights, compile_shared
-from compiler.qwen35.config import configure
-from compiler.qwen35.fp8_adapter import install_fp8, load_weights, validate_quantization
-from compiler.qwen35.model import _text_config
+from compiler.common.fp8_adapter import install_fp8, load_weights, validate_quantization
 
 
 class QuantizationConfig(unittest.TestCase):
-    def test_untied_fp8_config_and_unsupported_quantizers(self):
+    def test_supported_config_and_unsupported_quantizers(self):
         quantization = dict(
             quant_method="fp8",
             fmt="e4m3",
             activation_scheme="dynamic",
             weight_block_size=[128, 128],
         )
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
-            path.write_text(
-                json.dumps(
-                    dict(
-                        text_config=dict(tie_word_embeddings=False),
-                        quantization_config=quantization,
-                    )
-                )
-            )
-            self.assertFalse(_text_config(path).tie_word_embeddings)
+        validate_quantization(quantization)
         for field, value in (
             ("fmt", "e5m2"),
             ("activation_scheme", "static"),
@@ -49,7 +36,9 @@ class QuantizationConfig(unittest.TestCase):
 class FP8Projection(unittest.TestCase):
     @torch.inference_mode()
     def test_hf_adapter_and_shared_aoti_preserve_quantized_weights(self):
-        configure()
+        torch.set_num_threads(1)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
         torch.manual_seed(38)
         load_fp8_kernels()
         with TemporaryDirectory() as directory:

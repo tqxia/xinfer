@@ -1,7 +1,7 @@
 # Development tools
 
 Run commands from the repository root with the matching model interpreter.
-Select `Q3_PY`, `Q35_PY` and the native build through the
+Select `Q3_PY`, `Q35_PY`, `Q38_PY` and the native build through the
 [environment guide](../environments/README.md). Build the attention library before
 export or standalone attention tests. Full-model tools require complete exported
 bundles; use fresh output paths. The [model guides](../README.md#getting-started)
@@ -71,6 +71,8 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
   tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
   compiler.qwen35.tests.test_hybrid_cache compiler.qwen35.tests.test_export
+CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest \
+  compiler.qwen38.tests.test_export compiler.common.tests.test_fp8_adapter
 ```
 
 Use each model's environment for its tests: Qwen3.5 model hooks require its

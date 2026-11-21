@@ -18,6 +18,27 @@ from compiler.qwen35.adapters.delta import install_delta
 
 
 class ModelLoading(unittest.TestCase):
+    def test_quantized_text_config_preserves_untied_embeddings(self):
+        quantization = dict(
+            quant_method="fp8",
+            fmt="e4m3",
+            activation_scheme="dynamic",
+            weight_block_size=[128, 128],
+        )
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(
+                json.dumps(
+                    dict(
+                        text_config=dict(tie_word_embeddings=False),
+                        quantization_config=quantization,
+                    )
+                )
+            )
+            config = model._text_config(path)
+            self.assertFalse(config.tie_word_embeddings)
+            self.assertEqual(config.quantization_config, quantization)
+
     def test_text_rotary_matches_hf_grid_recomposition_bitwise(self):
         config = model.Qwen3_5TextConfig()
         devices = ("cpu", "cuda") if torch.cuda.is_available() else ("cpu",)

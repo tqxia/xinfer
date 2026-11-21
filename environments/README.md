@@ -1,8 +1,9 @@
 # L20 and GB10 environments
 
 This guide owns native setup, environment checks, builds and installation.
-Use the model guides for [Qwen3](../compiler/qwen3/README.md) and
-[Qwen3.5](../compiler/qwen35/README.md) export details, and
+Use the model guides for [Qwen3](../compiler/qwen3/README.md),
+[Qwen3.5](../compiler/qwen35/README.md) and [Qwen3.8](../compiler/qwen38/README.md)
+export details, and
 [development tools](../docs/development-tools.md) for preparation, validation and
 benchmarks. [Validation status](../docs/validation-status.md) records what has
 actually been tested; a supported environment is not a blanket model-acceptance claim.
@@ -124,14 +125,15 @@ before export or standalone attention tests. Model selection comes from package
 metadata; there is no separate full-model build switch. Kernel export/AOTI checks run
 through `compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel
 runner.
-Python tools default to executables in `build/<model-family>/`
-(`qwen3` or `qwen35`); existing native-path options select another runtime. Export and
-standalone operator tests select the attention library from that build or
-`XINFER_ATTENTION_OPS_LIBRARY`.
+Export entry points select the attention library from their own `build/<model>/`
+directory (`qwen3`, `qwen35` or `qwen38`), or `XINFER_ATTENTION_OPS_LIBRARY`.
+Validation and benchmark tools select native executables by the package ABI
+(`qwen3` or `qwen35`); existing native-path options select another runtime.
 
-For Qwen3.8, use `Q38_PY` with the shared `compiler.qwen35` modules and set
-`XINFER_ATTENTION_OPS_LIBRARY="$Q38_BUILD/libxinfer_attention_ops.so"` for export
-and standalone tests. Select `--native "$Q38_BUILD/xinfer_validate"` for validation
+For Qwen3.8, use `Q38_PY` with `compiler.qwen38.export`; it defaults to the
+Qwen3.8 attention build. When running shared Qwen3.5 standalone tests, set
+`XINFER_ATTENTION_OPS_LIBRARY="$Q38_BUILD/libxinfer_attention_ops.so"`.
+Select `--native "$Q38_BUILD/xinfer_validate"` for validation
 and `--native "$Q38_BUILD/xinfer_benchmark"` for benchmarks. The Qwen3.5 runtime
 check uses `--cli "$Q38_BUILD/xinfer_aoti"`. These overrides keep its independent
 environment/build separate from the Qwen3.5 defaults.
@@ -153,7 +155,7 @@ older host `libcudart` can leave unresolved runtime symbols. GB10 uses its CUDA
 After building, follow the [Qwen3](../compiler/qwen3/README.md#prepare-and-export)
 or [Qwen3.5](../compiler/qwen35/README.md#prepare-and-export) guide with `Q3_PY` or
 `Q35_PY` from the build section, or the
-[Qwen3.8 FP8 section](../compiler/qwen35/README.md#qwen38-27b-fp8) with `Q38_PY`.
+[Qwen3.8 guide](../compiler/qwen38/README.md) with `Q38_PY`.
 Download once before enabling offline mode;
 export both entries into a fresh directory. The shared
 [preparation tool](../docs/development-tools.md#checkpoint-preparation-and-tokenization)

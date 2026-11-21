@@ -13,8 +13,8 @@ Qwen3.8-27B-FP8 profile was tested on GB10 with Torch 2.13.0+cu130. All use
 dynamic B=1..8 and 1,024-token context capacity per row. The FP8 reference retains
 the original HF FP8 modules and the version-4 kernels-community implementation.
 Checkpoint pins and model contracts are in the
-[Qwen3](../compiler/qwen3/README.md) and [Qwen3.5](../compiler/qwen35/README.md)
-guides. Qwen3.5 uses linear packing and default Inductor options; the
+[Qwen3](../compiler/qwen3/README.md), [Qwen3.5](../compiler/qwen35/README.md) and
+[Qwen3.8](../compiler/qwen38/README.md) guides. Qwen3.5 uses linear packing and default Inductor options; the
 singleton-only GEMV pass does not match its dynamic-batch graphs.
 
 | Model | Target | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
