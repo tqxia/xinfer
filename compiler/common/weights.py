@@ -19,7 +19,7 @@ from compiler.common.artifacts import (
 )
 from compiler.common.metadata import finalize_metadata, validate_metadata_pair
 from compiler.common.package import compile_package
-from compiler.common.aoti_compat import owned_constant_handles
+from compiler.patches.torch_2_13.aoti_constant_handles import owned_constant_handles
 
 
 SHARED_WEIGHT_OPTIONS = {

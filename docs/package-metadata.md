@@ -137,8 +137,9 @@ The shared archive also supports E4M3 FP8 storage (`float8_e4m3fn`), with scales
 stored as separate tensors. FP8 bundles require a reader with that dtype support;
 the manifest format and dynamic model ABI are unchanged.
 
-Shared-weight compilation applies a version/hash-guarded Torch 2.13 header
-overlay so cloned user-managed constant handles are released with their loaders.
+Shared-weight compilation applies the version/hash-guarded
+[Torch 2.13 header overlay](../compiler/patches/torch_2_13/README.md) so cloned
+user-managed constant handles are released with their loaders.
 The overlay preserves shared tensor storage and does not modify installed Torch
 headers. Older bundles need re-export for this lifetime fix; metadata edits cannot
 change their compiled ownership behavior.
