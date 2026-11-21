@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, sentinel
 
 import torch
 from safetensors.torch import load_file, save_file
@@ -18,6 +18,29 @@ from tools.prepare import cli, qwen35
 
 
 class PreparedCheckpoint(unittest.TestCase):
+    def test_prepared_model_loading_selects_frontend_from_checkpoint_identity(self):
+        for model_id in REVISIONS:
+            frontend = "qwen38" if model_id == "Qwen/Qwen3.8-27B-FP8" else "qwen35"
+            other = "qwen35" if frontend == "qwen38" else "qwen38"
+            with self.subTest(model=model_id), TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / MODEL_MANIFEST_NAME).write_text(json.dumps(dict(model=model_id)))
+                with (
+                    patch(
+                        f"compiler.{frontend}.model.load_model", return_value=sentinel.model
+                    ) as load,
+                    patch(f"compiler.{other}.model.load_model") as unused,
+                ):
+                    self.assertIs(qwen35.load_model(root), sentinel.model)
+                load.assert_called_once_with(root)
+                unused.assert_not_called()
+
+    def test_unknown_checkpoint_does_not_select_a_compiler_frontend(self):
+        with patch.object(qwen35, "import_module") as load:
+            with self.assertRaisesRegex(ValueError, "Unsupported checkpoint"):
+                qwen35.compiler_model("Qwen/unknown")
+        load.assert_not_called()
+
     def source(self, directory, revision=REVISIONS[MODEL_ID], *, text=True):
         config = dict(text_config=dict(tie_word_embeddings=True))
         fp8 = revision == REVISIONS["Qwen/Qwen3.8-27B-FP8"]

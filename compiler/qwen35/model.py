@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
-from transformers import GenerationConfig, Qwen3_5ForCausalLM
+from transformers import Qwen3_5ForCausalLM
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextConfig,
     Qwen3_5TextRotaryEmbedding,
@@ -20,44 +20,39 @@ from compiler.common.context import resolve_context_length
 
 def _text_config(path):
     document = json.loads(path.read_text())
+    if document.get("quantization_config") is not None:
+        raise ValueError("Qwen3.5 text export requires an unquantized checkpoint")
     config = Qwen3_5TextConfig(**document["text_config"])
-    quantization = document.get("quantization_config")
-    if quantization is not None:
-        from compiler.common.fp8_adapter import validate_quantization
-
-        validate_quantization(quantization)
-        config.quantization_config = quantization
-    if (not config.tie_word_embeddings and quantization is None) or config.rope_parameters[
-        "rope_type"
-    ] != "default":
+    if not config.tie_word_embeddings or config.rope_parameters["rope_type"] != "default":
         raise ValueError("Qwen3.5 text export requires tied embeddings and default RoPE")
     config._attn_implementation = "sdpa"
     return config
 
 
+def create_text_model(config):
+    """Construct the shared text architecture without allocating weight storage."""
+    with torch.device("meta"):
+        return Qwen3_5ForCausalLM(config)
+
+
+def finalize_text_model(model):
+    """Restore FP32 nonpersistent buffers and place the loaded model on CUDA."""
+    # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
+    model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(model.config)
+    return model.eval().requires_grad_(False).to("cuda")
+
+
 def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     directory = Path(directory)
     config = _text_config(directory / "config.json")
-    with torch.device("meta"):
-        model = Qwen3_5ForCausalLM(config)
-    if getattr(config, "quantization_config", None) is not None:
-        from compiler.common.fp8_adapter import load_weights
-
-        if dtype != torch.bfloat16:
-            raise ValueError("FP8 models require BF16 activations")
-        load_weights(model, directory / "text.safetensors")
-        model.generation_config = GenerationConfig.from_pretrained(directory, local_files_only=True)
-    else:
-        weights = {
-            name: value.to(dtype)
-            for name, value in load_file(directory / "text.safetensors").items()
-        }
-        weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
-        model.load_state_dict(weights, strict=True, assign=True)
-        model.lm_head.weight = model.model.embed_tokens.weight
-    # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
-    model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(config)
-    return model.eval().requires_grad_(False).to("cuda")
+    model = create_text_model(config)
+    weights = {
+        name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()
+    }
+    weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
+    model.load_state_dict(weights, strict=True, assign=True)
+    model.lm_head.weight = model.model.embed_tokens.weight
+    return finalize_text_model(model)
 
 
 def deltanet_state_shapes(config, batch_size=1):

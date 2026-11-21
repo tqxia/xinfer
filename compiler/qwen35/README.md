@@ -2,8 +2,9 @@
 
 This module owns the dense Qwen3.5 text architecture and the Qwen3.5-0.8B / 4B
 export entry point. The [Qwen3.8 frontend](../qwen38/README.md) reuses its adapters,
-state handling and export pipeline with independent defaults. Python prepares
-and compiles the text model; the shared C++ runtime loads the bundle and generates tokens.
+state handling, construction helpers and export pipeline with its own loader and
+defaults. Python prepares and compiles the text model; the shared C++ runtime
+loads the bundle and generates tokens.
 Vision and MTP are outside the supported scope. Defaults select 0.8B.
 
 Use the [environment guide](../../environments/README.md) for setup/builds and
@@ -41,8 +42,9 @@ For 4B, keep the prepared checkpoint and compiled bundle separate:
 
 Preparation verifies source shards and extracts only language-model tensors into
 `text.safetensors`, with `model_manifest.json`. Reuse prepared directories after
-that one-time step. BF16 checkpoints require tied embeddings; FP8 preserves the
-untied BF16 output head. All supported checkpoints use default RoPE.
+that one-time step. The Qwen3.5 loader accepts unquantized checkpoints with tied
+embeddings and default RoPE. The [Qwen3.8 loader](../qwen38/README.md) owns FP8
+checkpoint rules and preserves its untied BF16 output head.
 Dependency pins live in the per-device requirements files.
 See [preparation](../../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 for verification, offline mode and tokenization.
@@ -72,8 +74,8 @@ eager-numerics selector.
 Both entries use the same explicit `ModelStep` interface:
 `step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
 One bundle supports dynamic B=1..8. Activations are BF16, with BF16 or FP8
-projection storage as described above; RoPE frequencies and recurrent state
-use FP32. `C` is the compiled context capacity.
+projection storage according to the selected frontend; RoPE frequencies and
+recurrent state use FP32. `C` is the compiled context capacity.
 
 | Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | Allocated KV shape |
 | --- | ---: | ---: | ---: | ---: | --- |

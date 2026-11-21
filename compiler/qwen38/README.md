@@ -1,11 +1,19 @@
 # Qwen3.8-27B-FP8 AOTI / C++
 
-This frontend owns Qwen3.8 defaults and the export entry point. It reuses the
-dense Qwen3.5 text architecture, adapters, export passes and native model ABI.
+This frontend owns Qwen3.8 defaults, checkpoint loading and the export entry
+point. It reuses the dense Qwen3.5 text architecture, adapters, export passes
+and native model ABI.
 Package metadata retains `model_type="qwen35"`; the checkpoint records the
 Qwen3.8 model ID and revision. Shared FP8 loading and export adapters live in
 `compiler/common/fp8_adapter.py`, with kernels in
 `compiler/common/kernels/finegrained_fp8.py`.
+
+`model.py` validates dynamic E4M3 FP8 with 128x128 weight blocks, untied
+embeddings and default RoPE. Its loader preserves quantized weights and the
+checkpoint's generation settings, with BF16 activations. Meta-model construction
+and FP32 rotary-buffer restoration are shared with Qwen3.5; the exporter receives
+the Qwen3.8 loader as a callback. Preparation, validation and benchmarks select
+the loader using the checkpoint model ID while retaining the shared runtime ABI.
 
 This is an experimental integration: the GB10 bundle runs natively and passes
 native parity, but its full-model HF logit comparisons currently exceed the
@@ -92,8 +100,10 @@ Use `Q38_PY` from the environment guide. CPU frontend checks and GPU FP8
 projection/AOTI checks run separately:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest compiler.qwen38.tests.test_export
-"$Q38_PY" -m unittest compiler.common.tests.test_fp8_adapter
+CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest \
+  compiler.qwen38.tests.test_model compiler.qwen38.tests.test_export
+"$Q38_PY" -m unittest \
+  compiler.qwen38.tests.test_model.QuantizedCheckpoint compiler.common.tests.test_fp8_adapter
 ```
 
 Shared architecture tests use the Qwen3.5 modules, including the 27B classes in

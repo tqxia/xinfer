@@ -2,6 +2,7 @@
 
 from compiler.qwen35.export import main as export_main
 from compiler.qwen38.config import ARTIFACT_DIR, TEXT_DIR
+from compiler.qwen38.model import load_model
 
 
 def main(argv=None):
@@ -11,6 +12,7 @@ def main(argv=None):
         model_dir=TEXT_DIR,
         output=ARTIFACT_DIR / "text",
         build_model="qwen38",
+        model_loader=load_model,
     )
 
 

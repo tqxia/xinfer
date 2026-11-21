@@ -10,8 +10,8 @@ from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from compiler.qwen35.config import configure
-from tools.prepare.qwen35 import REVISIONS, default_model_dir as prepared_model_dir
-from compiler.qwen35.model import ModelStep, load_model, state_specs
+from tools.prepare.qwen35 import REVISIONS, default_model_dir as prepared_model_dir, load_model
+from compiler.qwen35.model import ModelStep, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts

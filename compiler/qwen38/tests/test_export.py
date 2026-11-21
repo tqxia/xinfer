@@ -23,6 +23,7 @@ class ExportFrontend(unittest.TestCase):
             max_context_length=None,
             enable_inductor_optimization=False,
             build_model="qwen38",
+            model_loader=export.load_model,
         )
 
     def test_overrides_reach_shared_compiler_and_select_qwen38_attention(self):
@@ -47,7 +48,8 @@ class ExportFrontend(unittest.TestCase):
                 with (
                     self.subTest(optimize=optimize),
                     patch.object(shared, "configure"),
-                    patch.object(shared, "load_model") as load,
+                    patch.object(export, "load_model") as load,
+                    patch.object(shared, "load_model") as fallback,
                     patch.object(shared, "install_delta"),
                     patch.object(shared, "load_attention_ops") as attention,
                     patch.object(shared, "attention_library", return_value=root / "attention.so"),
@@ -57,6 +59,7 @@ class ExportFrontend(unittest.TestCase):
                 ):
                     export.main(argv)
                 load.assert_called_once_with(root)
+                fallback.assert_not_called()
                 attention.assert_called_once_with(model="qwen38")
                 compile_pair.assert_called_once()
                 arguments, options = compile_pair.call_args
@@ -76,7 +79,7 @@ class ExportFrontend(unittest.TestCase):
             root = Path(temporary)
             (root / "config.json").write_text(json.dumps(dict(max_position_embeddings=262144)))
             with (
-                patch.object(shared, "load_model") as load,
+                patch.object(export, "load_model") as load,
                 redirect_stderr(io.StringIO()),
                 self.assertRaises(SystemExit) as error,
             ):

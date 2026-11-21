@@ -22,7 +22,7 @@ def prepare_tokens(model_dir):
 
 def eager_loader():
     from compiler.qwen35.config import configure
-    from compiler.qwen35.model import load_model
+    from tools.prepare.qwen35 import load_model
 
     configure()
     return hf_eager_loader(load_model)

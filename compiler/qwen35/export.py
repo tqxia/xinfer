@@ -157,12 +157,13 @@ def export_model(
     max_context_length=None,
     enable_inductor_optimization=False,
     build_model="qwen35",
+    model_loader=None,
 ):
     """Load one adapted model and publish its paired shared-weight bundle."""
     model_dir, output = Path(model_dir), Path(output)
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
     configure()
-    model = load_model(model_dir)
+    model = (load_model if model_loader is None else model_loader)(model_dir)
     install_delta(model)
     checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)
     options = {"emulate_precision_casts": True}
@@ -194,6 +195,7 @@ def main(
     model_dir=TEXT_DIR,
     output=ARTIFACT_DIR / "text",
     build_model="qwen35",
+    model_loader=None,
 ):
     parser = export_parser(description, model_dir=model_dir, output=output)
     parser.add_argument(
@@ -203,7 +205,7 @@ def main(
     )
     args = parser.parse_args(argv)
     try:
-        export_model(**vars(args), build_model=build_model)
+        export_model(**vars(args), build_model=build_model, model_loader=model_loader)
     except ExportInputError as error:
         parser.error(str(error))
 

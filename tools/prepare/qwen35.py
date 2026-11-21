@@ -1,9 +1,10 @@
 """Prepare pinned Qwen3.5 text checkpoints from their multimodal sources."""
 
 import json
+from importlib import import_module
 from pathlib import Path
 
-from compiler.common.artifacts import MODEL_MANIFEST_NAME, require, sha256, write_json
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require, sha256, write_json
 from compiler.qwen35.config import TEXT_DIR
 from compiler.qwen38.config import MODEL_ID as QWEN38_MODEL_ID, TEXT_DIR as QWEN38_TEXT_DIR
 from tools.prepare import common
@@ -31,17 +32,33 @@ def model_files(model_id):
     return (*MODEL_FILES, "generation_config.json") if model_id == QWEN38_MODEL_ID else MODEL_FILES
 
 
+def compiler_model(model_id):
+    """Select checkpoint policy independently of the shared qwen35 runtime ABI."""
+    require(
+        isinstance(model_id, str) and model_id in REVISIONS, f"Unsupported checkpoint: {model_id}"
+    )
+    frontend = "qwen38" if model_id == QWEN38_MODEL_ID else "qwen35"
+    return import_module(f"compiler.{frontend}.model")
+
+
+def load_model(directory):
+    """Load a prepared checkpoint through its frontend for validation and benchmarks."""
+    directory = Path(directory)
+    manifest = read_json(directory / MODEL_MANIFEST_NAME)
+    return compiler_model(manifest["model"]).load_model(directory)
+
+
 def prepare(directory, model=MODEL_ID, cache_dir=None):
     """Extract only language-model tensors and publish one verified text checkpoint."""
     require(isinstance(model, str) and model in REVISIONS, f"Unsupported checkpoint: {model}")
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    from compiler.qwen35.model import _text_config
+    text_config = compiler_model(model)._text_config
 
     with common.checkpoint_directory(directory) as staging:
         hub = common.Hub(model, REVISIONS[model], cache_dir=cache_dir)
-        config = _text_config(hub.fetch("config.json"))
+        config = text_config(hub.fetch("config.json"))
         index = json.loads(hub.fetch("model.safetensors.index.json").read_text())["weight_map"]
         prefix = "model.language_model."
         names = {

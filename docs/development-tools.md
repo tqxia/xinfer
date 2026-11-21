@@ -72,7 +72,8 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
   tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
   compiler.qwen35.tests.test_hybrid_cache compiler.qwen35.tests.test_export
 CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest \
-  compiler.qwen38.tests.test_export compiler.common.tests.test_fp8_adapter
+  compiler.qwen38.tests.test_model compiler.qwen38.tests.test_export \
+  compiler.common.tests.test_fp8_adapter
 ```
 
 Use each model's environment for its tests: Qwen3.5 model hooks require its

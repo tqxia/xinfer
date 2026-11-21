@@ -120,12 +120,15 @@ class HFEagerBaseline(unittest.TestCase):
                 predict([4], 0)
 
     def test_both_model_hooks_use_the_shared_hf_loader(self):
-        for family, module in (("qwen3", qwen3_benchmark), ("qwen35", qwen35_benchmark)):
+        for family, module, provider in (
+            ("qwen3", qwen3_benchmark, "compiler.qwen3.model"),
+            ("qwen35", qwen35_benchmark, "tools.prepare.qwen35"),
+        ):
             with self.subTest(model=family):
                 model = SimpleNamespace(load_model=Mock())
                 sentinel = object()
                 with (
-                    patch.dict(sys.modules, {f"compiler.{family}.model": model}),
+                    patch.dict(sys.modules, {provider: model}),
                     patch.object(module, "hf_eager_loader", return_value=sentinel) as helper,
                     patch("compiler.qwen35.config.configure") as configure,
                 ):
@@ -156,7 +159,7 @@ class HFEagerBaseline(unittest.TestCase):
             setattr, torch.backends.cudnn, "allow_tf32", torch.backends.cudnn.allow_tf32
         )
         with (
-            patch.dict(sys.modules, {"compiler.qwen35.model": model}),
+            patch.dict(sys.modules, {"tools.prepare.qwen35": model}),
             patch("torch.set_num_threads"),
         ):
             qwen35_benchmark.eager_loader()
