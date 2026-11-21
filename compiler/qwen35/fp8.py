@@ -59,7 +59,7 @@ def load_weights(model, path):
                 field, torch.nn.Parameter(value.to("cuda"), requires_grad=False)
             )
 
-    # Resolve the official HF backend to the same immutable upstream build used
+    # Resolve the official HF backend to the same loaded upstream build used
     # by export. Restore the resolver immediately; HF forward math is unchanged.
     kernel = load_fp8_kernels()
     resolver = hf_fp8.lazy_load_kernel

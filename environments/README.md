@@ -21,14 +21,16 @@ a compatible CUDA toolkit and NVIDIA driver. The export linker path uses Linux G
 
 The authoritative pins are the self-contained
 [L20 Qwen3](l20/qwen3_requirements.txt), [L20 Qwen3.5](l20/qwen35_requirements.txt),
-[GB10 Qwen3](gb10/qwen3_requirements.txt) and [GB10 Qwen3.5](gb10/qwen35_requirements.txt)
+[L20 Qwen3.8](l20/qwen38_requirements.txt), [GB10 Qwen3](gb10/qwen3_requirements.txt),
+[GB10 Qwen3.5](gb10/qwen35_requirements.txt) and [GB10 Qwen3.8](gb10/qwen38_requirements.txt)
 requirements files. Setup and checking read the same selected file, including
 the PyTorch index, Torch, Triton, CMake, Ninja and model dependencies. Versions
 can differ between models. JSON profiles contain OS, CPU architecture and GPU
 capability checks; they do not duplicate package pins.
 
-Qwen3 and Qwen3.5 use separate environments for their pinned Transformers
-implementations. Setup uses official matching wheels by default and permits a
+Qwen3, Qwen3.5 and Qwen3.8 use separate environments. Qwen3.8's profile includes
+the `kernels` dependency for FP8 and uses the shared Qwen3.5 compiler/runtime.
+Setup uses official matching wheels by default and permits a
 local Torch wheel override. For an offline image, use the distinct
 [L20 Docker workflow](l20/docker/README.md).
 
@@ -45,7 +47,7 @@ if [ "$TARGET" = l20 ]; then
 fi
 RUN=baseline-001                    # fresh report directory
 
-for MODEL in qwen3 qwen35; do
+for MODEL in qwen3 qwen35 qwen38; do
   MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
   bash "environments/$TARGET/setup.sh" --model "$MODEL" --venv "$MODEL_ENV"
   bash environments/check.sh --python "$MODEL_ENV/bin/python" \
@@ -57,7 +59,7 @@ done
 Setup always creates a fresh independent venv and refuses an existing destination.
 It installs the selected requirements, then runs `pip check`; it neither links
 nor inherits packages from a system installation. Setup does not require a GPU.
-Both target scripts accept `--model qwen3|qwen35`, `--python PATH` (default
+Both target scripts accept `--model qwen3|qwen35|qwen38`, `--python PATH` (default
 `python3.12`), `--venv PATH` and `--torch-wheel PATH`. A local wheel replaces only
 the Torch requirement. Default venvs are `work/l20/<model>-torch213-venv` and
 `work/gb10/<model>-venv`.
@@ -71,7 +73,7 @@ report with package/build evidence.
 ## Build compiler kernels and native runtimes for each model
 
 Each model's native build uses LibTorch from that model's Python environment.
-Build directories are `build/qwen3/` and `build/qwen35/`. CMake derives the C++
+Build directories are `build/qwen3/`, `build/qwen35/` and `build/qwen38/`. CMake derives the C++
 standard from the selected Torch build. Use a fresh build directory when
 changing Torch installations. CMake and Ninja are installed in each model
 venv's `bin/`; the C++ compiler and CUDA toolkit remain host prerequisites.
@@ -79,11 +81,13 @@ venv's `bin/`; the C++ compiler and CUDA toolkit remain host prerequisites.
 ```bash
 Q3_PY="$PWD/work/$TARGET/qwen3$ENV_SUFFIX/bin/python"
 Q35_PY="$PWD/work/$TARGET/qwen35$ENV_SUFFIX/bin/python"
+Q38_PY="$PWD/work/$TARGET/qwen38$ENV_SUFFIX/bin/python"
 Q3_BUILD="$PWD/build/qwen3"
 Q35_BUILD="$PWD/build/qwen35"
+Q38_BUILD="$PWD/build/qwen38"
 NVCC=/usr/local/cuda/bin/nvcc         # compatible toolkit used for this build
 
-for MODEL in qwen3 qwen35; do
+for MODEL in qwen3 qwen35 qwen38; do
   MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
   MODEL_PY="$MODEL_ENV/bin/python"
   CMAKE="$MODEL_ENV/bin/cmake"
@@ -120,10 +124,17 @@ before export or standalone attention tests. Model selection comes from package
 metadata; there is no separate full-model build switch. Kernel export/AOTI checks run
 through `compiler.qwen35.tests.test_kernels_aoti`; they need no native kernel
 runner.
-Each model's Python tools default to executables in its `build/<model>/`
-directory; existing native-path options select another runtime. Export and
+Python tools default to executables in `build/<model-family>/`
+(`qwen3` or `qwen35`); existing native-path options select another runtime. Export and
 standalone operator tests select the attention library from that build or
 `XINFER_ATTENTION_OPS_LIBRARY`.
+
+For Qwen3.8, use `Q38_PY` with the shared `compiler.qwen35` modules and set
+`XINFER_ATTENTION_OPS_LIBRARY="$Q38_BUILD/libxinfer_attention_ops.so"` for export
+and standalone tests. Select `--native "$Q38_BUILD/xinfer_validate"` for validation
+and `--native "$Q38_BUILD/xinfer_benchmark"` for benchmarks. The Qwen3.5 runtime
+check uses `--cli "$Q38_BUILD/xinfer_aoti"`. These overrides keep its independent
+environment/build separate from the Qwen3.5 defaults.
 
 `--build` verifies that CMake selected the active environment's LibTorch. Build
 `xinfer_attention_ops` before either full-model export so Python can register
@@ -141,7 +152,9 @@ older host `libcudart` can leave unresolved runtime symbols. GB10 uses its CUDA
 
 After building, follow the [Qwen3](../compiler/qwen3/README.md#prepare-and-export)
 or [Qwen3.5](../compiler/qwen35/README.md#prepare-and-export) guide with `Q3_PY` or
-`Q35_PY` from the build section. Download once before enabling offline mode;
+`Q35_PY` from the build section, or the
+[Qwen3.8 FP8 section](../compiler/qwen35/README.md#qwen38-27b-fp8) with `Q38_PY`.
+Download once before enabling offline mode;
 export both entries into a fresh directory. The shared
 [preparation tool](../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 owns download, verification and token IDs. Current packaging uses a bundled

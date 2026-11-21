@@ -63,10 +63,12 @@ class EnvironmentContract(unittest.TestCase):
             "huggingface-hub",
         }
         for target in ("l20", "gb10"):
-            for model in ("qwen3", "qwen35"):
+            for model in ("qwen3", "qwen35", "qwen38"):
                 with self.subTest(target=target, model=model):
                     requirements = environment.model_requirements(target, model)
                     self.assertTrue(packages <= requirements.keys())
+                    if model == "qwen38":
+                        self.assertIn("kernels", requirements)
 
     def test_collection_records_all_requested_native_and_model_packages(self):
         with (
@@ -163,13 +165,13 @@ class EnvironmentContract(unittest.TestCase):
     def test_cli_reads_pins_through_the_same_model_entrypoint_as_setup(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            requirements = self.write_requirements(root)
+            requirements = self.write_requirements(root, "qwen38")
             with (
                 patch.object(environment, "ROOT", root),
                 patch.object(environment, "collect", return_value=observed()) as collect,
                 redirect_stdout(io.StringIO()) as stdout,
             ):
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen35"]), 0)
+                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen38"]), 0)
                 first = json.loads(stdout.getvalue())
                 self.assertEqual(first["requirements"], REQUIREMENTS)
                 self.assertEqual(first["expected"], PROFILE)
@@ -179,7 +181,7 @@ class EnvironmentContract(unittest.TestCase):
                 )
                 stdout.seek(0)
                 stdout.truncate(0)
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen35"]), 1)
+                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen38"]), 1)
                 second = json.loads(stdout.getvalue())
                 self.assertEqual(second["requirements"]["cmake"], "4.4.0")
                 self.assertEqual(len(second["issues"]), 1)

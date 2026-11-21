@@ -129,7 +129,7 @@ class Suite:
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
         quantization = read_json(self.model_dir / "config.json").get("quantization_config")
         if quantization is not None:
-            from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_REVISION
+            from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_VERSION
 
             self.reference_protocol = dict(
                 dtype="bfloat16",
@@ -138,7 +138,7 @@ class Suite:
                 teacher_inputs="matched tokens and partitions",
                 quantization="dynamic activation FP8; 128x128 weight blocks",
                 kernel_repo=KERNEL_REPO,
-                kernel_revision=KERNEL_REVISION,
+                kernel_version=KERNEL_VERSION,
                 scope="FP8 checkpoint execution; not a comparison with unquantized weights",
             )
         for metadata in pair.values():

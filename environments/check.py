@@ -168,7 +168,7 @@ def validate(actual, profile, requirements):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("l20", "gb10"), required=True)
-    parser.add_argument("--model", choices=("qwen3", "qwen35"), required=True)
+    parser.add_argument("--model", choices=("qwen3", "qwen35", "qwen38"), required=True)
     parser.add_argument(
         "--build", type=Path, help="Also check this configured CMake build's Torch_DIR"
     )

@@ -1,4 +1,4 @@
-"""Block-scaled FP8 projections using pinned upstream Triton operators.
+"""Block-scaled FP8 projections using versioned upstream Triton operators.
 
 Call load_fp8_kernels before export or eager execution. The launch wrappers
 reuse upstream Triton kernels and decompose during AOTI compilation; deployed
@@ -10,23 +10,23 @@ import torch
 from compiler.common.artifacts import require
 
 KERNEL_REPO = "kernels-community/finegrained-fp8"
-KERNEL_REVISION = "03ae31933313f38fae2b050dbe2731024386c369"
+KERNEL_VERSION = 4
 _KERNEL = None
 _LINEAR_KERNEL = None
 
 
 def load_fp8_kernels():
-    """Preload the immutable CUDA build, honoring HF_HUB_OFFLINE/KERNELS_CACHE."""
+    """Preload the version-4 CUDA build, honoring HF_HUB_OFFLINE/KERNELS_CACHE."""
     global _KERNEL, _LINEAR_KERNEL
     if _KERNEL is None:
         from importlib import import_module
 
         from kernels import get_kernel
 
-        kernel = get_kernel(KERNEL_REPO, revision=KERNEL_REVISION, backend="cuda")
+        kernel = get_kernel(KERNEL_REPO, version=KERNEL_VERSION, backend="cuda")
         require(
             callable(getattr(kernel, "matmul_2d", None)),
-            "The pinned FP8 kernel build is missing its projection operators",
+            "The FP8 kernel build is missing its projection operators",
         )
         module = import_module(kernel.matmul_2d.__module__)
         _LINEAR_KERNEL = module.w8a8_block_dynamic_fp8_matmul_kernel

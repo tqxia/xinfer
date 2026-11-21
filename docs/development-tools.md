@@ -278,7 +278,7 @@ Structural violations abort validation and are recorded as errors. These checks
 are outside the tensor-comparison count.
 
 For Qwen3.8-27B-FP8, the HF reference retains the checkpoint's FP8 weights and
-dynamic activation quantization, using the pinned kernels-community backend.
+dynamic activation quantization, using version 4 of the kernels-community backend.
 Layer interfaces and logits remain BF16. The same `shared_bf16` policy and 5%
 limits apply, and scalar reports identify FP8 storage in `reference_protocol`.
 These comparisons measure execution fidelity, not quantization loss against
