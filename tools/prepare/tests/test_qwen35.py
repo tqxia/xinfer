@@ -20,8 +20,18 @@ from tools.prepare import cli, qwen35
 class PreparedCheckpoint(unittest.TestCase):
     def source(self, directory, revision=REVISIONS[MODEL_ID], *, text=True):
         config = dict(text_config=dict(tie_word_embeddings=True))
+        fp8 = revision == REVISIONS["Qwen/Qwen3.8-27B-FP8"]
+        files = qwen35.model_files("Qwen/Qwen3.8-27B-FP8") if fp8 else MODEL_FILES
+        if fp8:
+            config["text_config"]["tie_word_embeddings"] = False
+            config["quantization_config"] = dict(
+                quant_method="fp8",
+                fmt="e4m3",
+                activation_scheme="dynamic",
+                weight_block_size=[128, 128],
+            )
         (directory / "config.json").write_text(json.dumps(config))
-        for name in MODEL_FILES[1:]:
+        for name in files[1:]:
             (directory / name).write_text("fixture")
         names = (
             "model.language_model.embed_tokens.weight",
@@ -29,6 +39,20 @@ class PreparedCheckpoint(unittest.TestCase):
         )
         values = (torch.arange(4).reshape(2, 2).bfloat16(), torch.ones(2, 2).bfloat16())
         shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+        mapped = ("model.embed_tokens.weight", "model.layers.0.linear_attn.in_proj_qkv.weight")
+        if fp8:
+            names += (
+                "lm_head.weight",
+                "model.language_model.layers.0.linear_attn.in_proj_qkv.weight_scale_inv",
+            )
+            values = (
+                values[0],
+                torch.ones(128, 128).to(torch.float8_e4m3fn),
+                values[0] + 1,
+                torch.ones(1, 1).bfloat16(),
+            )
+            shards += ("head.safetensors", "scale.safetensors")
+            mapped += ("lm_head.weight", "model.layers.0.linear_attn.in_proj_qkv.weight_scale_inv")
         for name, value, shard in zip(names, values, shards):
             save_file({name: value}, directory / shard)
         (directory / "model.safetensors.index.json").write_text(
@@ -40,7 +64,7 @@ class PreparedCheckpoint(unittest.TestCase):
             )
         )
         siblings = []
-        for name in (*MODEL_FILES, "model.safetensors.index.json", *shards):
+        for name in (*files, "model.safetensors.index.json", *shards):
             data = (directory / name).read_bytes()
             blob_id = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
             siblings.append(
@@ -54,12 +78,7 @@ class PreparedCheckpoint(unittest.TestCase):
                 )
             )
         info = SimpleNamespace(sha=revision, siblings=siblings)
-        return info, dict(
-            zip(
-                ("model.embed_tokens.weight", "model.layers.0.linear_attn.in_proj_qkv.weight"),
-                values,
-            )
-        )
+        return info, dict(zip(mapped, values))
 
     def network(self, source, info, model_id=MODEL_ID, cache_dir=None):
         downloads = []
@@ -96,7 +115,12 @@ class PreparedCheckpoint(unittest.TestCase):
                 actual = load_file(output / "text.safetensors")
                 self.assertEqual(set(actual), set(expected))
                 for name in expected:
-                    self.assertTrue(torch.equal(actual[name], expected[name]))
+                    self.assertEqual(actual[name].dtype, expected[name].dtype)
+                    self.assertTrue(
+                        torch.equal(
+                            actual[name].view(torch.uint8), expected[name].view(torch.uint8)
+                        )
+                    )
                 self.assertTrue((output / "model_manifest.json").is_file())
                 self.assertFalse((output / "manifest.json").exists())
                 self.assertEqual(manifest, json.loads((output / MODEL_MANIFEST_NAME).read_text()))
@@ -105,9 +129,13 @@ class PreparedCheckpoint(unittest.TestCase):
                 self.assertEqual(manifest["text_parameters"], len(expected))
                 self.assertEqual(
                     set(manifest["source_shards"]),
-                    set(downloads) - set(MODEL_FILES) - {"model.safetensors.index.json"},
+                    set(downloads)
+                    - set(qwen35.model_files(model_id))
+                    - {"model.safetensors.index.json"},
                 )
-                self.assertEqual(set(manifest["files"]), {*MODEL_FILES, "text.safetensors"})
+                self.assertEqual(
+                    set(manifest["files"]), {*qwen35.model_files(model_id), "text.safetensors"}
+                )
                 for name, digest in manifest["files"].items():
                     self.assertEqual(sha256(output / name), digest)
                 self.assertEqual(qwen35.verify_model(output), manifest)
@@ -177,6 +205,11 @@ class PreparedCheckpoint(unittest.TestCase):
         for arguments, expected_model, expected_directory in (
             (["--model", MODEL_ID], MODEL_ID, TEXT_DIR),
             (["--model", "Qwen/Qwen3.5-4B"], "Qwen/Qwen3.5-4B", Path("work/qwen35/4b/text")),
+            (
+                ["--model", "Qwen/Qwen3.8-27B-FP8"],
+                "Qwen/Qwen3.8-27B-FP8",
+                Path("work/qwen35/27b-fp8/text"),
+            ),
             (
                 ["--model", "Qwen/Qwen3.5-4B", "--output", "custom/text"],
                 "Qwen/Qwen3.5-4B",

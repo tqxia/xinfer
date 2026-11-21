@@ -216,5 +216,9 @@ class RecurrentKernels4B(RecurrentKernels, unittest.TestCase):
     value_heads = 32
 
 
+class RecurrentKernels27B(RecurrentKernels, unittest.TestCase):
+    value_heads = 48
+
+
 if __name__ == "__main__":
     unittest.main()

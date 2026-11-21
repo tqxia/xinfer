@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 from safetensors.torch import load_file
-from transformers import Qwen3_5ForCausalLM
+from transformers import GenerationConfig, Qwen3_5ForCausalLM
 from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextConfig,
     Qwen3_5TextRotaryEmbedding,
@@ -19,8 +19,17 @@ from compiler.common.context import resolve_context_length
 
 
 def _text_config(path):
-    config = Qwen3_5TextConfig(**json.loads(path.read_text())["text_config"])
-    if not config.tie_word_embeddings or config.rope_parameters["rope_type"] != "default":
+    document = json.loads(path.read_text())
+    config = Qwen3_5TextConfig(**document["text_config"])
+    quantization = document.get("quantization_config")
+    if quantization is not None:
+        from compiler.qwen35.fp8 import validate_quantization
+
+        validate_quantization(quantization)
+        config.quantization_config = quantization
+    if (not config.tie_word_embeddings and quantization is None) or config.rope_parameters[
+        "rope_type"
+    ] != "default":
         raise ValueError("Qwen3.5 text export requires tied embeddings and default RoPE")
     config._attn_implementation = "sdpa"
     return config
@@ -31,12 +40,21 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     config = _text_config(directory / "config.json")
     with torch.device("meta"):
         model = Qwen3_5ForCausalLM(config)
-    weights = {
-        name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()
-    }
-    weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
-    model.load_state_dict(weights, strict=True, assign=True)
-    model.lm_head.weight = model.model.embed_tokens.weight
+    if getattr(config, "quantization_config", None) is not None:
+        from compiler.qwen35.fp8 import load_weights
+
+        if dtype != torch.bfloat16:
+            raise ValueError("FP8 models require BF16 activations")
+        load_weights(model, directory / "text.safetensors")
+        model.generation_config = GenerationConfig.from_pretrained(directory, local_files_only=True)
+    else:
+        weights = {
+            name: value.to(dtype)
+            for name, value in load_file(directory / "text.safetensors").items()
+        }
+        weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
+        model.load_state_dict(weights, strict=True, assign=True)
+        model.lm_head.weight = model.model.embed_tokens.weight
     # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
     model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(config)
     return model.eval().requires_grad_(False).to("cuda")

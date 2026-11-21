@@ -1,7 +1,7 @@
 # Qwen3.5 text-only AOTI / C++
 
-The same pipeline handles Qwen3.5-0.8B and 4B: Python prepares and compiles the
-text model; the shared C++ runtime loads the bundle and generates tokens.
+The same pipeline handles Qwen3.5-0.8B, 4B and Qwen3.8-27B-FP8: Python prepares
+and compiles the text model; the shared C++ runtime loads the bundle and generates tokens.
 Vision and MTP are outside the supported scope. Defaults select 0.8B.
 
 Use the [environment guide](../../environments/README.md) for setup/builds and
@@ -36,10 +36,12 @@ For 4B, keep the prepared checkpoint and compiled bundle separate:
 | --- | --- | --- |
 | Qwen/Qwen3.5-0.8B | `2fc06364715b967f1860aea9cf38778875588b17` | `work/qwen35/0.8b/text` |
 | Qwen/Qwen3.5-4B | `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | `work/qwen35/4b/text` |
+| Qwen/Qwen3.8-27B-FP8 | `c3a462cc3d38cf351f3b26cbd763469eeb74ef81` | `work/qwen35/27b-fp8/text` |
 
 Preparation verifies source shards and extracts only language-model tensors into
 `text.safetensors`, with `model_manifest.json`. Reuse prepared directories after
-that one-time step. Both checkpoints require tied embeddings and default RoPE.
+that one-time step. BF16 checkpoints require tied embeddings; FP8 preserves the
+untied BF16 output head. All supported checkpoints use default RoPE.
 Dependency pins live in the per-device requirements files.
 See [preparation](../../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 for verification, offline mode and tokenization.
@@ -64,17 +66,64 @@ The [package contract](../../docs/package-metadata.md) defines the five deployme
 files and shared-weight ownership. There is no packing, attention-backend or
 eager-numerics selector.
 
+## Qwen3.8-27B-FP8
+
+Qwen3.8 uses the same dense Qwen3.5 text architecture and native model ABI.
+This is an experimental integration: the GB10 bundle runs natively and passes
+native parity, but its full-model HF logit comparisons currently exceed the
+required limits. See [validation status](../../docs/validation-status.md).
+Prepare and export it with the existing commands:
+
+```bash
+"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
+"$Q35_PY" -m compiler.qwen35.export \
+  --model-dir work/qwen35/27b-fp8/text --output artifacts/qwen38-fp8-c1024 \
+  --max-context-length 1024
+```
+
+The text checkpoint has 400 E4M3 FP8 projections with BF16 128x128 weight
+scales and dynamic per-token, per-128-value activation quantization. Other
+parameters and activations remain BF16; recurrent state stays FP32. Preparation
+retains the separate output head and `generation_config.json`, including both
+EOS IDs. Vision and MTP weights are excluded.
+
+HF eager uses Transformers' original `FP8Linear` with
+[`kernels-community/finegrained-fp8`](https://huggingface.co/kernels-community/finegrained-fp8)
+pinned to `03ae31933313f38fae2b050dbe2731024386c369`. Export wraps the same upstream
+Triton kernel in `torch.library.triton_op`; a fixed 32-row launch tile supports
+symbolic batch/token dimensions. AOTI packages the kernels, so C++ inference
+needs neither Python nor a Hub connection. Prefetch the pinned kernel with
+`compiler.common.kernels.fp8.load_fp8_kernels()` before offline export, using
+`KERNELS_CACHE` to select its cache. FP8 operators are not BF16 linear-packing
+candidates; remaining BF16 projections use the existing passes.
+
+This model has 64 layers, 48 DeltaNet layers with 48 value heads, and 16 full
+attention layers with 24 query heads and four KV heads. Its 128 state tensors
+reserve eight rows as usual. Text weights occupy about 27.44 GiB; state at
+1,024-token capacity adds about 1.65 GiB. The config's default 262,144-token
+capacity requires about 129 GiB of state alone: select capacity explicitly.
+
+Validation compares the unmodified **FP8 HF checkpoint** against adapted eager,
+Python AOTI and C++ AOTI. It keeps the existing logit limits and strict native
+parity; it does not measure quantization loss against unquantized model weights.
+The reference protocol records FP8 storage and the pinned kernel. Run
+`compiler.qwen35.tests.test_fp8` for checkpoint/projection AOTI coverage and
+the 27B classes in `test_kernels` and `test_kernels_aoti` for DeltaNet coverage.
+See [validation status](../../docs/validation-status.md) for tested full-model scope.
+
 ## Model interface and state
 
 Both entries use the same explicit `ModelStep` interface:
 `step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
-One bundle supports dynamic B=1..8. Weights/activations are BF16; RoPE frequencies
-and recurrent state use FP32. `C` is the compiled context capacity.
+One bundle supports dynamic B=1..8. Activations are BF16, with BF16 or FP8
+projection storage as described above; RoPE frequencies and recurrent state
+use FP32. `C` is the compiled context capacity.
 
 | Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | Allocated KV shape |
 | --- | ---: | ---: | ---: | ---: | --- |
 | 0.8B | 24 | 18 | 6 | 48 | `[8,2,C,256]` |
 | 4B | 32 | 24 | 8 | 64 | `[8,4,C,256]` |
+| 27B-FP8 | 64 | 48 | 16 | 128 | `[8,4,C,256]` |
 
 IDs and positions are CUDA int64 `[B,T]`; both length vectors are CPU int32
 `[B]`. Each row appends `query_lengths[row]` real tokens, ending at
@@ -123,23 +172,23 @@ convolution or recurrent state. Dispatch uses the padded width T, so shorter
 rows in a long batch also use the chunked path. Both state outputs are fresh;
 inputs remain unchanged. The full-model adapters supply these per-row lengths.
 
-Both geometries use 16 key heads, key/value dimension 128 and width-four bias-free
-SiLU convolution. Value-head count is 16 for 0.8B and 32 for 4B:
+All geometries use 16 key heads, key/value dimension 128 and width-four bias-free
+SiLU convolution. Value-head count is 16 for 0.8B, 32 for 4B and 48 for 27B-FP8:
 
-| Tensor | 0.8B | 4B |
-| --- | --- | --- |
-| QKV | `[B,T,6144]` | `[B,T,8192]` |
-| A/B gates | `[B,T,16]` | `[B,T,32]` |
-| Convolution state | `[B,6144,4]` | `[B,8192,4]` |
-| Convolution weights | `[6144,4]` | `[8192,4]` |
-| Decay parameters | `[16]` | `[32]` |
-| Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` |
-| Core output | `[B,T,16,128]` | `[B,T,32,128]` |
+| Tensor | 0.8B | 4B | 27B-FP8 |
+| --- | --- | --- | --- |
+| QKV | `[B,T,6144]` | `[B,T,8192]` | `[B,T,10240]` |
+| A/B gates | `[B,T,16]` | `[B,T,32]` | `[B,T,48]` |
+| Convolution state | `[B,6144,4]` | `[B,8192,4]` | `[B,10240,4]` |
+| Convolution weights | `[6144,4]` | `[8192,4]` | `[10240,4]` |
+| Decay parameters | `[16]` | `[32]` | `[48]` |
+| Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` | `[B,48,128,128]` |
+| Core output | `[B,T,16,128]` | `[B,T,32,128]` | `[B,T,48,128]` |
 
 Inputs/parameters support matching BF16 or FP32, with recurrent state always
 FP32. Gates and recurrent state belong to value heads; grouped value heads reuse
 Q/K in HF `repeat_interleave` order. One writer per Q/K group updates convolution
-history, avoiding duplicate writes for 4B's grouped heads.
+history, avoiding duplicate writes for grouped value heads.
 
 Fused recurrence combines convolution/history, SiLU, gate preparation, Q/K
 normalization, state update and output reduction. Each program owns one value
@@ -222,7 +271,7 @@ CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest compiler.common.tests.test_project
 "$Q35_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
 ```
 
-Synthetic kernel tests cover both geometries, BF16/FP32, carried/reset state,
+Synthetic kernel tests cover all three geometries, BF16/FP32, carried/reset state,
 gate extremes, partitioning, dispatch boundaries, layouts and streams. Existing
 kernel limits are 1% BF16 and 0.01% FP32, with a 1e-7 FP32 absolute-roundoff
 allowance. Comparisons use matching input dtypes: BF16 kernel against HF BF16,
@@ -232,7 +281,7 @@ Output and carried-state bounds remain required independently of full-model resu
 
 `test_export` checks the production graph and passes with a small random mixed
 model; it needs no checkpoint or full-model AOTI compilation.
-`test_kernels_aoti` compiles BF16/FP32 prefill/decode for both geometries and
+`test_kernels_aoti` compiles BF16/FP32 prefill/decode for all three geometries and
 requires exact direct-kernel/Python AOTI core/state parity, including canonical
 singleton strides and nondefault streams. Its batched 0.8B tests compile one
 prefill/decode pair per dtype for B=1..8, check the 97/98 dispatch boundary,

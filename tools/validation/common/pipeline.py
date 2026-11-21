@@ -95,6 +95,7 @@ def _describe_validation(suite, policy, native, report):
     report["reference_protocol"] = dict(
         dtype="bfloat16", cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
     )
+    report["reference_protocol"].update(getattr(suite, "reference_protocol", {}))
     report["state_snapshot_policy"] = dict(
         kv="populated prefix; unused future fill checked independently on capture"
         if suite.capacity > 1024

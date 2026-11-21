@@ -9,8 +9,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
-from compiler.qwen35.config import TEXT_DIR, configure
-from tools.prepare.qwen35 import REVISIONS
+from compiler.qwen35.config import configure
+from tools.prepare.qwen35 import REVISIONS, default_model_dir as prepared_model_dir
 from compiler.qwen35.model import ModelStep, load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
@@ -25,7 +25,7 @@ def default_model_dir(pair):
     """Select the prepared checkpoint matching the package's pinned model ID."""
     model_id = pair["decode"]["checkpoint"]["model_id"]
     require(model_id in REVISIONS, "Unsupported Qwen3.5 checkpoint")
-    return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
+    return prepared_model_dir(model_id)
 
 
 class HFStage:
@@ -127,6 +127,20 @@ class Suite:
         self.eos = pair["decode"]["eos_token_ids"]
         configure()
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
+        quantization = read_json(self.model_dir / "config.json").get("quantization_config")
+        if quantization is not None:
+            from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_REVISION
+
+            self.reference_protocol = dict(
+                dtype="bfloat16",
+                weight_dtype="float8_e4m3fn",
+                cache="HF StaticCache",
+                teacher_inputs="matched tokens and partitions",
+                quantization="dynamic activation FP8; 128x128 weight blocks",
+                kernel_repo=KERNEL_REPO,
+                kernel_revision=KERNEL_REVISION,
+                scope="FP8 checkpoint execution; not a comparison with unquantized weights",
+            )
         for metadata in pair.values():
             validate_model_metadata(metadata)
             require(metadata["torch_version"] == torch.__version__, "Torch version mismatch")
@@ -278,7 +292,7 @@ class Suite:
 
     @contextmanager
     def reference(self):
-        """Reload unmodified BF16 HF for matched greedy-trajectory replay."""
+        """Reload unmodified HF for matched greedy-trajectory replay."""
         model = load_model(self.model_dir)
         runtime = HFStage(
             model,

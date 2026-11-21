@@ -49,7 +49,7 @@ def inputs(value_heads, device="meta"):
 
 class DeltaAdapterContract(unittest.TestCase):
     def test_installation_reuses_parameters_and_is_idempotent(self):
-        for value_heads in (16, 32):
+        for value_heads in (16, 32, 48):
             with self.subTest(value_heads=value_heads):
                 block, config = make_block(value_heads)
                 core = DeltaCore(block)
@@ -92,7 +92,7 @@ class DeltaAdapterContract(unittest.TestCase):
                 DeltaCore(block)
 
     def test_kernel_rejects_inconsistent_shapes_before_cuda(self):
-        for value_heads in (16, 32):
+        for value_heads in (16, 32, 48):
             sample = inputs(value_heads)
             invalid = {
                 "key_heads": (0, sample[0][..., : (16 + value_heads) * 128]),
@@ -128,7 +128,7 @@ class DeltaAdapterNumerics(unittest.TestCase):
 
     @torch.inference_mode()
     def test_hf_module_interface_and_functional_state(self):
-        for value_heads in (16, 32):
+        for value_heads in (16, 32, 48):
             torch.manual_seed(35 + value_heads)
             block, config = make_block(value_heads, device="cuda")
             block.to(dtype=torch.bfloat16)

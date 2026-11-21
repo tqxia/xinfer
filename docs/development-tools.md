@@ -277,7 +277,14 @@ Token/greedy mismatch records are also indexed in `top1_differences` and
 Structural violations abort validation and are recorded as errors. These checks
 are outside the tensor-comparison count.
 
-Full-model validation retains the unmodified BF16 HF reference and does not load
+For Qwen3.8-27B-FP8, the HF reference retains the checkpoint's FP8 weights and
+dynamic activation quantization, using the pinned kernels-community backend.
+Layer interfaces and logits remain BF16. The same `shared_bf16` policy and 5%
+limits apply, and scalar reports identify FP8 storage in `reference_protocol`.
+These comparisons measure execution fidelity, not quantization loss against
+unquantized weights. Other checkpoints keep their existing BF16 HF reference.
+
+Full-model validation retains the unmodified HF reference and does not load
 a separate FP32 HF control model. Focused kernel/block tests run separately
 and keep their own output and carried-state tolerances. DeltaNet comparisons
 use matching input dtypes: BF16 kernels against HF's BF16 tensor operations,

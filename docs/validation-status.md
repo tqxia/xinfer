@@ -1,6 +1,6 @@
 # Validation status and known issues
 
-Updated November 20, 2026. Results apply to the bundles and workloads below.
+Updated November 21, 2026. Results apply to the bundles and workloads below.
 The [shared BF16 policy](development-tools.md#shared-numerical-policy) requires
 matched-input logit relative L2 and peak-relative error within 5%, native/Python
 bitwise parity and state/runtime contracts. HF state and token differences are
@@ -8,19 +8,23 @@ diagnostic. Validate each new export with the [validation tools](development-too
 
 ## Current validation
 
-Both models have been tested on L20 with Torch 2.13.0+cu126, dynamic B=1..8 and
-1,024-token context capacity per row. Checkpoint pins and model contracts are in
-the [Qwen3](../compiler/qwen3/README.md) and [Qwen3.5](../compiler/qwen35/README.md)
+The BF16 models below were tested on L20 with Torch 2.13.0+cu126; the focused
+Qwen3.8-27B-FP8 profile was tested on GB10 with Torch 2.13.0+cu130. All use
+dynamic B=1..8 and 1,024-token context capacity per row. The FP8 reference retains
+the original HF FP8 modules and pinned kernels-community implementation.
+Checkpoint pins and model contracts are in the
+[Qwen3](../compiler/qwen3/README.md) and [Qwen3.5](../compiler/qwen35/README.md)
 guides. Qwen3.5 uses linear packing and default Inductor options; the
 singleton-only GEMV pass does not match its dynamic-batch graphs.
 
-| Model | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
-| --- | ---: | ---: | ---: |
-| Qwen3-0.6B | 142 / 583 | **120 / 1,749** | 7.0358% |
-| Qwen3.5-0.8B | 166 / 663 | **68 / 1,989** | 10.9454% |
+| Model | Target | Batch cases / calls | Failed / required logit comparisons | Worst AOTI/HF relative L2 |
+| --- | --- | ---: | ---: | ---: |
+| Qwen3-0.6B | L20 | 142 / 583 | **120 / 1,749** | 7.0358% |
+| Qwen3.5-0.8B | L20 | 166 / 663 | **68 / 1,989** | 10.9454% |
+| Qwen3.8-27B-FP8 (focused) | GB10 | 7 / 28 | **62 / 84** | 17.59% |
 
-Both passed native bitwise parity for logits and all allocated state rows,
-including unused rows. Finite values, positions, ownership, valid writes,
+The two L20 profiles passed native bitwise parity for logits and all allocated
+state rows, including unused rows. Finite values, positions, ownership, valid writes,
 padding, row isolation, reset/resumption, batch-size transitions and overflow
 checks passed. Generation, CLI and rejection checks also passed. Native execution
 loaded no Python library. **Full-model numerical acceptance remains open.**
@@ -34,6 +38,10 @@ Additional coverage:
 - Qwen3's full B=1 scalar suite passed all 713 required comparisons.
 - Qwen3.5's focused scalar chain passed 28 teacher-forced calls and one greedy
   case with zero required failures.
+- Qwen3.8-27B-FP8 passed focused native/Python bitwise parity, state/runtime
+  contracts and native generation. Its scalar chain covered 14 teacher-forced
+  calls and two greedy cases, with 36 required numerical failures. FP8 projection
+  and 48-head DeltaNet component/AOTI checks passed.
 - DeltaNet BF16 component output/carried-state tests passed against HF BF16
   tensor operations. Standalone AOTI/C++ parity passed all 90 BF16/FP32 calls.
 
@@ -50,16 +58,25 @@ Additional coverage:
   `prompt_prefix_teacher` decode. Batch-shape-sensitive BF16 projection rounding
   has been observed, but attribution of the full-model errors remains open.
   Both shrinking/growing batch sequences pass numerical bounds and native parity.
+- **Qwen3.8-27B-FP8:** full-model logit bounds fail despite native parity.
+  FP8-wrapper and explicit-cache controls match HF bitwise when retaining HF
+  attention/DeltaNet math. Compiling only HF normalization with `torch.compile`
+  (Inductor, cast emulation enabled) produces 6.9–7.5% prefill logit relative L2;
+  replacing only DeltaNet produces 8.6–8.7%. Small BF16 arithmetic differences
+  amplify through the model. The normalization ablation does not establish a
+  compiler correctness bug or explain every production AOTI difference.
 - **Q35-NUM-001:** the lost BF16 rounding boundary before gated RMSNorm still
   needs verification on the current toolchain. See the
   [model notes](../compiler/qwen35/README.md#numerical-considerations).
 
 ## Validation gaps
 
-- Current dynamic-batch interfaces need expanded-context and GB10 validation;
+- The BF16 dynamic-batch profiles need expanded-context and GB10 validation;
   Qwen3.5-4B also needs re-export and validation with dynamic batching.
 - Qwen3.5 needs the complete scalar numerical suite beyond the focused regression.
-- Batch performance is unmeasured. These correctness runs used a busy GPU.
+- Qwen3.8-27B-FP8 needs the complete scalar/batch matrix and expanded-context
+  validation; performance and quality against unquantized weights are unmeasured.
+- Batch performance is unmeasured. The L20 correctness runs used a busy GPU.
 
 ## Evidence
 
@@ -74,6 +91,10 @@ metrics and package identities belong there; keep this file a current status sum
   Batch results: `artifacts/qwen35-batch-validation-v3/`;
   focused scalar results: `artifacts/qwen35-dynamic-scalar-focused-v2/summary.json`;
   runtime results: `artifacts/qwen35-dynamic-runtime-v2/summary.json`.
+- **Qwen3.8-27B-FP8 bundle:** `artifacts/qwen38-fp8-c1024/`.
+  Batch results: `artifacts/qwen38-batch-focused-c1024/`;
+  scalar results: `artifacts/qwen38-focused-c1024/summary.json`;
+  numerical diagnostics: `artifacts/qwen38-investigation-20261121/`.
 - **DeltaNet component results:** `artifacts/deltanet-batch/`.
 
 [q3-attention]: https://github.com/tqxia/xinfer/blob/06c668b606c58d339dd06ff5c90e144eea1eded2/docs/validation-status.md#qwen3-batched-prefill-attention-divergence--november-18

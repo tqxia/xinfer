@@ -96,6 +96,17 @@ class SharedWeightBundle(unittest.TestCase):
         shutil.copytree(source or self.bundle, destination)
         return destination
 
+    def test_unloading_releases_borrowed_constant_handles(self):
+        pool = SharedWeights(self.bundle, self.contract)
+        before = {name: tensor._use_count() for name, tensor in pool.tensors.items()}
+        for kind in ("prefill", "decode"):
+            compiled = pool.load(kind)
+            del compiled
+            gc.collect()
+            self.assertEqual(
+                {name: tensor._use_count() for name, tensor in pool.tensors.items()}, before
+            )
+
     def rewrite_archive(
         self, directory, mutate=None, *, update_checksums=True, include_mapping=True, identity=None
     ):

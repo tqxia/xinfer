@@ -1,6 +1,6 @@
 """Fused recurrence and chunked prefill with graph-level shape dispatch.
 
-Contract: B=1..8, Hk=16, Hv=16 or 32, K=V=128; T is a runtime scalar (1..512).
+Contract: B=1..8, Hk=16, Hv=16, 32 or 48, K=V=128; T is a runtime scalar (1..512).
 Query lengths are CUDA int32 [B]; only their valid prefixes advance state.
 Short prefill and decode stay fused; long prefill uses tiled FP32 chunk transforms.
 """
@@ -315,8 +315,8 @@ def fused(
     value_heads = b.shape[2]
     key_heads = (qkv.shape[2] // DIM - value_heads) // 2
     channels = (2 * key_heads + value_heads) * DIM
-    if key_heads != 16 or value_heads not in (16, 32) or qkv.shape[2] != channels:
-        raise ValueError("Expected Hk=16, Hv=16 or 32 and K=V=128")
+    if key_heads != 16 or value_heads not in (16, 32, 48) or qkv.shape[2] != channels:
+        raise ValueError("Expected Hk=16, Hv=16, 32 or 48 and K=V=128")
     if conv.shape != (batch, channels, 4) or weight.shape != (channels, 4):
         raise ValueError("Expected matching width-4 convolution state and weights")
     if (

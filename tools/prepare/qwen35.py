@@ -12,6 +12,7 @@ MODEL_ID = "Qwen/Qwen3.5-0.8B"
 REVISIONS = {
     MODEL_ID: "2fc06364715b967f1860aea9cf38778875588b17",
     "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "Qwen/Qwen3.8-27B-FP8": "c3a462cc3d38cf351f3b26cbd763469eeb74ef81",
 }
 MODEL_FILES = ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
 
@@ -20,7 +21,17 @@ def default_model_dir(model_id):
     require(
         isinstance(model_id, str) and model_id in REVISIONS, f"Unsupported checkpoint: {model_id}"
     )
+    if model_id == "Qwen/Qwen3.8-27B-FP8":
+        return Path("work/qwen35/27b-fp8/text")
     return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
+
+
+def model_files(model_id):
+    return (
+        (*MODEL_FILES, "generation_config.json")
+        if model_id == "Qwen/Qwen3.8-27B-FP8"
+        else MODEL_FILES
+    )
 
 
 def prepare(directory, model=MODEL_ID, cache_dir=None):
@@ -33,10 +44,15 @@ def prepare(directory, model=MODEL_ID, cache_dir=None):
 
     with common.checkpoint_directory(directory) as staging:
         hub = common.Hub(model, REVISIONS[model], cache_dir=cache_dir)
-        _text_config(hub.fetch("config.json"))
+        config = _text_config(hub.fetch("config.json"))
         index = json.loads(hub.fetch("model.safetensors.index.json").read_text())["weight_map"]
         prefix = "model.language_model."
-        names = {name: shard for name, shard in index.items() if name.startswith(prefix)}
+        names = {
+            name: shard
+            for name, shard in index.items()
+            if name.startswith(prefix)
+            or (not config.tie_word_embeddings and name == "lm_head.weight")
+        }
         require(bool(names), "No text weights found")
         weights, shards = {}, {}
         for shard in sorted(set(names.values())):
@@ -45,9 +61,14 @@ def prepare(directory, model=MODEL_ID, cache_dir=None):
             with safe_open(path, framework="pt", device="cpu") as reader:
                 for name, filename in names.items():
                     if filename == shard:
-                        weights["model." + name.removeprefix(prefix)] = reader.get_tensor(name)
+                        destination = (
+                            "model." + name.removeprefix(prefix)
+                            if name.startswith(prefix)
+                            else name
+                        )
+                        weights[destination] = reader.get_tensor(name)
         save_file(weights, staging / "text.safetensors")
-        files = {name: hub.copy(name, staging / name)["sha256"] for name in MODEL_FILES}
+        files = {name: hub.copy(name, staging / name)["sha256"] for name in model_files(model)}
         files["text.safetensors"] = sha256(staging / "text.safetensors")
         manifest = dict(
             model=model,
@@ -74,7 +95,7 @@ def verify_model(directory):
     ):
         raise ValueError("Prepared checkpoint must match a supported pinned revision")
     if not isinstance(manifest.get("files"), dict) or set(manifest["files"]) != {
-        *MODEL_FILES,
+        *model_files(model_id),
         "text.safetensors",
     }:
         raise ValueError("Prepared checkpoint file manifest is incomplete or unsupported")

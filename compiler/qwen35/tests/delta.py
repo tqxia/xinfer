@@ -25,9 +25,9 @@ ABS_LIMITS = {"bf16": 0.0, "fp32": 1e-7}
 
 
 def geometry(value_heads):
-    """The two supported DeltaNet profiles share key heads, dimensions and taps."""
-    if value_heads not in (16, 32):
-        raise ValueError("Value heads must be 16 (0.8B) or 32 (4B)")
+    """The supported DeltaNet profiles share key heads, dimensions and taps."""
+    if value_heads not in (16, 32, 48):
+        raise ValueError("Value heads must be 16 (0.8B), 32 (4B) or 48 (27B)")
     return dict(
         key_heads=KEY_HEADS,
         value_heads=value_heads,

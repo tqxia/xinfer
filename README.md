@@ -1,14 +1,15 @@
 # xinfer
 
 Compile Hugging Face Qwen models with PyTorch AOTInductor and run them in C++
-without Python. xinfer provides BF16 inference, paired prefill/decode packages,
-shared weights and explicit model state. Generation uses batch one; both model
+without Python. xinfer provides BF16 and block-scaled FP8 inference, paired
+prefill/decode packages, shared weights and explicit model state. Generation uses batch one; both model
 families support dynamic batches of 1–8 through explicit steps with independent
 request lengths, using the same package.
 
 The model pipelines cover [Qwen3-0.6B](compiler/qwen3/README.md) and
-[Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) (text only). Device-specific
-setup and validation status are documented for [L20 and GB10](environments/README.md).
+[Qwen3.5-0.8B / 4B and Qwen3.8-27B-FP8](compiler/qwen35/README.md) (text only).
+Device-specific setup and validation status are documented for
+[L20 and GB10](environments/README.md).
 Numerical acceptance depends on the model, package and workload; see
 [validation and limitations](#validation-and-limitations).
 
@@ -101,12 +102,14 @@ Use idle-GPU checks and repeated measurements for performance conclusions.
 
 - **Numerics:** tested Qwen3.5-0.8B GEMV profiles pass the current policy on L20
   and GB10, with HF state/token diagnostics remaining. Recorded Qwen3 focused
-  cases and Qwen3.5-4B profiles retain required logit failures. See
-  [validation status](docs/validation-status.md) for the tested builds, capacities
+  cases and Qwen3.5-4B profiles retain required logit failures. The experimental
+  Qwen3.8-27B-FP8 integration passes focused native parity checks but retains
+  required HF logit failures. See [validation status](docs/validation-status.md)
+  for the tested builds, capacities
   and policy qualifications.
-- **Devices and context:** native 16K-context L20 execution is recorded for all
-  three models. This does not establish numerical acceptance for every profile;
-  expanded contexts and 4B still need GB10 validation.
+- **Devices and context:** native 16K-context L20 execution is recorded for the
+  three BF16 models. This does not establish numerical acceptance for every
+  profile; expanded contexts and 4B still need GB10 validation.
 - **CPU portability:** compiled wrappers can inherit the build host's instruction
   set. CPU compatibility is not checked; use a compatible CPU or re-export on
   the destination host.

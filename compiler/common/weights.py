@@ -19,6 +19,7 @@ from compiler.common.artifacts import (
 )
 from compiler.common.metadata import finalize_metadata, validate_metadata_pair
 from compiler.common.package import compile_package
+from compiler.common.aoti_compat import owned_constant_handles
 
 
 SHARED_WEIGHT_OPTIONS = {
@@ -253,7 +254,7 @@ def _compile_entry(
         json.dumps(dict(event="compile_options", entry_point=kind, inductor_configs=options)),
         flush=True,
     )
-    with _capture_constants() as captured:
+    with _capture_constants() as captured, owned_constant_handles():
         compile_package(
             exported,
             compiled_path,

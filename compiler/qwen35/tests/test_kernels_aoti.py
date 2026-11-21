@@ -185,6 +185,10 @@ class AOTIKernels4B(AOTIKernels, unittest.TestCase):
     value_heads = 32
 
 
+class AOTIKernels27B(AOTIKernels, unittest.TestCase):
+    value_heads = 48
+
+
 def export_batched(dtype, mode):
     sample = batch_inputs(2, 32 if mode == "prefill" else 1, dtype)
     batch = torch.export.Dim("batch", min=1, max=8)

@@ -111,6 +111,8 @@ private:
 };
 
 inline at::ScalarType shared_weights_dtype(const std::string &name) {
+  if (name == "float8_e4m3fn")
+    return at::kFloat8_e4m3fn;
   if (name == "bfloat16")
     return at::kBFloat16;
   if (name == "float16")
