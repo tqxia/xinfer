@@ -20,8 +20,6 @@ from compiler.common.context import resolve_context_length
 
 def _text_config(path):
     document = json.loads(path.read_text())
-    if document.get("quantization_config") is not None:
-        raise ValueError("Qwen3.5 text export requires an unquantized checkpoint")
     config = Qwen3_5TextConfig(**document["text_config"])
     if not config.tie_word_embeddings or config.rope_parameters["rope_type"] != "default":
         raise ValueError("Qwen3.5 text export requires tied embeddings and default RoPE")

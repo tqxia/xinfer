@@ -18,30 +18,6 @@ from compiler.qwen35.adapters.delta import install_delta
 
 
 class ModelLoading(unittest.TestCase):
-    def test_quantized_checkpoints_are_rejected_before_model_construction(self):
-        quantization = dict(
-            quant_method="fp8",
-            fmt="e4m3",
-            activation_scheme="dynamic",
-            weight_block_size=[128, 128],
-        )
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "config.json"
-            path.write_text(
-                json.dumps(
-                    dict(
-                        text_config=dict(tie_word_embeddings=True),
-                        quantization_config=quantization,
-                    )
-                )
-            )
-            with (
-                patch.object(model, "Qwen3_5ForCausalLM") as create,
-                self.assertRaisesRegex(ValueError, "unquantized checkpoint"),
-            ):
-                model.load_model(directory)
-            create.assert_not_called()
-
     def test_text_rotary_matches_hf_grid_recomposition_bitwise(self):
         config = model.Qwen3_5TextConfig()
         devices = ("cpu", "cuda") if torch.cuda.is_available() else ("cpu",)
