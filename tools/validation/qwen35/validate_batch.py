@@ -9,9 +9,8 @@ import torch
 from compiler.common.artifacts import read_json, require
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen35.adapters.delta import install_delta
-from compiler.qwen35.export import export_step
 from compiler.qwen35.config import configure
-from tools.prepare.qwen35 import load_model
+from tools.prepare.qwen35 import compiler_module, load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.batch import case_groups, validate_python_group, validate_native
@@ -77,6 +76,7 @@ def validate_python(args, meta):
     reference = lambda: HFStage(hf, specs, meta["cache_length"])
     adapted = load_model(args.model_dir)
     install_delta(adapted)
+    export_step = compiler_module(meta["checkpoint"]["model_id"], "export").export_step
     functions = {
         kind: export_step(adapted, kind, meta["cache_length"])[0].module()
         for kind in ("prefill", "decode")

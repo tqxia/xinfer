@@ -6,8 +6,12 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
+import torch
+from transformers.integrations.finegrained_fp8 import FP8Linear as HFFP8Linear
+
+from compiler.common.fp8_adapter import FP8Linear
 from compiler.qwen35 import export as shared
 from compiler.qwen38 import export
 from compiler.qwen38.config import MODEL_ID
@@ -24,6 +28,7 @@ class ExportFrontend(unittest.TestCase):
             enable_inductor_optimization=False,
             build_model="qwen38",
             model_loader=export.load_model,
+            step_exporter=export.export_step,
         )
 
     def test_overrides_reach_shared_compiler_and_select_qwen38_attention(self):
@@ -35,6 +40,25 @@ class ExportFrontend(unittest.TestCase):
             )
             (root / "model_manifest.json").write_text(json.dumps(checkpoint))
             for optimize in (False, True):
+                original = HFFP8Linear(128, 256, block_size=(128, 128), has_bias=False)
+                model = torch.nn.Sequential(original)
+                exported = Mock(range_constraints={})
+                exported.graph.nodes = []
+                exported.graph_module.print_readable.return_value = "graph"
+                packing = dict(groups=[], linear_calls_before=0, linear_calls_after=0)
+
+                def export_graph(adapted, kind, capacity):
+                    self.assertIs(adapted, model)
+                    self.assertIs(type(adapted[0]), FP8Linear)
+                    self.assertIs(adapted[0].weight, original.weight)
+                    self.assertIs(adapted[0].weight_scale_inv, original.weight_scale_inv)
+                    return exported, packing
+
+                def compile_entries(output, prepare_entry, **options):
+                    for kind in ("prefill", "decode"):
+                        actual, _ = prepare_entry(kind, root)
+                        self.assertIs(actual, exported)
+
                 argv = [
                     "--model-dir",
                     str(root),
@@ -48,18 +72,24 @@ class ExportFrontend(unittest.TestCase):
                 with (
                     self.subTest(optimize=optimize),
                     patch.object(shared, "configure"),
-                    patch.object(export, "load_model") as load,
+                    patch.object(export, "load_model", return_value=model) as load,
+                    patch.object(export, "shared_export_step", side_effect=export_graph) as step,
                     patch.object(shared, "load_model") as fallback,
                     patch.object(shared, "install_delta"),
                     patch.object(shared, "load_attention_ops") as attention,
                     patch.object(shared, "attention_library", return_value=root / "attention.so"),
                     patch.object(shared, "attention_c_shims", return_value={}),
-                    patch.object(shared, "compile_shared") as compile_pair,
+                    patch.object(
+                        shared, "compile_shared", side_effect=compile_entries
+                    ) as compile_pair,
                     redirect_stdout(io.StringIO()),
                 ):
                     export.main(argv)
                 load.assert_called_once_with(root)
                 fallback.assert_not_called()
+                self.assertEqual(
+                    step.call_args_list, [call(model, "prefill", 1024), call(model, "decode", 1024)]
+                )
                 attention.assert_called_once_with(model="qwen38")
                 compile_pair.assert_called_once()
                 arguments, options = compile_pair.call_args
@@ -67,6 +97,7 @@ class ExportFrontend(unittest.TestCase):
                 self.assertIs(arguments[1].func, shared.export_entry)
                 self.assertEqual(arguments[1].keywords["capacity"], 1024)
                 self.assertEqual(arguments[1].keywords["checkpoint"], checkpoint)
+                self.assertIs(arguments[1].keywords["step_exporter"], export.export_step)
                 self.assertEqual(options["identity"], dict(model="qwen3.5", checkpoint=checkpoint))
                 expected = {"emulate_precision_casts": True}
                 if optimize:

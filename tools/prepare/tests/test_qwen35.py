@@ -38,7 +38,7 @@ class PreparedCheckpoint(unittest.TestCase):
     def test_unknown_checkpoint_does_not_select_a_compiler_frontend(self):
         with patch.object(qwen35, "import_module") as load:
             with self.assertRaisesRegex(ValueError, "Unsupported checkpoint"):
-                qwen35.compiler_model("Qwen/unknown")
+                qwen35.compiler_module("Qwen/unknown", "model")
         load.assert_not_called()
 
     def source(self, directory, revision=REVISIONS[MODEL_ID], *, text=True):

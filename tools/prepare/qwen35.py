@@ -32,20 +32,20 @@ def model_files(model_id):
     return (*MODEL_FILES, "generation_config.json") if model_id == QWEN38_MODEL_ID else MODEL_FILES
 
 
-def compiler_model(model_id):
-    """Select checkpoint policy independently of the shared qwen35 runtime ABI."""
+def compiler_module(model_id, module):
+    """Select the checkpoint's compiler frontend independently of its runtime ABI."""
     require(
         isinstance(model_id, str) and model_id in REVISIONS, f"Unsupported checkpoint: {model_id}"
     )
     frontend = "qwen38" if model_id == QWEN38_MODEL_ID else "qwen35"
-    return import_module(f"compiler.{frontend}.model")
+    return import_module(f"compiler.{frontend}.{module}")
 
 
 def load_model(directory):
     """Load a prepared checkpoint through its frontend for validation and benchmarks."""
     directory = Path(directory)
     manifest = read_json(directory / MODEL_MANIFEST_NAME)
-    return compiler_model(manifest["model"]).load_model(directory)
+    return compiler_module(manifest["model"], "model").load_model(directory)
 
 
 def prepare(directory, model=MODEL_ID, cache_dir=None):
@@ -54,7 +54,7 @@ def prepare(directory, model=MODEL_ID, cache_dir=None):
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    text_config = compiler_model(model)._text_config
+    text_config = compiler_module(model, "model")._text_config
 
     with common.checkpoint_directory(directory) as staging:
         hub = common.Hub(model, REVISIONS[model], cache_dir=cache_dir)

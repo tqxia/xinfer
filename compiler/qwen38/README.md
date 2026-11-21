@@ -1,9 +1,9 @@
 # Qwen3.8-27B-FP8 AOTI / C++
 
-This frontend owns Qwen3.8 defaults, checkpoint loading and the export entry
-point. It reuses the dense Qwen3.5 text architecture, adapters, export passes
-and native model ABI.
-Package metadata retains `model_type="qwen35"`; the checkpoint records the
+This frontend owns Qwen3.8 defaults, checkpoint loading, FP8 export setup and
+the export entry point. It reuses the dense Qwen3.5 text architecture, adapters,
+export passes and native model ABI. Package metadata retains
+`model_type="qwen35"`; the checkpoint records the
 Qwen3.8 model ID and revision. Shared FP8 loading and export adapters live in
 `compiler/common/fp8_adapter.py`, with kernels in
 `compiler/common/kernels/finegrained_fp8.py`.
@@ -12,9 +12,12 @@ Qwen3.8 model ID and revision. Shared FP8 loading and export adapters live in
 embeddings and default RoPE. Its loader preserves quantized weights and the
 checkpoint's generation settings, with BF16 activations. Each loader constructs
 its model on the meta device and restores FP32 rotary buffers inline. The
-exporter receives the Qwen3.8 loader as a callback. Preparation, validation and
-benchmarks select the loader using the checkpoint model ID while retaining the
-shared runtime ABI.
+shared exporter receives the Qwen3.8 loader and step exporter as callbacks.
+Preparation, validation and benchmarks select the loader using the checkpoint
+model ID while retaining the shared runtime ABI. Validation also selects the
+frontend's export step for adapted eager execution. The Qwen3.8 step installs
+FP8 adapters before invoking the shared graph export and packing passes;
+loading alone preserves the original HF modules for reference execution.
 
 This is an experimental integration: the GB10 bundle runs natively and passes
 native parity, but its full-model HF logit comparisons currently exceed the

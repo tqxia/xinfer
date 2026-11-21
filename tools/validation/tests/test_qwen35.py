@@ -10,7 +10,10 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.qwen35 import export
 from compiler.qwen35.adapters import delta
-from tools.validation.qwen35 import model
+from compiler.qwen38 import export as fp8_export
+from compiler.qwen38.config import MODEL_ID as QWEN38_MODEL_ID
+from tools.prepare.qwen35 import MODEL_ID, REVISIONS, compiler_module
+from tools.validation.qwen35 import model, validate_batch
 
 
 class HFCacheProtocol(unittest.TestCase):
@@ -199,6 +202,9 @@ class HFCacheProtocol(unittest.TestCase):
 
 
 class ValidationStages(unittest.TestCase):
+    model_id = MODEL_ID
+    frontend = export
+
     def setUp(self):
         self.suite = model.Suite.__new__(model.Suite)
         self.suite.model_dir = Path("unused-checkpoint")
@@ -206,7 +212,9 @@ class ValidationStages(unittest.TestCase):
         self.suite.capacity = 1024
         self.suite.max_prefill = 512
         self.suite.vocab_size = 16
-        self.suite.pair = {"prefill": {"model_specific": {}}}
+        self.suite.pair = {
+            "prefill": {"model_specific": {}, "checkpoint": {"model_id": self.model_id}}
+        }
         self.original = SimpleNamespace(config=object())
         self.events = []
         self.loader = self.enterContext(
@@ -222,7 +230,9 @@ class ValidationStages(unittest.TestCase):
             )
         )
         self.wrapper = self.enterContext(patch.object(model, "ModelStep"))
-        self.export_step = self.enterContext(patch.object(export, "export_step"))
+        self.export_step = self.enterContext(patch.object(self.frontend, "export_step"))
+        other = export if self.frontend is fp8_export else fp8_export
+        self.other_export_step = self.enterContext(patch.object(other, "export_step"))
         self.runtime = self.enterContext(
             patch.object(model, "ExplicitRuntime", return_value=sentinel.eager)
         )
@@ -238,6 +248,7 @@ class ValidationStages(unittest.TestCase):
             self.install.assert_not_called()
             self.wrapper.assert_not_called()
             self.export_step.assert_not_called()
+            self.other_export_step.assert_not_called()
         return stages
 
     def check_eager(self, stages, functions):
@@ -256,6 +267,7 @@ class ValidationStages(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(stages)
         self.loader.assert_called_once_with(self.suite.model_dir)
+        self.other_export_step.assert_not_called()
 
     def test_packed_packages_apply_adapters_before_exporting_both_eager_entries(self):
         self.suite.pair["prefill"]["model_specific"]["linear_packing"] = {"enabled": True}
@@ -309,7 +321,60 @@ class ValidationStages(unittest.TestCase):
             self.assertIs(actual, runtime)
         self.loader.assert_called_once_with(self.suite.model_dir)
         self.install.assert_not_called()
+        self.export_step.assert_not_called()
+        self.other_export_step.assert_not_called()
         runtime.close.assert_called_once_with()
+
+
+class Qwen38ValidationStages(ValidationStages):
+    model_id = QWEN38_MODEL_ID
+    frontend = fp8_export
+
+
+class BatchFrontend(unittest.TestCase):
+    def test_exports_adapted_model_with_checkpoint_frontend_and_keeps_hf_separate(self):
+        args = SimpleNamespace(packages=Path("bundle"), model_dir=Path("checkpoint"))
+        for model_id in REVISIONS:
+            frontend = compiler_module(model_id, "export")
+            other = export if frontend is fp8_export else fp8_export
+            meta = dict(
+                checkpoint=dict(model_id=model_id),
+                cache_length=1024,
+                state=[dict(shape=[8, 1])],
+                vocab_size=128,
+            )
+            hf, adapted = object(), object()
+
+            def check_reference(*args, **kwargs):
+                args[5]()
+
+            with (
+                self.subTest(model=model_id),
+                patch.object(validate_batch, "configure"),
+                patch.object(validate_batch, "load_packaged_attention_ops"),
+                patch.object(validate_batch, "load_tokenizer"),
+                patch.object(validate_batch, "case_groups", return_value={"transitions": ([], [])}),
+                patch.object(validate_batch, "load_model", side_effect=[hf, adapted]),
+                patch.object(validate_batch, "install_delta") as install,
+                patch.object(frontend, "export_step") as step,
+                patch.object(other, "export_step") as unused,
+                patch.object(validate_batch, "HFStage") as reference,
+                patch.object(validate_batch, "ExplicitRuntime") as eager,
+                patch.object(validate_batch, "load_aoti_runtime"),
+                patch.object(validate_batch, "validate_python_group", side_effect=check_reference),
+            ):
+                self.assertEqual(validate_batch.validate_python(args, meta), ["transitions"])
+                install.assert_called_once_with(adapted)
+                self.assertEqual(
+                    step.call_args_list,
+                    [call(adapted, "prefill", 1024), call(adapted, "decode", 1024)],
+                )
+                unused.assert_not_called()
+                reference.assert_called_once_with(hf, [dict(shape=[1, 1])], 1024)
+                self.assertEqual(
+                    eager.call_args.args[0],
+                    dict.fromkeys(("prefill", "decode"), step.return_value[0].module.return_value),
+                )
 
 
 if __name__ == "__main__":

@@ -39,10 +39,6 @@ DELTA_OPERATORS = dict(
 
 def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
-    if getattr(model.config, "quantization_config", None) is not None:
-        from compiler.common.fp8_adapter import install_fp8
-
-        install_fp8(model)
     capacity = resolve_context_length(model.config, capacity)
     dynamic = kind == "prefill"
     length = 32 if dynamic else 1
@@ -110,9 +106,9 @@ def entry_metadata(model, kind, checkpoint, capacity):
     )
 
 
-def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
+def export_entry(kind, staging_directory, *, model, checkpoint, capacity, step_exporter):
     start = time.perf_counter()
-    exported, packing = export_step(model, kind, capacity)
+    exported, packing = step_exporter(model, kind, capacity)
     (staging_directory / f"{kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
     print(
         f"Packed {len(packing['groups'])} groups: "
@@ -158,6 +154,7 @@ def export_model(
     enable_inductor_optimization=False,
     build_model="qwen35",
     model_loader=None,
+    step_exporter=None,
 ):
     """Load one adapted model and publish its paired shared-weight bundle."""
     model_dir, output = Path(model_dir), Path(output)
@@ -174,6 +171,7 @@ def export_model(
         model=model,
         checkpoint=checkpoint,
         capacity=capacity,
+        step_exporter=export_step if step_exporter is None else step_exporter,
     )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         load_attention_ops(model=build_model)
@@ -196,6 +194,7 @@ def main(
     output=ARTIFACT_DIR / "text",
     build_model="qwen35",
     model_loader=None,
+    step_exporter=None,
 ):
     parser = export_parser(description, model_dir=model_dir, output=output)
     parser.add_argument(
@@ -205,7 +204,12 @@ def main(
     )
     args = parser.parse_args(argv)
     try:
-        export_model(**vars(args), build_model=build_model, model_loader=model_loader)
+        export_model(
+            **vars(args),
+            build_model=build_model,
+            model_loader=model_loader,
+            step_exporter=step_exporter,
+        )
     except ExportInputError as error:
         parser.error(str(error))
 

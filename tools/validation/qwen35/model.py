@@ -10,7 +10,12 @@ from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from compiler.qwen35.config import configure
-from tools.prepare.qwen35 import REVISIONS, default_model_dir as prepared_model_dir, load_model
+from tools.prepare.qwen35 import (
+    REVISIONS,
+    compiler_module,
+    default_model_dir as prepared_model_dir,
+    load_model,
+)
 from compiler.qwen35.model import ModelStep, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
@@ -270,7 +275,9 @@ class Suite:
                 .get("linear_packing", {})
                 .get("enabled", False)
             ):
-                from compiler.qwen35.export import export_step
+                export_step = compiler_module(
+                    self.pair["prefill"]["checkpoint"]["model_id"], "export"
+                ).export_step
 
                 functions = {
                     kind: export_step(model, kind, self.capacity)[0].module()
