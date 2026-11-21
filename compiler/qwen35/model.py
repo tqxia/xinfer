@@ -29,30 +29,20 @@ def _text_config(path):
     return config
 
 
-def create_text_model(config):
-    """Construct the shared text architecture without allocating weight storage."""
-    with torch.device("meta"):
-        return Qwen3_5ForCausalLM(config)
-
-
-def finalize_text_model(model):
-    """Restore FP32 nonpersistent buffers and place the loaded model on CUDA."""
-    # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
-    model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(model.config)
-    return model.eval().requires_grad_(False).to("cuda")
-
-
 def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     directory = Path(directory)
     config = _text_config(directory / "config.json")
-    model = create_text_model(config)
+    with torch.device("meta"):
+        model = Qwen3_5ForCausalLM(config)
     weights = {
         name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()
     }
     weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
     model.load_state_dict(weights, strict=True, assign=True)
     model.lm_head.weight = model.model.embed_tokens.weight
-    return finalize_text_model(model)
+    # Recreate nonpersistent meta buffers in FP32, including the RoPE frequencies.
+    model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(model.config)
+    return model.eval().requires_grad_(False).to("cuda")
 
 
 def deltanet_state_shapes(config, batch_size=1):

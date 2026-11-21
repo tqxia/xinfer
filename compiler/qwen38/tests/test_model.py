@@ -1,11 +1,11 @@
-"""Qwen3.8 checkpoint policy and FP8 loading through shared construction helpers."""
+"""Qwen3.8 checkpoint policy and FP8 model loading."""
 
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch, sentinel
+from unittest.mock import patch
 
 import torch
 from safetensors.torch import save_file
@@ -53,7 +53,7 @@ class ModelLoading(unittest.TestCase):
             with self.subTest(quant=quant), TemporaryDirectory() as directory:
                 write_config(directory, quant=quant)
                 with (
-                    patch.object(model, "create_text_model") as create,
+                    patch.object(model, "Qwen3_5ForCausalLM") as create,
                     self.assertRaises(ValueError),
                 ):
                     model.load_model(directory)
@@ -84,34 +84,12 @@ class ModelLoading(unittest.TestCase):
     def test_non_bf16_activations_fail_before_reading_or_allocating_model(self):
         with (
             patch.object(model, "_text_config") as config,
-            patch.object(model, "create_text_model") as create,
+            patch.object(model, "Qwen3_5ForCausalLM") as create,
             self.assertRaisesRegex(ValueError, "BF16 activations"),
         ):
             model.load_model("unused-checkpoint", dtype=torch.float32)
         config.assert_not_called()
         create.assert_not_called()
-
-    def test_loader_delegates_construction_weights_and_finalization(self):
-        with TemporaryDirectory() as directory:
-            root = Path(directory)
-            write_config(root)
-            original = Mock()
-            with (
-                patch.object(model, "create_text_model", return_value=original) as create,
-                patch.object(model, "load_weights") as weights,
-                patch.object(
-                    model.GenerationConfig, "from_pretrained", return_value=sentinel.generation
-                ) as generation,
-                patch.object(
-                    model, "finalize_text_model", return_value=sentinel.finished
-                ) as finalize,
-            ):
-                self.assertIs(model.load_model(root), sentinel.finished)
-            self.assertEqual(create.call_args.args[0].quantization_config, quantization())
-            weights.assert_called_once_with(original, root / "text.safetensors")
-            generation.assert_called_once_with(root, local_files_only=True)
-            self.assertIs(original.generation_config, sentinel.generation)
-            finalize.assert_called_once_with(original)
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")

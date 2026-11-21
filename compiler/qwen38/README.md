@@ -10,10 +10,11 @@ Qwen3.8 model ID and revision. Shared FP8 loading and export adapters live in
 
 `model.py` validates dynamic E4M3 FP8 with 128x128 weight blocks, untied
 embeddings and default RoPE. Its loader preserves quantized weights and the
-checkpoint's generation settings, with BF16 activations. Meta-model construction
-and FP32 rotary-buffer restoration are shared with Qwen3.5; the exporter receives
-the Qwen3.8 loader as a callback. Preparation, validation and benchmarks select
-the loader using the checkpoint model ID while retaining the shared runtime ABI.
+checkpoint's generation settings, with BF16 activations. Each loader constructs
+its model on the meta device and restores FP32 rotary buffers inline. The
+exporter receives the Qwen3.8 loader as a callback. Preparation, validation and
+benchmarks select the loader using the checkpoint model ID while retaining the
+shared runtime ABI.
 
 This is an experimental integration: the GB10 bundle runs natively and passes
 native parity, but its full-model HF logit comparisons currently exceed the

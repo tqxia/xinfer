@@ -36,7 +36,7 @@ class ModelLoading(unittest.TestCase):
                 )
             )
             with (
-                patch.object(model, "create_text_model") as create,
+                patch.object(model, "Qwen3_5ForCausalLM") as create,
                 self.assertRaisesRegex(ValueError, "unquantized checkpoint"),
             ):
                 model.load_model(directory)

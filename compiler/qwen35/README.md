@@ -2,9 +2,9 @@
 
 This module owns the dense Qwen3.5 text architecture and the Qwen3.5-0.8B / 4B
 export entry point. The [Qwen3.8 frontend](../qwen38/README.md) reuses its adapters,
-state handling, construction helpers and export pipeline with its own loader and
-defaults. Python prepares and compiles the text model; the shared C++ runtime
-loads the bundle and generates tokens.
+state handling and export pipeline with its own loader and defaults. Python
+prepares and compiles the text model; the shared C++ runtime loads the bundle
+and generates tokens.
 Vision and MTP are outside the supported scope. Defaults select 0.8B.
 
 Use the [environment guide](../../environments/README.md) for setup/builds and
