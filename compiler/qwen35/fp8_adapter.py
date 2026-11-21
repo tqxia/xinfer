@@ -5,7 +5,7 @@ from safetensors import safe_open
 from transformers.integrations import finegrained_fp8 as hf_fp8
 
 from compiler.common.artifacts import require
-from compiler.common.kernels.fp8 import linear, load_fp8_kernels
+from compiler.common.kernels.finegrained_fp8 import linear, load_fp8_kernels
 
 
 def validate_quantization(config):

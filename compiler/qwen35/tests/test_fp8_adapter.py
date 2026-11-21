@@ -9,11 +9,11 @@ import torch
 from safetensors.torch import save_file
 from torch.fx.experimental import _config as symbolic_config
 
-from compiler.common.kernels.fp8 import load_fp8_kernels
+from compiler.common.kernels.finegrained_fp8 import load_fp8_kernels
 from compiler.common.tests.tensors import bits_equal
 from compiler.common.weights import SharedWeights, compile_shared
 from compiler.qwen35.config import configure
-from compiler.qwen35.fp8 import install_fp8, load_weights, validate_quantization
+from compiler.qwen35.fp8_adapter import install_fp8, load_weights, validate_quantization
 from compiler.qwen35.model import _text_config
 
 

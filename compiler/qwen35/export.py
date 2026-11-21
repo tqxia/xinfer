@@ -40,7 +40,7 @@ DELTA_OPERATORS = dict(
 def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
     if getattr(model.config, "quantization_config", None) is not None:
-        from compiler.qwen35.fp8 import install_fp8
+        from compiler.qwen35.fp8_adapter import install_fp8
 
         install_fp8(model)
     capacity = resolve_context_length(model.config, capacity)

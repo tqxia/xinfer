@@ -23,7 +23,7 @@ def _text_config(path):
     config = Qwen3_5TextConfig(**document["text_config"])
     quantization = document.get("quantization_config")
     if quantization is not None:
-        from compiler.qwen35.fp8 import validate_quantization
+        from compiler.qwen35.fp8_adapter import validate_quantization
 
         validate_quantization(quantization)
         config.quantization_config = quantization
@@ -41,7 +41,7 @@ def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
     with torch.device("meta"):
         model = Qwen3_5ForCausalLM(config)
     if getattr(config, "quantization_config", None) is not None:
-        from compiler.qwen35.fp8 import load_weights
+        from compiler.qwen35.fp8_adapter import load_weights
 
         if dtype != torch.bfloat16:
             raise ValueError("FP8 models require BF16 activations")

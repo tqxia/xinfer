@@ -129,7 +129,7 @@ class Suite:
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
         quantization = read_json(self.model_dir / "config.json").get("quantization_config")
         if quantization is not None:
-            from compiler.common.kernels.fp8 import KERNEL_REPO, KERNEL_VERSION
+            from compiler.common.kernels.finegrained_fp8 import KERNEL_REPO, KERNEL_VERSION
 
             self.reference_protocol = dict(
                 dtype="bfloat16",

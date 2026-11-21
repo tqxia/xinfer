@@ -127,7 +127,7 @@ Validation compares the unmodified **FP8 HF checkpoint** against adapted eager,
 Python AOTI and C++ AOTI. It keeps the existing logit limits and strict native
 parity; it does not measure quantization loss against unquantized model weights.
 The reference protocol records FP8 storage and the kernel version. Run
-`compiler.qwen35.tests.test_fp8` for checkpoint/projection AOTI coverage and
+`compiler.qwen35.tests.test_fp8_adapter` for checkpoint/projection AOTI coverage and
 the 27B classes in `test_kernels` and `test_kernels_aoti` for DeltaNet coverage.
 See [validation status](../../docs/validation-status.md) for tested full-model scope.
 
