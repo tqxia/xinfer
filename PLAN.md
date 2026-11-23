@@ -32,6 +32,14 @@ This file lists unfinished work, not completed refactors or experiment logs.
   dependent; see the [GEMV case study](docs/experiments/qwen35-gemv-2026-11-13.md).
 - Evaluate the provisional DeltaNet short/chunked dispatch threshold with full-
   model evidence on each target before retuning it.
+- Evaluate migrating Qwen3.5 DeltaNet into a native C++/CUDA custom operator
+  (following the `xinfer::batched_flash_attention` AOTI C-shim pattern) to gain
+  full native control over short/chunked kernel performance and `(B, T, SM)`
+  dispatch, remove `torch.cond`, and unify Qwen3 and Qwen3.5 onto a single
+  `inplace` logits-only runtime ABI (safely handling cross-block `conv` updates).
+  Justify the rewrite first with idle-GPU timing of short vs chunked prefill
+  (including Tensor Core chunked matmuls and larger `T` profiles) on target
+  hardware.
 - Investigate CUDA Graphs, launch overhead and cache/state coordination as
   separate runtime work. Add a runtime-optimization skill only when that work
   starts; do not scaffold it now.
