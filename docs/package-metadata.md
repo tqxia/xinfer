@@ -1,9 +1,9 @@
 # Package metadata
 
-Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.pt`,
+Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.safetensors`,
 `prefill.json` and `decode.json` together. Metadata and model interfaces follow
 the current implementation without separate version fields. The shared archive
-uses format 2.
+uses format 3.
 
 `compiler/common/metadata.py` writes and validates the common format.
 `tools/packages.py` owns model ABI and shared-weight bundle checks for Python
@@ -111,18 +111,21 @@ compiled signature.
 
 ## Shared-weight archive and ownership
 
-`weights.pt` contains parameters and lifted tensor constants used by the compiled
-graphs. Constants are captured during lowering, after graph passes such as weight
-packing. Exact per-entry runtime names are recorded; names are not matched by
-suffix. `extra/weights.json` is embedded inside the archive, not a separate file.
-It maps each entry's constants to tensor views over deduplicated storage,
-preserving shape, stride, offset, dtype and device. Tied embeddings and shared
-packed sources can therefore share storage without changing their views.
+`weights.safetensors` contains parameters and lifted tensor constants used by the
+compiled graphs. Constants are captured during lowering, after graph passes such as
+weight packing. Exact per-entry runtime names are recorded; names are not matched by
+suffix. The manifest JSON is embedded under `__metadata__.xinfer_manifest` in the
+safetensors header, not a separate file. It maps each entry's constants to tensor
+views over deduplicated storage, preserving shape, stride, offset, dtype and device.
+Tied embeddings and shared packed sources can therefore share storage without
+changing their views.
 
-The sidecar `shared_weights` descriptor records `format: 2`, `file: weights.pt`,
-logical identity, byte size and SHA-256. The embedded manifest also records the
-exact package hashes. Archive bytes cover both mappings and tensor data; the
-archive binds package hashes, not sidecar hashes.
+The sidecar `shared_weights` descriptor records `format: 3`,
+`file: weights.safetensors`, logical identity, byte size and SHA-256. The embedded
+manifest also records the exact package hashes. Archive bytes cover both mappings and
+tensor data; the archive binds package hashes, not sidecar hashes. Native loading
+validates the safetensors header and copies deduplicated storages directly from an
+`mmap`ped file without TorchScript (`torch.jit`) dependencies.
 
 One export invocation loads the model once, compiles both entries sequentially,
 requires consistent shared tensor content, and serializes the archive once.

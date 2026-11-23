@@ -63,7 +63,11 @@ def metadata_pair(model_type="qwen3", *, cache_length=1024):
                 "always_keep_tensor_constants": True,
             },
             shared_weights=dict(
-                format=2, file="weights.pt", identity="1" * 64, bytes=1000000, sha256="b" * 64
+                format=3,
+                file="weights.safetensors",
+                identity="1" * 64,
+                bytes=1000000,
+                sha256="b" * 64,
             ),
         )
         result[kind] = metadata

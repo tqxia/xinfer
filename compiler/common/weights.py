@@ -5,10 +5,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import struct
 import tempfile
 import weakref
-import zipfile
 
+from safetensors.torch import load_file, save_file
 import torch
 
 from compiler.common.artifacts import (
@@ -21,19 +22,28 @@ from compiler.common.metadata import finalize_metadata, validate_metadata_pair
 from compiler.common.package import compile_package
 
 
+SHARED_WEIGHTS_FORMAT = 3
+SHARED_WEIGHTS_FILE = "weights.safetensors"
+SHARED_WEIGHTS_MANIFEST_KEY = "xinfer_manifest"
+MAX_HEADER_BYTES = 100 * 1024 * 1024
 SHARED_WEIGHT_OPTIONS = {
     "aot_inductor.package_constants_in_so": False,
     "always_keep_tensor_constants": True,
 }
 
 
-class _Archive(torch.nn.Module):
-    def __init__(self, identity):
-        super().__init__()
-        self.identity = identity
-
-    def forward(self):
-        return self.identity
+def _read_safetensors_header(path):
+    size = path.stat().st_size
+    require(size >= 8, "Truncated safetensors header")
+    with path.open("rb") as handle:
+        (header_length,) = struct.unpack("<Q", handle.read(8))
+        require(
+            0 < header_length <= size - 8 and header_length <= MAX_HEADER_BYTES,
+            "Invalid safetensors header length",
+        )
+        header = json.loads(handle.read(header_length).decode("utf-8"))
+    require(isinstance(header, dict), "Safetensors header must be an object")
+    return header
 
 
 def read_shared_weight_manifest(directory, contract):
@@ -41,30 +51,33 @@ def read_shared_weight_manifest(directory, contract):
     directory = Path(directory)
     require(
         isinstance(contract, dict)
-        and contract.get("format") == 2
-        and contract.get("file") == "weights.pt"
+        and contract.get("format") == SHARED_WEIGHTS_FORMAT
+        and contract.get("file") == SHARED_WEIGHTS_FILE
         and isinstance(contract.get("identity"), str)
         and type(contract.get("bytes")) is int
         and contract["bytes"] >= 0
         and isinstance(contract.get("sha256"), str),
         "Shared weights metadata is required; re-export both packages",
     )
-    path = directory / "weights.pt"
+    path = directory / SHARED_WEIGHTS_FILE
     require(path.is_file(), "Shared weights archive is missing")
     require(
         path.stat().st_size == contract["bytes"] and sha256(path) == contract["sha256"],
         "Shared weights archive checksum mismatch",
     )
     try:
-        with zipfile.ZipFile(path) as zipped:
-            records = [name for name in zipped.namelist() if name.endswith("/extra/weights.json")]
-            require(len(records) == 1, "Shared weights archive metadata is missing")
-            data = json.loads(zipped.read(records[0]))
+        header = _read_safetensors_header(path)
+        meta = header.get("__metadata__")
         require(
-            isinstance(data, dict) and data.get("format") == 2,
+            isinstance(meta, dict) and isinstance(meta.get(SHARED_WEIGHTS_MANIFEST_KEY), str),
+            "Shared weights archive metadata is missing",
+        )
+        data = json.loads(meta[SHARED_WEIGHTS_MANIFEST_KEY])
+        require(
+            isinstance(data, dict) and data.get("format") == SHARED_WEIGHTS_FORMAT,
             "Shared weights archive metadata has unsupported format",
         )
-    except (OSError, ValueError, zipfile.BadZipFile) as error:
+    except (OSError, ValueError, UnicodeDecodeError, struct.error) as error:
         raise ValueError(f"Shared weights archive metadata is invalid: {error}") from error
     require(
         data.get("identity_sha256") == contract["identity"]
@@ -105,9 +118,7 @@ def _check_storage(tensor, descriptor):
 
 
 def _archive_storages(directory, data):
-    archive = torch.jit.load(str(Path(directory) / "weights.pt"), map_location="cpu")
-    require(archive.identity == data["identity_sha256"], "Shared weights archive identity mismatch")
-    result = dict(archive.named_buffers())
+    result = load_file(str(Path(directory) / SHARED_WEIGHTS_FILE), device="cpu")
     require(set(result) == set(data["storages"]), "Shared weights archive buffer set mismatch")
     for name, tensor in result.items():
         _check_storage(tensor, data["storages"][name])
@@ -325,7 +336,7 @@ def compile_shared(
     directory.parent.mkdir(parents=True, exist_ok=True)
     identity_sha256 = json_sha256(identity)
     data = dict(
-        format=2,
+        format=SHARED_WEIGHTS_FORMAT,
         identity=identity,
         identity_sha256=identity_sha256,
         entries={},
@@ -358,18 +369,16 @@ def compile_shared(
         data["tensors"] = {name: data["tensors"][name] for name in needed_views}
         needed_storages = {descriptor["storage"] for descriptor in data["tensors"].values()}
         data["storages"] = {name: data["storages"][name] for name in needed_storages}
-        archive = _Archive(identity_sha256)
-        for name in sorted(needed_storages):
-            archive.register_buffer(name, storages[name])
-        archive_path = staging / "weights.pt"
-        torch.jit.save(
-            torch.jit.script(archive),
+        archive_path = staging / SHARED_WEIGHTS_FILE
+        ordered = {name: storages[name] for name in sorted(needed_storages)}
+        save_file(
+            ordered,
             str(archive_path),
-            _extra_files={"weights.json": canonical_json(data)},
+            metadata={SHARED_WEIGHTS_MANIFEST_KEY: canonical_json(data)},
         )
         contract = dict(
-            format=2,
-            file="weights.pt",
+            format=SHARED_WEIGHTS_FORMAT,
+            file=SHARED_WEIGHTS_FILE,
             identity=identity_sha256,
             bytes=archive_path.stat().st_size,
             sha256=sha256(archive_path),

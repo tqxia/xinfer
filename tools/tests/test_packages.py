@@ -3,10 +3,10 @@
 import copy
 import json
 from pathlib import Path
+import struct
 import tempfile
 import unittest
 from unittest.mock import patch
-import zipfile
 
 from compiler.common.artifacts import json_sha256, sha256
 from compiler.common.metadata import make_metadata, state_spec, validate_metadata
@@ -40,7 +40,11 @@ def metadata(*, cache_length=1024):
             "always_keep_tensor_constants": True,
         },
         shared_weights=dict(
-            format=2, file="weights.pt", identity="b" * 64, bytes=128, sha256="c" * 64
+            format=3,
+            file="weights.safetensors",
+            identity="b" * 64,
+            bytes=128,
+            sha256="c" * 64,
         ),
     )
     return result
@@ -120,10 +124,10 @@ class SharedWeightBundleContract(unittest.TestCase):
         }
 
     def write_archive(self, model):
-        # Preflight reads ZIP metadata and file bytes; it does not load tensors or runners.
+        # Preflight reads safetensors header metadata and file bytes without loading tensors.
         identity = dict(model=model, revision="cpu-fixture")
         self.manifest = dict(
-            format=2,
+            format=3,
             identity=identity,
             identity_sha256=json_sha256(identity),
             entries={
@@ -134,12 +138,14 @@ class SharedWeightBundleContract(unittest.TestCase):
             storages={},
             sources={},
         )
-        path = self.bundle / "weights.pt"
-        with zipfile.ZipFile(path, "w") as archive:
-            archive.writestr("weights/extra/weights.json", json.dumps(self.manifest))
+        path = self.bundle / "weights.safetensors"
+        header = json.dumps(
+            {"__metadata__": {"xinfer_manifest": json.dumps(self.manifest)}}
+        ).encode("utf-8")
+        path.write_bytes(struct.pack("<Q", len(header)) + header)
         self.contract = dict(
-            format=2,
-            file="weights.pt",
+            format=3,
+            file="weights.safetensors",
             identity=self.manifest["identity_sha256"],
             bytes=path.stat().st_size,
             sha256=sha256(path),

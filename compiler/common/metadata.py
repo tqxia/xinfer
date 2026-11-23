@@ -215,8 +215,8 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         isinstance(weights, dict)
         and set(weights) == {"format", "file", "identity", "bytes", "sha256"}
         and type(weights["format"]) is int
-        and weights["format"] == 2
-        and weights["file"] == "weights.pt"
+        and weights["format"] == 3
+        and weights["file"] == "weights.safetensors"
         and _integer(weights["bytes"], 1)
         and _digest(weights["sha256"])
         and _digest(weights["identity"]),

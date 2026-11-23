@@ -4,12 +4,13 @@ import gc
 import json
 from pathlib import Path
 import shutil
+import struct
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 import weakref
-import zipfile
 
+from safetensors.torch import load_file, save_file
 import torch
 import torch.nn.functional as F
 
@@ -17,6 +18,8 @@ from compiler.common.artifacts import json_sha256, sha256
 from compiler.common.package import compile_package
 from compiler.common.weights import (
     SHARED_WEIGHT_OPTIONS,
+    SHARED_WEIGHTS_FILE,
+    SHARED_WEIGHTS_MANIFEST_KEY,
     SharedWeights,
     compile_shared,
     read_shared_weight_manifest,
@@ -71,9 +74,11 @@ def metadata(directory, kind="decode"):
 
 
 def mapping(directory):
-    with zipfile.ZipFile(directory / "weights.pt") as archive:
-        record = next(name for name in archive.namelist() if name.endswith("/extra/weights.json"))
-        return json.loads(archive.read(record))
+    path = directory / SHARED_WEIGHTS_FILE
+    with path.open("rb") as handle:
+        (header_length,) = struct.unpack("<Q", handle.read(8))
+        header = json.loads(handle.read(header_length).decode("utf-8"))
+    return json.loads(header["__metadata__"][SHARED_WEIGHTS_MANIFEST_KEY])
 
 
 class SharedWeightBundle(unittest.TestCase):
@@ -85,7 +90,7 @@ class SharedWeightBundle(unittest.TestCase):
         cls.bundle = cls.root / "complete"
         cls.identity = dict(model="cpu-tied-view-fixture", revision="one")
         cls.model = TiedViews().eval()
-        with patch("torch.jit.save", wraps=torch.jit.save) as save_archive:
+        with patch("compiler.common.weights.save_file", wraps=save_file) as save_archive:
             cls.contract = compile_bundle(cls.model, cls.bundle, cls.identity)
         cls.archive_writes = save_archive.call_count
 
@@ -104,13 +109,11 @@ class SharedWeightBundle(unittest.TestCase):
             payload.update(identity=identity, identity_sha256=json_sha256(identity))
         if mutate:
             mutate(payload)
-        path = directory / "weights.pt"
-        archive = torch.jit.load(str(path), map_location="cpu")
-        if identity is not None:
-            archive.identity = payload["identity_sha256"]
-        rewritten = directory / "rewritten.pt"
-        extra = {"weights.json": json.dumps(payload)} if include_mapping else {}
-        torch.jit.save(archive, str(rewritten), _extra_files=extra)
+        path = directory / SHARED_WEIGHTS_FILE
+        tensors = load_file(str(path), device="cpu")
+        rewritten = directory / "rewritten.safetensors"
+        extra = {SHARED_WEIGHTS_MANIFEST_KEY: json.dumps(payload)} if include_mapping else None
+        save_file(tensors, str(rewritten), metadata=extra)
         rewritten.replace(path)
         contract = dict(
             metadata(directory)["shared_weights"], bytes=path.stat().st_size, sha256=sha256(path)
@@ -130,8 +133,9 @@ class SharedWeightBundle(unittest.TestCase):
         prefill, decode = (metadata(self.bundle, kind) for kind in ("prefill", "decode"))
         self.assertEqual(prefill["shared_weights"], decode["shared_weights"])
         self.assertEqual(self.contract, decode["shared_weights"])
-        self.assertEqual(self.contract["bytes"], (self.bundle / "weights.pt").stat().st_size)
-        self.assertEqual(self.contract["sha256"], sha256(self.bundle / "weights.pt"))
+        self.assertEqual(self.contract["bytes"], (self.bundle / SHARED_WEIGHTS_FILE).stat().st_size)
+        self.assertEqual(self.contract["sha256"], sha256(self.bundle / SHARED_WEIGHTS_FILE))
+        self.assertFalse((self.bundle / "weights.pt").exists())
         self.assertFalse((self.bundle / "weights.json").exists())
         for kind, package in (("prefill", prefill), ("decode", decode)):
             self.assertEqual(package["entry_point"], kind)
@@ -319,7 +323,7 @@ class SharedWeightBundle(unittest.TestCase):
                         patch(
                             "torch._inductor.aoti_compile_and_package", side_effect=compile_graph
                         ),
-                        patch("torch.jit.save", wraps=torch.jit.save) as save_archive,
+                        patch("compiler.common.weights.save_file", wraps=save_file) as save_archive,
                     ):
                         with self.assertRaisesRegex(RuntimeError, f"decode {failure} failed"):
                             compile_shared(
@@ -356,8 +360,8 @@ class SharedWeightBundle(unittest.TestCase):
 
     def test_missing_and_corrupt_bundle_files_are_rejected_without_cuda(self):
         for filename, corrupt, message in (
-            ("weights.pt", False, "archive is missing"),
-            ("weights.pt", True, "archive checksum mismatch"),
+            (SHARED_WEIGHTS_FILE, False, "archive is missing"),
+            (SHARED_WEIGHTS_FILE, True, "archive checksum mismatch"),
             ("prefill.pt2", True, "package checksum mismatch"),
             ("prefill.pt2", False, "package checksum mismatch"),
         ):
@@ -381,10 +385,16 @@ class SharedWeightBundle(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "archive metadata is invalid"):
                 read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
-    def test_archive_contract_rejects_noncanonical_path(self):
-        altered = dict(self.contract, file="../weights.pt")
-        with self.assertRaisesRegex(ValueError, "metadata is required"):
-            read_shared_weight_manifest(self.bundle, altered)
+    def test_archive_contract_rejects_noncanonical_path_and_legacy_format(self):
+        for altered in (
+            dict(self.contract, file="../weights.safetensors"),
+            dict(self.contract, format=2, file="weights.pt"),
+        ):
+            with (
+                self.subTest(altered=altered),
+                self.assertRaisesRegex(ValueError, "metadata is required"),
+            ):
+                read_shared_weight_manifest(self.bundle, altered)
 
     def test_archive_dtype_device_and_view_layout_are_checked(self):
         for field, value, message in (

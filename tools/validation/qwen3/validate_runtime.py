@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 
 import numpy as np
+from safetensors.torch import save_file
 import torch
 
 from compiler.common.weights import SharedWeights
@@ -264,7 +265,7 @@ def package_fixture(packages, out, name, metadata, with_weights=False):
         (directory / f"{kind}.json").write_text(json.dumps(item))
         (directory / f"{kind}.pt2").symlink_to((packages / f"{kind}.pt2").resolve())
     if with_weights:
-        (directory / "weights.pt").symlink_to((packages / "weights.pt").resolve())
+        (directory / "weights.safetensors").symlink_to((packages / "weights.safetensors").resolve())
     return directory
 
 
@@ -449,14 +450,16 @@ def reject_weights(packages, out, capital_prompt, env, run, report):
             for item in metadata.values():
                 item["shared_weights"]["sha256"] = "0" * 64
         if name == "corrupt_weight_archive":
-            (damaged / "weights.pt").write_bytes(b"corrupted weight archive")
+            (damaged / "weights.safetensors").write_bytes(b"corrupted weight archive")
         elif name == "missing_embedded_weight_metadata":
-            archive = damaged / "weights.pt"
-            torch.jit.save(torch.jit.script(torch.nn.Identity()), str(archive))
+            archive = damaged / "weights.safetensors"
+            save_file({}, str(archive))
             for item in metadata.values():
                 item["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
         elif name != "missing_weight_archive":
-            (damaged / "weights.pt").symlink_to((packages / "weights.pt").resolve())
+            (damaged / "weights.safetensors").symlink_to(
+                (packages / "weights.safetensors").resolve()
+            )
         for kind, item in metadata.items():
             (damaged / (kind + ".json")).write_text(json.dumps(item))
             (damaged / (kind + ".pt2")).symlink_to((packages / (kind + ".pt2")).resolve())

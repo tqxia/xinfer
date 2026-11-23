@@ -28,7 +28,7 @@ in both `.pt2` files and loaded by the standard AOTI loaders. See the
 [attention guide](docs/flash-attention.md) for the operator and packaging contract.
 
 The deployment bundle contains **five files**: `prefill.pt2`, `decode.pt2`,
-`weights.pt`, `prefill.json` and `decode.json`. Graph dumps and build logs are
+`weights.safetensors`, `prefill.json` and `decode.json`. Graph dumps and build logs are
 export diagnostics. Deploy the complete bundle with matching LibTorch/CUDA;
 see [package metadata](docs/package-metadata.md) and
 [runtime installation](environments/README.md#install-and-relocate-the-runtime).

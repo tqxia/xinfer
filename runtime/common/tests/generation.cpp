@@ -55,8 +55,8 @@ struct Bundle {
         {"package_bytes", 1},
         {"package_sha256", std::string(64, 'a')},
         {"shared_weights",
-         {{"format", 2},
-          {"file", "weights.pt"},
+         {{"format", xinfer::kSharedWeightsFormat},
+          {"file", xinfer::kSharedWeightsFile},
           {"identity", std::string(64, 'b')},
           {"bytes", 1},
           {"sha256", std::string(64, 'c')}}},
@@ -407,6 +407,232 @@ int main() {
       reject_without_mutation(runtime, [&] { runtime.generate(prompt, 1); });
       reject_without_mutation(runtime, [&] { runtime.step(std::vector<int64_t>(513, 2)); });
       reject_without_mutation(runtime, [&] { xinfer::prefill(runtime, {1, 2}, 1); });
+    });
+
+    check("safetensors_shared_weights_cpu_load_and_rejection", [&] {
+      Bundle weights_bundle;
+      const auto write_safetensors = [](const xinfer::fs::path &path, const Json &header,
+                                        const std::vector<uint8_t> &payload) {
+        const std::string header_text = header.dump();
+        const uint64_t length = header_text.size();
+        uint8_t prefix[8]{};
+        for (int i = 0; i < 8; ++i)
+          prefix[i] = static_cast<uint8_t>((length >> (8 * i)) & 0xffu);
+        auto file = xinfer::output_file(path, true);
+        file.write(reinterpret_cast<const char *>(prefix), 8);
+        file.write(header_text.data(), static_cast<std::streamsize>(header_text.size()));
+        if (!payload.empty())
+          file.write(reinterpret_cast<const char *>(payload.data()),
+                     static_cast<std::streamsize>(payload.size()));
+        file.close();
+        require(bool(file), "Failed to write test safetensors file");
+      };
+
+      const std::string identity(64, 'b');
+      Json prefill = xinfer::read_json(weights_bundle.directory / "prefill.json");
+      Json decode = xinfer::read_json(weights_bundle.directory / "decode.json");
+      for (auto &[kind, meta] : std::vector<std::pair<std::string, Json *>>{{"prefill", &prefill},
+                                                                            {"decode", &decode}}) {
+        const auto pkg = weights_bundle.directory / (kind + ".pt2");
+        auto file = xinfer::output_file(pkg, true);
+        file << kind;
+        file.close();
+        (*meta)["package_bytes"] = xinfer::fs::file_size(pkg);
+        (*meta)["package_sha256"] = xinfer::sha256_file(pkg);
+      }
+
+      // Pack U8 (1 byte) before I64 (16 bytes at odd offset 1) + BF16 (12 bytes) + empty F32.
+      const std::vector<uint8_t> payload(29, 0x2a);
+      const Json base_manifest = {
+          {"format", xinfer::kSharedWeightsFormat},
+          {"identity", {{"kind", "cpu_test"}}},
+          {"identity_sha256", identity},
+          {"entries",
+           {{"prefill",
+             {{"package_sha256", prefill["package_sha256"]},
+              {"constants", {{"c_u8", "v_u8"}, {"c_i64", "v_i64"}, {"c_bf16", "v_bf16"}}}}},
+            {"decode",
+             {{"package_sha256", decode["package_sha256"]},
+              {"constants", {{"c_bf16_alias", "v_bf16_slice"}, {"c_empty", "v_empty"}}}}}}},
+          {"sources", Json::object()},
+          {"storages",
+           {{"w_u8", {{"dtype", "uint8"}, {"device", "cpu"}, {"bytes", 1}}},
+            {"w_i64", {{"dtype", "int64"}, {"device", "cpu"}, {"bytes", 16}}},
+            {"w_bf16", {{"dtype", "bfloat16"}, {"device", "cpu"}, {"bytes", 12}}},
+            {"w_empty", {{"dtype", "float32"}, {"device", "cpu"}, {"bytes", 0}}}}},
+          {"tensors",
+           {{"v_u8",
+             {{"storage", "w_u8"},
+              {"dtype", "uint8"},
+              {"device", "cpu"},
+              {"shape", {1}},
+              {"stride", {1}},
+              {"offset", 0}}},
+            {"v_i64",
+             {{"storage", "w_i64"},
+              {"dtype", "int64"},
+              {"device", "cpu"},
+              {"shape", {2}},
+              {"stride", {1}},
+              {"offset", 0}}},
+            {"v_bf16",
+             {{"storage", "w_bf16"},
+              {"dtype", "bfloat16"},
+              {"device", "cpu"},
+              {"shape", {2, 3}},
+              {"stride", {3, 1}},
+              {"offset", 0}}},
+            {"v_bf16_slice",
+             {{"storage", "w_bf16"},
+              {"dtype", "bfloat16"},
+              {"device", "cpu"},
+              {"shape", {2, 2}},
+              {"stride", {2, 1}},
+              {"offset", 1}}},
+            {"v_empty",
+             {{"storage", "w_empty"},
+              {"dtype", "float32"},
+              {"device", "cpu"},
+              {"shape", {0, 4}},
+              {"stride", {4, 1}},
+              {"offset", 0}}}}},
+      };
+      const Json base_header = {
+          {"__metadata__", {{xinfer::kSharedWeightsManifestKey, base_manifest.dump()}}},
+          {"w_u8", {{"dtype", "U8"}, {"shape", {1}}, {"data_offsets", {0, 1}}}},
+          {"w_i64", {{"dtype", "I64"}, {"shape", {2}}, {"data_offsets", {1, 17}}}},
+          {"w_bf16", {{"dtype", "BF16"}, {"shape", {6}}, {"data_offsets", {17, 29}}}},
+          {"w_empty", {{"dtype", "F32"}, {"shape", {0}}, {"data_offsets", {29, 29}}}},
+      };
+
+      const auto archive = weights_bundle.directory / xinfer::kSharedWeightsFile;
+      auto update_contract = [&] {
+        const Json contract = {
+            {"format", xinfer::kSharedWeightsFormat},
+            {"file", xinfer::kSharedWeightsFile},
+            {"identity", identity},
+            {"bytes", xinfer::fs::file_size(archive)},
+            {"sha256", xinfer::sha256_file(archive)},
+        };
+        prefill["shared_weights"] = decode["shared_weights"] = contract;
+        return contract;
+      };
+
+      write_safetensors(archive, base_header, payload);
+      const auto contract = update_contract();
+      {
+        auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+        xinfer::SharedWeights loaded(std::move(verified), contract);
+        require(loaded.package_path("prefill").filename() == "prefill.pt2" &&
+                    loaded.package_path("decode").filename() == "decode.pt2",
+                "Validated bundle returned unexpected package paths");
+      }
+
+      auto expect_error = [&](const std::function<void()> &operation, const std::string &expected) {
+        bool matched = false;
+        try {
+          operation();
+        } catch (const std::runtime_error &error) {
+          matched = std::string(error.what()).find(expected) != std::string::npos;
+        }
+        require(matched, "Expected error containing: " + expected);
+      };
+
+      // Legacy format 2 / weights.pt sidecar metadata must be rejected.
+      {
+        auto legacy = prefill;
+        legacy["shared_weights"]["format"] = 2;
+        legacy["shared_weights"]["file"] = "weights.pt";
+        expect_error([&] { xinfer::validate_metadata(legacy, "prefill"); },
+                     "Unsupported package metadata: shared_weights");
+        expect_error(
+            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, legacy, legacy); },
+            "Shared weights metadata is required");
+      }
+
+      // Missing __metadata__ in safetensors header must be rejected during preflight.
+      {
+        Json header = base_header;
+        header.erase("__metadata__");
+        write_safetensors(archive, header, payload);
+        update_contract();
+        expect_error(
+            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
+            "Shared weights archive metadata is invalid");
+      }
+
+      // Truncated safetensors file must be rejected during preflight.
+      {
+        auto file = xinfer::output_file(archive, true);
+        file.write("bad", 3);
+        file.close();
+        update_contract();
+        expect_error(
+            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
+            "Shared weights archive metadata is invalid");
+      }
+
+      // Extra tensor in safetensors header must be rejected on load.
+      {
+        Json header = base_header;
+        header["w_extra"] = {{"dtype", "U8"}, {"shape", {0}}, {"data_offsets", {29, 29}}};
+        write_safetensors(archive, header, payload);
+        const auto bad_contract = update_contract();
+        expect_error(
+            [&] {
+              auto verified =
+                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              xinfer::SharedWeights loaded(std::move(verified), bad_contract);
+            },
+            "Shared weights archive buffer set mismatch");
+      }
+
+      // Out-of-bounds data_offsets must be rejected on load.
+      {
+        Json header = base_header;
+        header["w_bf16"]["data_offsets"] = {18, 30};
+        write_safetensors(archive, header, payload);
+        const auto bad_contract = update_contract();
+        expect_error(
+            [&] {
+              auto verified =
+                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              xinfer::SharedWeights loaded(std::move(verified), bad_contract);
+            },
+            "Shared weights archive tensor metadata mismatch");
+      }
+
+      // Header dtype differing from manifest dtype must be rejected on load.
+      {
+        Json header = base_header;
+        header["w_bf16"]["dtype"] = "F16";
+        write_safetensors(archive, header, payload);
+        const auto bad_contract = update_contract();
+        expect_error(
+            [&] {
+              auto verified =
+                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              xinfer::SharedWeights loaded(std::move(verified), bad_contract);
+            },
+            "Shared weights archive tensor metadata mismatch");
+      }
+
+      // Out-of-bounds view into storage must be rejected before allocation.
+      {
+        Json bad_manifest = base_manifest;
+        bad_manifest["tensors"]["v_bf16_slice"]["offset"] = 3;
+        Json header = base_header;
+        header["__metadata__"][xinfer::kSharedWeightsManifestKey] = bad_manifest.dump();
+        write_safetensors(archive, header, payload);
+        const auto bad_contract = update_contract();
+        expect_error(
+            [&] {
+              auto verified =
+                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              xinfer::SharedWeights loaded(std::move(verified), bad_contract);
+            },
+            "Shared weights tensor layout is invalid");
+      }
     });
 
     report["passed"] = true;

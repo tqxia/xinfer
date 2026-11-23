@@ -3,6 +3,9 @@
 #include "qwen35/runtime.h"
 #include "common/settings.h"
 
+#include <caffe2/serialize/inline_container.h>
+
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <type_traits>
@@ -146,6 +149,20 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
   report["generated_ids"] = expected_ids;
 }
 
+void write_safetensors_manifest(const std::filesystem::path &path, const Json &manifest) {
+  const std::string header =
+      Json{{"__metadata__", {{xinfer::kSharedWeightsManifestKey, manifest.dump()}}}}.dump();
+  const uint64_t length = header.size();
+  uint8_t prefix[8]{};
+  for (int i = 0; i < 8; ++i)
+    prefix[i] = static_cast<uint8_t>((length >> (8 * i)) & 0xffu);
+  auto file = xinfer::output_file(path, true);
+  file.write(reinterpret_cast<const char *>(prefix), 8);
+  file.write(header.data(), static_cast<std::streamsize>(header.size()));
+  file.close();
+  require(bool(file), "Failed to write safetensors test fixture");
+}
+
 template <class Spec>
 void check_package_payloads(const std::filesystem::path &fixture, const Spec &validated,
                             const Json &manifest, Json &report) {
@@ -153,7 +170,7 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
 
   // File verification treats operator payloads as opaque. These archives are
   // checked only against their recorded digests, never loaded as models.
-  fs::remove(fixture / "weights.pt"); // Remove the fixture symlink, not its target.
+  fs::remove(fixture / xinfer::kSharedWeightsFile); // Remove the fixture symlink, not its target.
   for (const std::string variant :
        {"matching", "missing_prefill", "missing_decode", "different", "duplicate", "empty"}) {
     Spec descriptor(validated);
@@ -184,13 +201,8 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
       data["entries"][kind]["package_sha256"] = digest;
     }
 
-    const auto weights = fixture / "weights.pt";
-    {
-      caffe2::serialize::PyTorchStreamWriter writer(weights.string());
-      const auto payload = data.dump();
-      writer.writeRecord("extra/weights.json", payload.data(), payload.size());
-      writer.writeEndOfFile();
-    }
+    const auto weights = fixture / xinfer::kSharedWeightsFile;
+    write_safetensors_manifest(weights, data);
 
     auto contract = validated.shared_weights;
     contract["bytes"] = fs::file_size(weights);
@@ -224,7 +236,8 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
   for (const auto *name : {"prefill.json", "decode.json", "prefill.pt2", "decode.pt2"})
     fs::copy_file(packages / name, fixture / name);
   // The large archive is immutable; only the copied packages are modified.
-  fs::create_symlink(fs::absolute(packages / "weights.pt"), fixture / "weights.pt");
+  fs::create_symlink(fs::absolute(packages / xinfer::kSharedWeightsFile),
+                     fixture / xinfer::kSharedWeightsFile);
 
   const Spec reused(fixture);
   Json manifest;

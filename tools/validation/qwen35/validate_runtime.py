@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 
+from safetensors.torch import save_file
 import torch
 from transformers import AutoTokenizer
 
@@ -275,7 +276,9 @@ def reject_metadata(args, env, metadata, directory, prompt):
         for kind, meta in modified.items():
             (packages / f"{kind}.json").write_text(json.dumps(meta))
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
-        (packages / "weights.pt").symlink_to((args.packages / "weights.pt").resolve())
+        (packages / "weights.safetensors").symlink_to(
+            (args.packages / "weights.safetensors").resolve()
+        )
         output = packages / "generated.ids"
         run(
             [args.cli, packages, prompt, output],
@@ -300,10 +303,10 @@ def reject_archives(args, env, metadata, directory, prompt):
         packages.mkdir()
         modified = copy.deepcopy(metadata)
         if name == "corrupt_weights_archive":
-            (packages / "weights.pt").write_bytes(b"corrupt shared weights\n")
+            (packages / "weights.safetensors").write_bytes(b"corrupt shared weights\n")
         elif name == "missing_embedded_weights_metadata":
-            archive = packages / "weights.pt"
-            torch.jit.save(torch.jit.script(torch.nn.Identity()), str(archive))
+            archive = packages / "weights.safetensors"
+            save_file({}, str(archive))
             for item in modified.values():
                 item["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
         for kind, meta in modified.items():

@@ -46,7 +46,11 @@ class AOTIRuntimeContract(unittest.TestCase):
                 package_bytes=1,
                 package_sha256="1" * 64,
                 shared_weights=dict(
-                    format=2, file="weights.pt", identity="2" * 64, bytes=1, sha256="3" * 64
+                    format=3,
+                    file="weights.safetensors",
+                    identity="2" * 64,
+                    bytes=1,
+                    sha256="3" * 64,
                 ),
                 inductor_configs={
                     "emulate_precision_casts": True,
