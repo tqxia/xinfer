@@ -1,6 +1,5 @@
 """Qwen3 builds live HF references and checks the HF generation API on CPU."""
 
-import importlib.metadata
 import hashlib
 import json
 from pathlib import Path
@@ -9,23 +8,14 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch, sentinel
 
+import torch
+
 from compiler.common.artifacts import MODEL_MANIFEST_NAME
+from tools.tests.test_packages import metadata
 from tools.validation.common.prompts import chat_prompts
+from tools.validation.qwen3 import model
 
 
-try:
-    QWEN3_ENVIRONMENT = importlib.metadata.version("transformers") == "4.51.3"
-except importlib.metadata.PackageNotFoundError:
-    QWEN3_ENVIRONMENT = False
-
-if QWEN3_ENVIRONMENT:
-    import torch
-
-    from tools.tests.test_packages import metadata
-    from tools.validation.qwen3 import model
-
-
-@unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
 class LiveHFReferences(unittest.TestCase):
     def test_batch_fixtures_cover_supported_rows_and_capacity(self):
         from tools.validation.common import batch as validate_batch
@@ -211,18 +201,12 @@ class LiveHFReferences(unittest.TestCase):
         self.assertEqual(actual, self.sequence(prompt))
         self.assertEqual(self.runtime.position, 17)
         self.assertIs(self.runtime.cache, sentinel.manual_cache)
-        self.cache.assert_called_once_with(
-            self.original.config,
-            1,
-            1024,
-            device=self.original.device,
-            dtype=torch.bfloat16,
-        )
+        self.cache.assert_called_once_with(self.original.config, max_cache_len=1024)
         arguments = self.original.generate.call_args.kwargs
         self.assertEqual(arguments["input_ids"].tolist(), [prompt])
         self.assertEqual(arguments["attention_mask"].tolist(), [[1] * len(prompt)])
         self.assertIs(arguments["past_key_values"], sentinel.fresh_cache)
-        self.assertFalse(arguments["use_model_defaults"])
+        self.assertNotIn("use_model_defaults", arguments)
         config = arguments["generation_config"]
         self.assertIsNot(config, self.original.generation_config)
         self.assertFalse(config.do_sample)
@@ -243,7 +227,6 @@ class LiveHFReferences(unittest.TestCase):
             self.suite.fixtures(self.runtime)
 
 
-@unittest.skipUnless(QWEN3_ENVIRONMENT, "Qwen3 validation requires transformers==4.51.3")
 class BatchValidation(unittest.TestCase):
     def test_sparse_traces_preserve_all_bytes_and_trailing_zeros(self):
         from tools.validation.common.batch import write_trace

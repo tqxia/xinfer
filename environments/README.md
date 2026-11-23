@@ -27,10 +27,10 @@ the PyTorch index, Torch, Triton, CMake, Ninja and model dependencies. Versions
 can differ between models. JSON profiles contain OS, CPU architecture and GPU
 capability checks; they do not duplicate package pins.
 
-Qwen3 and Qwen3.5 use separate environments for their pinned Transformers
-implementations. Setup uses official matching wheels by default and permits a
-local Torch wheel override. For an offline image, use the distinct
-[L20 Docker workflow](l20/docker/README.md).
+Qwen3 and Qwen3.5 currently pin the same Transformers `5.20.2` stack while
+retaining per-model environment and build entry points. Setup uses official
+matching wheels by default and permits a local Torch wheel override. For an
+offline image, use the distinct [L20 Docker workflow](l20/docker/README.md).
 
 ## Create model environments
 

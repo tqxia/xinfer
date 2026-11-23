@@ -4,7 +4,7 @@ torch==2.13.0+cu130
 triton==3.7.1
 cmake==4.3.4
 ninja==1.13.2
-transformers==4.51.3
-tokenizers==0.21.4
-safetensors==0.5.3
-huggingface-hub==0.30.2
+transformers==5.20.2
+huggingface-hub==2.3.0
+tokenizers==0.23.3
+safetensors==0.8.0

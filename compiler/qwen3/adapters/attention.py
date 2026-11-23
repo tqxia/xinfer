@@ -28,7 +28,7 @@ class FlashAttention(torch.nn.Module):
         hidden_states,
         position_embeddings,
         attention_mask=None,
-        past_key_value=None,
+        past_key_values=None,
         cache_position=None,
         **kwargs,
     ):
@@ -36,7 +36,10 @@ class FlashAttention(torch.nn.Module):
             raise ValueError("Flash adapter supports inference without attention weights")
         if attention_mask is not None:
             raise ValueError("Flash adapter uses KVCache lengths instead of attention masks")
-        if not isinstance(past_key_value, KVCache) or cache_position is not past_key_value.position:
+        if (
+            not isinstance(past_key_values, KVCache)
+            or cache_position is not past_key_values.position
+        ):
             raise ValueError("Flash adapter requires KVCache with the same position tensor")
         a = self.original
         input_shape = hidden_states.shape[:-1]
@@ -46,16 +49,16 @@ class FlashAttention(torch.nn.Module):
         v = a.v_proj(hidden_states).view(head_shape).transpose(1, 2)
         cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
-        k, v = past_key_value.update(
+        k, v = past_key_values.update(
             k, v, a.layer_idx, {"sin": sin, "cos": cos, "cache_position": cache_position}
         )
         output = torch.ops.xinfer.batched_flash_attention(
             q,
             k,
             v,
-            past_key_value.offsets,
-            past_key_value.cuda_offsets,
-            past_key_value.blocks,
+            past_key_values.offsets,
+            past_key_values.cuda_offsets,
+            past_key_values.blocks,
             a.scaling,
         )
         output = output.transpose(1, 2).reshape(*input_shape, -1).contiguous()

@@ -27,7 +27,7 @@ class PreparedCheckpoint(unittest.TestCase):
             repo_id=MODEL_ID,
             revision=REVISIONS[MODEL_ID],
             status="complete",
-            huggingface_hub="0.30.2",
+            huggingface_hub="2.3.0",
             files={name: self.descriptor(data) for name, data in contents.items()},
         )
 
@@ -53,7 +53,7 @@ class PreparedCheckpoint(unittest.TestCase):
 
             with (
                 patch.object(common, "Hub") as hub,
-                patch.object(qwen3.importlib.metadata, "version", return_value="0.30.2") as version,
+                patch.object(qwen3.importlib.metadata, "version", return_value="2.3.0") as version,
             ):
                 hub.return_value.copy.side_effect = copy
                 manifest = qwen3.prepare(output, MODEL_ID, cache_dir=cache)

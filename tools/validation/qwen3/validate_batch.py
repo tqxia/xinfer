@@ -17,7 +17,7 @@ from tools.validation.common.batch import case_groups, validate_python_group, va
 
 
 def collect_hf(model, steps):
-    caches = [DynamicCache() for _ in range(max(map(len, steps)))]
+    caches = [DynamicCache(config=model.config) for _ in range(max(map(len, steps)))]
     logits = []
     for rows in steps:
         scores = []
@@ -37,9 +37,9 @@ def collect_hf(model, steps):
             scores.append(score.cpu())
         logits.append(torch.cat(scores))
     state = [
-        [getattr(cache, kind)[layer].cpu() for cache in caches]
+        [getattr(cache.layers[layer], kind).cpu() for cache in caches]
         for layer in range(model.config.num_hidden_layers)
-        for kind in ("key_cache", "value_cache")
+        for kind in ("keys", "values")
     ]
     return logits, [row for tensor in state for row in tensor]
 

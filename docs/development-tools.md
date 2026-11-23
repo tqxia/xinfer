@@ -51,35 +51,18 @@ binaries or GPU. Most use temporary fixtures and mocks; `test_weights` compiles
 tiny CPU AOTI packages and requires a working C++ toolchain.
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q3_PY" -m unittest \
-  compiler.common.tests.test_context compiler.common.tests.test_metadata \
-  compiler.common.tests.test_export compiler.common.tests.test_weights \
-  environments.tests.test_check environments.tests.test_setup \
-  environments.tests.test_entrypoints \
-  compiler.qwen3.tests.test_export \
-  tools.tests.test_common tools.tests.test_packages \
-  tools.prepare.tests.test_common tools.prepare.tests.test_qwen3 \
-  tools.benchmark.tests.test_benchmark \
-  tools.validation.tests.test_common tools.validation.tests.test_qwen3_runtime \
-  tools.validation.tests.test_qwen3 tools.validation.tests.test_validation \
-  tools.validation.tests.test_validation_cli \
-  tools.validation.tests.test_validation_chain \
-  tools.validation.tests.test_validation_runtime \
-  tools.validation.tests.test_validation_native \
-  tools.validation.tests.test_validation_modes tools.validation.tests.test_context
-CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest \
-  tools.prepare.tests.test_qwen35 tools.validation.tests.test_qwen35 \
-  tools.validation.tests.test_qwen35_runtime compiler.qwen35.tests.test_model \
-  compiler.qwen35.tests.test_hybrid_cache compiler.qwen35.tests.test_export
+CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest discover
 ```
 
-Use each model's environment for its tests: Qwen3.5 model hooks require its
-Transformers version. The commands deliberately separate them rather than
-discovering all tooling tests in the Qwen3 environment. GPU operator and
-kernel-AOTI tests are listed in the model guides; full-model accuracy checks
-remain separate commands below.
+Both model environments pin the same Transformers `5.20.2` stack, so
+`unittest discover` from the repository root runs every `test_*.py` module under
+`compiler/`, `environments/` and `tools/` in either `Q3_PY` or `Q35_PY`. With
+`CUDA_VISIBLE_DEVICES=''`, CUDA-only tests inside discovered modules skip cleanly
+while their CPU contract tests still execute. GPU operator and kernel-AOTI tests
+are listed in the model guides; full-model accuracy checks remain separate
+commands below.
 The `test_export` modules also contain GPU export integration tests, skipped by
-the CPU commands above. Run them with CUDA visible and the model's native
+the CPU command above. Run them with CUDA visible and the model's native
 attention library built to check the production export path's structural
 contracts; they use random model weights and do not compile AOTI packages.
 

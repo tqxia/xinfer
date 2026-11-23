@@ -40,7 +40,7 @@ RUN sha256sum -c SHA256SUMS \
 
 # Build-time checks do not require a GPU. Device execution is checked after launch.
 RUN python -c 'import torch, triton; assert torch.__version__ == "2.13.0+cu126"; assert torch.version.cuda == "12.6"; assert triton.__version__ == "3.7.1"; assert torch.arange(4).sum().item() == 6; print(torch.__version__, triton.__version__)' \
-    && /opt/xinfer/qwen3/bin/python -c 'import importlib.metadata as m; import transformers; assert transformers.__version__ == "4.51.3"; assert m.version("tokenizers") == "0.21.4"; assert m.version("safetensors") == "0.5.3"; assert m.version("huggingface-hub") == "0.30.2"' \
+    && /opt/xinfer/qwen3/bin/python -c 'import importlib.metadata as m; import transformers; assert transformers.__version__ == "5.20.2"; assert m.version("tokenizers") == "0.23.3"; assert m.version("safetensors") == "0.8.0"; assert m.version("huggingface-hub") == "2.3.0"' \
     && /opt/xinfer/qwen35/bin/python -c 'import importlib.metadata as m; import transformers; assert transformers.__version__ == "5.20.2"; assert m.version("tokenizers") == "0.23.3"; assert m.version("safetensors") == "0.8.0"; assert m.version("huggingface-hub") == "2.3.0"' \
     && cmake --version \
     && ninja --version \

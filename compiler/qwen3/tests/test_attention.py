@@ -13,17 +13,15 @@ from compiler.common.attention import load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen3.adapters.attention import FlashAttention
 from compiler.qwen3.model import ModelStep, KVCache
-from transformers.cache_utils import Cache
 
 
 TEST_CAPACITY = 16384
 
 
-class ReferenceCache(Cache):
+class ReferenceCache:
     """Test-only explicit cache for the unmodified HF attention module."""
 
     def __init__(self, tensors, position):
-        super().__init__()
         self.tensors = tensors
         self.position = position
 
@@ -60,7 +58,7 @@ class AttentionProbe(torch.nn.Module):
             hidden,
             position_embeddings=rotary,
             attention_mask=mask,
-            past_key_value=cache,
+            past_key_values=cache,
             cache_position=cache_position,
         )[0]
 
@@ -175,13 +173,13 @@ class PrefixFlashAdapter(unittest.TestCase):
         hidden, positions, kv, extents, queries = self.inputs(1, 1)
         arguments = dict(
             position_embeddings=self.rotary(hidden, positions),
-            past_key_value=KVCache(kv, positions, extents, queries),
+            past_key_values=KVCache(kv, positions, extents, queries),
             cache_position=positions,
         )
         try:
             for name, changes in (
                 ("mask", {"attention_mask": torch.zeros(1, 1, 1, TEST_CAPACITY, device="cuda")}),
-                ("cache", {"past_key_value": ReferenceCache(kv, positions[0])}),
+                ("cache", {"past_key_values": ReferenceCache(kv, positions[0])}),
                 ("positions", {"cache_position": positions.clone()}),
                 ("attention_weights", {"output_attentions": True}),
                 ("training", {}),

@@ -48,24 +48,36 @@ class HFRuntime:
         self.fill = fill
         if self.dynamic:
             require(fill == 0, "The HF DynamicCache control starts with an empty cache")
-            self.cache = DynamicCache()
+            self.cache = DynamicCache(config=self.model.config)
         else:
-            self.cache = StaticCache(
-                self.model.config, 1, self.capacity, device="cuda", dtype=self.dtype
-            )
-            for tensor in (*self.cache.key_cache, *self.cache.value_cache):
-                tensor.fill_(fill)
+            self.cache = StaticCache(self.model.config, max_cache_len=self.capacity)
+            if fill:
+                config = self.model.config
+                sample = torch.zeros(
+                    (1, config.num_key_value_heads, 1, config.head_dim),
+                    device="cuda",
+                    dtype=self.dtype,
+                )
+                for layer in self.cache.layers:
+                    layer.lazy_initialization(sample, sample)
+                    layer.keys.fill_(fill)
+                    layer.values.fill_(fill)
         self.position = 0
 
     @property
     def state(self):
         values = []
         for spec in self.specs:
-            cache = self.cache.key_cache if spec["kind"] == "key" else self.cache.value_cache
-            if spec["layer"] >= len(cache):
-                value = torch.zeros(spec["shape"], device="cuda", dtype=self.dtype)
+            layer = (
+                self.cache.layers[spec["layer"]] if spec["layer"] < len(self.cache.layers) else None
+            )
+            tensor = (
+                None if layer is None else (layer.keys if spec["kind"] == "key" else layer.values)
+            )
+            if tensor is None:
+                value = torch.full(spec["shape"], self.fill, device="cuda", dtype=self.dtype)
             else:
-                value = cache[spec["layer"]]
+                value = tensor
                 if self.dynamic:
                     value = F.pad(value, (0, 0, 0, self.capacity - value.shape[2]))
                 value = F.pad(value, (0, 0, 0, 0, 0, 0, 0, spec["shape"][0] - 1), value=self.fill)
@@ -102,11 +114,9 @@ class HFRuntime:
             disable_compile=True,
         )
         cache = (
-            DynamicCache()
+            DynamicCache(config=self.model.config)
             if self.dynamic
-            else StaticCache(
-                self.model.config, 1, self.capacity, device=self.model.device, dtype=self.dtype
-            )
+            else StaticCache(self.model.config, max_cache_len=self.capacity)
         )
         ids = torch.tensor([prompt], dtype=torch.int64, device=self.model.device)
         generated = self.model.generate(
@@ -114,8 +124,6 @@ class HFRuntime:
             attention_mask=torch.ones_like(ids),
             past_key_values=cache,
             generation_config=generation,
-            # Transformers 4.51 otherwise merges checkpoint sampling defaults.
-            use_model_defaults=False,
         )
         return generated[0, len(prompt) :].tolist()
 

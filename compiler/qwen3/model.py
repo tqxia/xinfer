@@ -2,7 +2,6 @@
 
 import torch
 from transformers import AutoModelForCausalLM
-from transformers.cache_utils import Cache
 
 from compiler.common.attention import batched_attention_metadata
 from compiler.common.context import resolve_context_length
@@ -18,7 +17,7 @@ def load_model(model_dir):
         AutoModelForCausalLM.from_pretrained(
             model_dir,
             local_files_only=True,
-            torch_dtype="auto",
+            dtype="auto",
             attn_implementation="sdpa",
         )
         .eval()
@@ -35,11 +34,10 @@ def allocate_cache(config, capacity=None, batch_size=1):
     )
 
 
-class KVCache(Cache):
+class KVCache:
     """Caller-owned KV tensors with per-row positions and contiguous valid lengths."""
 
     def __init__(self, tensors, position, kv_lengths, query_lengths):
-        super().__init__()
         self.tensors = tensors
         self.position = position
         self.offsets, self.cuda_offsets, self.blocks = batched_attention_metadata(
@@ -82,11 +80,11 @@ class ModelStep(torch.nn.Module):
                 hidden,
                 attention_mask=None,
                 position_ids=cache_position,
-                past_key_value=cache,
+                past_key_values=cache,
                 cache_position=cache_position,
                 position_embeddings=rotary,
                 use_cache=True,
-            )[0]
+            )
         hidden = base.norm(hidden)
         counts = query_lengths.to(device=hidden.device, dtype=torch.int64)
         indices = (counts - 1).clamp_min(0)
