@@ -34,7 +34,7 @@ class HFStage:
     def __init__(self, model, specs, capacity, *, dynamic=False, max_prefill=512):
         self.model = model
         self.vocab_size = model.config.vocab_size
-        self.dtype = next(model.parameters()).dtype
+        self.dtype = model.get_input_embeddings().weight.dtype
         self.specs = specs
         self.dynamic = dynamic
         self.capacity = capacity

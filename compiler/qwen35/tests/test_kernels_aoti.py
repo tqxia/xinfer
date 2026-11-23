@@ -185,8 +185,11 @@ class AOTIKernels4B(AOTIKernels, unittest.TestCase):
     value_heads = 32
 
 
-def export_batched(dtype, mode):
-    sample = batch_inputs(2, 32 if mode == "prefill" else 1, dtype)
+def export_batched(dtype, mode, *, decay_dtype=None):
+    sample = list(batch_inputs(2, 32 if mode == "prefill" else 1, dtype))
+    if decay_dtype is not None:
+        sample[6] = sample[6].to(decay_dtype)
+    sample = tuple(sample)
     batch = torch.export.Dim("batch", min=1, max=8)
     token_shape = {0: batch}
     if mode == "prefill":
@@ -290,6 +293,34 @@ class BatchedAOTI(unittest.TestCase):
                 inputs[index] = source[:0] if batch == 0 else torch.cat((source, source[:1]))
             with self.subTest(batch=batch), self.assertRaises((RuntimeError, ValueError)):
                 self.call(*inputs)
+
+    @torch.inference_mode()
+    def test_bf16_with_fp32_decay_parameter_matches_eager_bitwise(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            packages = {}
+            with symbolic_config.patch(backed_size_oblivious=True):
+                for mode in ("prefill", "decode"):
+                    exported = export_batched(torch.bfloat16, mode, decay_dtype=torch.float32)
+                    path = Path(temporary) / f"mixed-{mode}.pt2"
+                    torch._inductor.aoti_compile_and_package(
+                        exported,
+                        package_path=str(path),
+                        inductor_configs={"emulate_precision_casts": True},
+                    )
+                    packages[mode] = torch._inductor.aoti_load_package(str(path))
+            try:
+                for batch in (1, 8):
+                    for tokens in (1, 97, 98):
+                        with self.subTest(batch=batch, tokens=tokens):
+                            inputs = list(batch_inputs(batch, tokens, torch.bfloat16))
+                            inputs[6] = torch.linspace(
+                                -2.5, 0.5, 16, device="cuda", dtype=torch.float32
+                            )
+                            actual = packages["decode" if tokens == 1 else "prefill"](*inputs)
+                            expected = fused(*inputs)
+                            self.assertTrue(all(bits_equal(a, b) for a, b in zip(actual, expected)))
+            finally:
+                packages.clear()
 
 
 if __name__ == "__main__":

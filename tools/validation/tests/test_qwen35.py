@@ -28,6 +28,9 @@ class HFCacheProtocol(unittest.TestCase):
             head_dim=2,
             vocab_size=4,
         )
+        original.get_input_embeddings.return_value = SimpleNamespace(
+            weight=torch.empty((4, 2), dtype=dtype)
+        )
         original.parameters.side_effect = lambda: iter([torch.empty(1, dtype=dtype)])
         original.return_value = SimpleNamespace(
             logits=torch.arange(4, dtype=dtype).reshape(1, 1, 4)
@@ -196,6 +199,14 @@ class HFCacheProtocol(unittest.TestCase):
                 original.assert_not_called()
                 self.assertEqual(stage.position, 7)
                 self.assertIs(stage.cache, sentinel.cache)
+
+    def test_hf_stage_uses_embedding_dtype_for_mixed_precision_models(self):
+        original = self.original(torch.float32)
+        original.get_input_embeddings.return_value = SimpleNamespace(
+            weight=torch.empty((4, 2), dtype=torch.bfloat16)
+        )
+        stage = model.HFStage(original, self.specs(), 8)
+        self.assertEqual(stage.dtype, torch.bfloat16)
 
 
 class ValidationStages(unittest.TestCase):

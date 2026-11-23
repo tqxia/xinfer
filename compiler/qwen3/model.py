@@ -18,7 +18,7 @@ def load_model(model_dir):
         AutoModelForCausalLM.from_pretrained(
             model_dir,
             local_files_only=True,
-            torch_dtype=torch.bfloat16,
+            torch_dtype="auto",
             attn_implementation="sdpa",
         )
         .eval()

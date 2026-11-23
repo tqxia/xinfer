@@ -326,8 +326,10 @@ def fused(
     ):
         raise ValueError("Expected per-value-head recurrent state and decay parameters")
     tensors = (qkv, b, a, conv, weight, A_log, dt_bias)
-    if qkv.dtype not in (torch.bfloat16, torch.float32) or any(
-        x.dtype != qkv.dtype for x in tensors
+    if (
+        qkv.dtype not in (torch.bfloat16, torch.float32)
+        or any(x.dtype != qkv.dtype for x in (b, a, conv, weight))
+        or any(x.dtype not in (qkv.dtype, torch.float32) for x in (A_log, dt_bias))
     ):
         raise ValueError("Expected matching BF16 or FP32 inputs and parameters")
     if state.dtype != torch.float32:

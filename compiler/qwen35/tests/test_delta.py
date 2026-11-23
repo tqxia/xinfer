@@ -114,6 +114,27 @@ class DeltaAdapterContract(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Hk=16"):
             fused(*inputs(24))
 
+    def test_kernel_validates_decay_parameter_dtypes_before_cuda(self):
+        fp32 = inputs(16)
+        for index, name in ((6, "A_log"), (7, "dt_bias")):
+            broken = list(fp32)
+            broken[index] = broken[index].bfloat16()
+            with self.subTest(qkv="fp32", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
+                    fused(*broken)
+        bf16 = tuple(tensor if idx == 4 else tensor.bfloat16() for idx, tensor in enumerate(fp32))
+        for index, name in ((6, "A_log"), (7, "dt_bias")):
+            broken = list(bf16)
+            broken[index] = broken[index].half()
+            with self.subTest(qkv="bf16_half", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
+                    fused(*broken)
+            mixed = list(bf16)
+            mixed[index] = mixed[index].float()
+            with self.subTest(qkv="bf16_fp32_decay", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected CUDA"):
+                    fused(*mixed)
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
 class DeltaAdapterNumerics(unittest.TestCase):
@@ -212,6 +233,52 @@ class DeltaAdapterNumerics(unittest.TestCase):
                 self.check_numerical(actual[0], expected[0], 128, 0.0001)
                 self.assertTrue(bits_equal(actual[1], expected[1]))
                 self.check_numerical(actual[2], expected[2], 128 * 128, 0.0001)
+
+    @torch.inference_mode()
+    def test_checkpoint_native_fp32_decay_and_norm(self):
+        for value_heads in (16, 32):
+            torch.manual_seed(135 + value_heads)
+            block, config = make_block(value_heads, device="cuda")
+            block.to(dtype=torch.bfloat16)
+            for parameter in block.parameters():
+                parameter.normal_(std=0.02)
+            # Keep checkpoint-native FP32 decay and gated norm weights with non-BF16 values.
+            block.A_log = torch.nn.Parameter(
+                torch.linspace(-2.5, 0.5, value_heads, device="cuda", dtype=torch.float32),
+                requires_grad=False,
+            )
+            block.norm.weight = torch.nn.Parameter(
+                torch.linspace(0.5, 1.5, 128, device="cuda", dtype=torch.float32),
+                requires_grad=False,
+            )
+            block.dt_bias.copy_(torch.linspace(-0.1, 0.1, value_heads, device="cuda"))
+            hf = BlockStep(block)
+            adapter = DeltaNet(block)
+            channels = (32 + value_heads) * 128
+            conv = torch.randn(1, channels, 4, device="cuda", dtype=torch.bfloat16) * 0.1
+            state = torch.randn(1, value_heads, 128, 128, device="cuda") * 0.1
+            ref_conv, ref_state = conv.clone(), state.clone()
+            position = 0
+            for tokens in (1, 97, 98):
+                with self.subTest(value_heads=value_heads, tokens=tokens):
+                    hidden = torch.randn(
+                        1, tokens, config.hidden_size, device="cuda", dtype=torch.bfloat16
+                    )
+                    expected, ref_conv, ref_state = hf(hidden, ref_conv, ref_state)
+                    cache = HybridCache(
+                        ["linear_attention"],
+                        torch.arange(position, position + tokens, device="cuda")[None, :],
+                        [conv, state],
+                        torch.tensor([position + tokens], dtype=torch.int32),
+                        torch.tensor([tokens], dtype=torch.int32),
+                    )
+                    actual = adapter(hidden, cache_params=cache)
+                    conv, state = cache.tensors()
+                    self.assertEqual(actual.dtype, torch.bfloat16)
+                    self.check_numerical(actual, expected, config.hidden_size, 0.05)
+                    self.assertTrue(bits_equal(conv, ref_conv))
+                    self.check_numerical(state, ref_state, 128 * 128, 0.05)
+                    position += tokens
 
 
 if __name__ == "__main__":

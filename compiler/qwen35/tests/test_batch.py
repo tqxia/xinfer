@@ -161,6 +161,16 @@ class BatchedDeltaNet(unittest.TestCase):
                 assert_numerics(self, actual, independent_reference(inputs), torch.bfloat16)
                 states = actual[1:]
 
+    @torch.inference_mode()
+    def test_fp32_decay_parameters_with_bf16_inputs(self):
+        for tokens in (1, 97, 98):
+            with self.subTest(tokens=tokens):
+                inputs = list(batch_inputs(4, tokens, torch.bfloat16))
+                inputs[6] = torch.linspace(-2.5, 0.5, 16, device="cuda", dtype=torch.float32)
+                inputs[7] = torch.linspace(-0.2, 0.2, 16, device="cuda", dtype=torch.float32)
+                actual = fused(*inputs)
+                assert_numerics(self, actual, independent_reference(inputs), torch.bfloat16)
+
 
 if __name__ == "__main__":
     unittest.main()

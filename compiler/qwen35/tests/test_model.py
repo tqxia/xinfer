@@ -81,6 +81,56 @@ class ModelLoading(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "tied embeddings and default RoPE"):
                         model._text_config(path)
 
+    def test_loader_preserves_checkpoint_native_dtypes_and_allows_override(self):
+        from safetensors.torch import save_file
+
+        config = model.Qwen3_5TextConfig(
+            vocab_size=32,
+            hidden_size=64,
+            intermediate_size=128,
+            num_hidden_layers=2,
+            layer_types=["linear_attention", "full_attention"],
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=16,
+            linear_num_key_heads=2,
+            linear_num_value_heads=2,
+            linear_key_head_dim=16,
+            linear_value_head_dim=16,
+            linear_conv_kernel_dim=4,
+            tie_word_embeddings=True,
+        )
+        reference = Qwen3_5ForCausalLM(config).eval().requires_grad_(False)
+        tensors = {}
+        for name, value in reference.state_dict().items():
+            if name == "lm_head.weight":
+                continue
+            keep_fp32 = name.endswith(("linear_attn.A_log", "linear_attn.norm.weight"))
+            tensors[name] = value.float() if keep_fp32 else value.bfloat16()
+        with TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "config.json").write_text(json.dumps(dict(text_config=config.to_dict())))
+            save_file(tensors, directory / "text.safetensors")
+            with patch.object(Qwen3_5ForCausalLM, "to", lambda self, *args, **kwargs: self):
+                native = model.load_model(directory)
+                casted = model.load_model(directory, dtype=torch.bfloat16)
+        linear = native.model.layers[0].linear_attn
+        self.assertEqual(linear.A_log.dtype, torch.float32)
+        self.assertEqual(linear.norm.weight.dtype, torch.float32)
+        self.assertEqual(native.model.embed_tokens.weight.dtype, torch.bfloat16)
+        self.assertIs(native.lm_head.weight, native.model.embed_tokens.weight)
+        self.assertEqual(native.model.rotary_emb.inv_freq.dtype, torch.float32)
+        for name, param in native.named_parameters():
+            expected = (
+                torch.float32
+                if name.endswith(("linear_attn.A_log", "linear_attn.norm.weight"))
+                else torch.bfloat16
+            )
+            self.assertEqual(param.dtype, expected, name)
+        for name, param in casted.named_parameters():
+            self.assertEqual(param.dtype, torch.bfloat16, name)
+        self.assertEqual(casted.model.rotary_emb.inv_freq.dtype, torch.float32)
+
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
 class BatchedModelStep(unittest.TestCase):

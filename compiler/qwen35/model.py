@@ -26,14 +26,14 @@ def _text_config(path):
     return config
 
 
-def load_model(directory=TEXT_DIR, dtype=torch.bfloat16):
+def load_model(directory=TEXT_DIR, dtype=None):
     directory = Path(directory)
     config = _text_config(directory / "config.json")
     with torch.device("meta"):
         model = Qwen3_5ForCausalLM(config)
-    weights = {
-        name: value.to(dtype) for name, value in load_file(directory / "text.safetensors").items()
-    }
+    weights = load_file(directory / "text.safetensors")
+    if dtype is not None:
+        weights = {name: value.to(dtype) for name, value in weights.items()}
     weights["lm_head.weight"] = weights["model.embed_tokens.weight"]
     model.load_state_dict(weights, strict=True, assign=True)
     model.lm_head.weight = model.model.embed_tokens.weight

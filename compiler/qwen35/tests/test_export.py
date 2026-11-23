@@ -122,7 +122,15 @@ class ExportGraph(unittest.TestCase):
         config._attn_implementation = "sdpa"
         cls.model = Qwen3_5ForCausalLM(config).eval().requires_grad_(False)
         cls.model.to(device="cuda", dtype=torch.bfloat16)
-        # Match the loader's FP32 rotary frequencies around BF16 model weights.
+        # Match checkpoint-native FP32 DeltaNet decay/norm parameters and RoPE frequencies.
+        for layer in cls.model.model.layers:
+            if hasattr(layer, "linear_attn"):
+                layer.linear_attn.A_log = torch.nn.Parameter(
+                    layer.linear_attn.A_log.float(), requires_grad=False
+                )
+                layer.linear_attn.norm.weight = torch.nn.Parameter(
+                    layer.linear_attn.norm.weight.float(), requires_grad=False
+                )
         cls.model.model.rotary_emb = Qwen3_5TextRotaryEmbedding(config).to("cuda")
         export.install_delta(cls.model)
 

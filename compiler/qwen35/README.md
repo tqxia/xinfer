@@ -68,8 +68,9 @@ eager-numerics selector.
 
 Both entries use the same explicit `ModelStep` interface:
 `step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
-One bundle supports dynamic B=1..8. Weights/activations are BF16; RoPE frequencies
-and recurrent state use FP32. `C` is the compiled context capacity.
+One bundle supports dynamic B=1..8. Activations and main weights are BF16;
+checkpoint-native FP32 parameters (`linear_attn.A_log`, `linear_attn.norm.weight`),
+RoPE frequencies and recurrent state use FP32. `C` is the compiled context capacity.
 
 | Model | Layers | Conv/recurrent pairs | KV pairs | State tensors | Allocated KV shape |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -136,10 +137,11 @@ SiLU convolution. Value-head count is 16 for 0.8B and 32 for 4B:
 | Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` |
 | Core output | `[B,T,16,128]` | `[B,T,32,128]` |
 
-Inputs/parameters support matching BF16 or FP32, with recurrent state always
-FP32. Gates and recurrent state belong to value heads; grouped value heads reuse
-Q/K in HF `repeat_interleave` order. One writer per Q/K group updates convolution
-history, avoiding duplicate writes for 4B's grouped heads.
+Inputs/parameters support matching BF16 or FP32, with decay parameters (`A_log`,
+`dt_bias`) also accepted in FP32 and recurrent state always FP32. Gates and
+recurrent state belong to value heads; grouped value heads reuse Q/K in HF
+`repeat_interleave` order. One writer per Q/K group updates convolution history,
+avoiding duplicate writes for 4B's grouped heads.
 
 Fused recurrence combines convolution/history, SiLU, gate preparation, Q/K
 normalization, state update and output reduction. Each program owns one value
