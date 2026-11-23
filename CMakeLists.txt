@@ -2,10 +2,12 @@ cmake_minimum_required(VERSION 3.24)
 project(xinfer LANGUAGES CXX)
 
 find_package(Torch 2.13 REQUIRED)
-# Match the installed LibTorch headers, including C++20 on the GB10 toolchain.
+# Runtime headers require at least C++20; preserve higher standards from LibTorch.
 get_target_property(XINFER_CXX_STANDARD torch CXX_STANDARD)
 if(NOT XINFER_CXX_STANDARD)
-  set(XINFER_CXX_STANDARD 17)
+  set(XINFER_CXX_STANDARD 20)
+elseif(XINFER_CXX_STANDARD LESS 20)
+  set(XINFER_CXX_STANDARD 20)
 endif()
 separate_arguments(TORCH_FLAGS NATIVE_COMMAND "${TORCH_CXX_FLAGS}")
 

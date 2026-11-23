@@ -82,15 +82,23 @@ def load_attention_ops(library=None, *, model=None):
         torch._check(kv_extent.dim() == 1)
         return q.new_empty(q.shape)
 
-    # Qwen3.5 bundles may carry only the original prefix operator.
+    # Prefix-only libraries may carry only the original flash_attention operator.
     if hasattr(torch.ops.xinfer, "batched_flash_attention"):
 
         @torch.library.register_fake("xinfer::batched_flash_attention")
         def fake_batched(q, k, v, offsets, cuda_offsets, blocks, scale):
             torch._check(offsets.device.type == "cpu" and offsets.dtype == torch.int32)
             torch._check(offsets.shape == (2, q.shape[0] + 1))
-            torch._check(cuda_offsets.shape == offsets.shape and cuda_offsets.device == q.device)
-            torch._check(blocks.shape == (q.shape[0], 1) and blocks.device == q.device)
+            torch._check(
+                cuda_offsets.shape == offsets.shape
+                and cuda_offsets.device == q.device
+                and cuda_offsets.dtype == torch.int32
+            )
+            torch._check(
+                blocks.shape == (q.shape[0], 1)
+                and blocks.device == q.device
+                and blocks.dtype == torch.int32
+            )
             return fake(q, k, v, torch.empty(2, dtype=torch.uint8), scale)
 
     _loaded = library
