@@ -16,13 +16,15 @@ public:
   using Spec = ModelSpec;
   using Loader = torch::inductor::AOTIModelPackageLoader;
 
-  Runner(const fs::path &packages, const Spec &spec)
-      : Runner(spec, spec.validate_files(packages)) {}
+  Runner(const fs::path &packages, const Spec &spec,
+         std::optional<int64_t> allocated_batch_size = std::nullopt)
+      : Runner(spec, validate_bundle(packages, spec, allocated_batch_size),
+               resolve_allocated_batch_size(spec, allocated_batch_size)) {}
 
   void reset(double fill = 0) {
     state_.reset(fill);
     position_ = prefill_calls_ = decode_calls_ = 0;
-    positions_.assign(spec_.max_batch_size, 0);
+    positions_.assign(allocated_batch_size_, 0);
   }
 
   at::Tensor step(const std::vector<int64_t> &tokens) { return step_batch({tokens}); }
@@ -30,6 +32,7 @@ public:
   at::Tensor step_batch(const std::vector<std::vector<int64_t>> &rows) {
     const auto length = spec_.check_batch_tokens(rows);
     const auto batch_size = static_cast<int64_t>(rows.size());
+    require(batch_size <= allocated_batch_size_, "Batch size exceeds allocated state");
     for (size_t row = 0; row < rows.size(); ++row) {
       require(static_cast<int64_t>(rows[row].size()) <= spec_.capacity - positions_[row],
               "Context capacity exceeded");
@@ -96,17 +99,32 @@ public:
   const std::vector<at::Tensor> &state() const { return state_.tensors(); }
   const std::vector<at::Tensor> &cache() const { return state(); }
   const Spec &spec() const { return spec_; }
+  int64_t allocated_batch_size() const { return allocated_batch_size_; }
   int64_t position() const { return position_; }
   const std::vector<int64_t> &positions() const { return positions_; }
   int64_t prefill_calls() const { return prefill_calls_; }
   int64_t decode_calls() const { return decode_calls_; }
 
 private:
-  Runner(const Spec &spec, ValidatedBundle bundle)
-      : spec_(spec), device_(configured_device(spec_)),
+  static int64_t resolve_allocated_batch_size(const Spec &spec,
+                                              std::optional<int64_t> allocated_batch_size) {
+    const auto batch_size = allocated_batch_size.value_or(spec.max_batch_size);
+    require(batch_size >= 1 && batch_size <= spec.max_batch_size, "Invalid allocated batch size");
+    return batch_size;
+  }
+
+  static ValidatedBundle validate_bundle(const fs::path &packages, const Spec &spec,
+                                         std::optional<int64_t> allocated_batch_size) {
+    resolve_allocated_batch_size(spec, allocated_batch_size);
+    return spec.validate_files(packages);
+  }
+
+  Runner(const Spec &spec, ValidatedBundle bundle, int64_t allocated_batch_size)
+      : spec_(spec), allocated_batch_size_(allocated_batch_size), device_(configured_device(spec_)),
         weights_(std::move(bundle), spec_.shared_weights),
         prefill_(weights_.package_path("prefill").string()),
-        decode_(weights_.package_path("decode").string()), state_(spec_.state, device_) {
+        decode_(weights_.package_path("decode").string()),
+        state_(spec_.state, device_, allocated_batch_size_) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
 
@@ -114,6 +132,7 @@ private:
   }
 
   const Spec spec_;
+  const int64_t allocated_batch_size_;
   const c10::Device device_;
 
   // Borrowing loaders are destroyed before their canonical weight owner.

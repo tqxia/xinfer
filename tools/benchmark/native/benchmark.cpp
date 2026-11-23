@@ -54,7 +54,7 @@ void run_benchmark(const Options &options) {
     c10::cuda::CUDACachingAllocator::resetPeakStats(0);
 
     const auto load = Clock::now();
-    auto runtime = make_runtime();
+    auto runtime = make_runtime(1);
     torch::cuda::synchronize();
 
     Json report = {{"profile", "cpp_aoti"},

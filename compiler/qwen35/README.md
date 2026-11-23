@@ -79,11 +79,12 @@ RoPE frequencies and recurrent state use FP32. `C` is the compiled context capac
 
 IDs and positions are CUDA int64 `[B,T]`; both length vectors are CPU int32
 `[B]`. Each row appends `query_lengths[row]` real tokens, ending at
-`kv_lengths[row]`. Inputs are right-padded. The runtime allocates all eight state
-rows and passes active-prefix views. KV updates only real appended positions;
-DeltaNet returns fresh convolution/recurrent state for active rows. Omitted rows
-retain their state. Logits select each row's last real token; inactive rows
-return zero logits and leave all state unchanged.
+`kv_lengths[row]`. Inputs are right-padded. The runtime allocates `1..8` state
+rows (defaulting to 8; scalar CLI and benchmark allocate 1) and passes
+active-prefix views. KV updates only real appended positions; DeltaNet returns
+fresh convolution/recurrent state for active rows. Omitted rows retain their
+state. Logits select each row's last real token; inactive rows return zero
+logits and leave all state unchanged.
 
 Prefill accepts padded widths 2–512; decode accepts width one. Scalar generation
 uses B=1 and chunks longer prompts, with prompt and output sharing capacity.

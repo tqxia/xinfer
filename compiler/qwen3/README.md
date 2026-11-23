@@ -119,8 +119,9 @@ for cache-layout handling.
 All batch sizes use the same Python step signature:
 `(input_ids, cache_position, (K0, V0, ..., K27, V27), kv_lengths, query_lengths)`.
 IDs and positions have shape `[B,T]`; the two CPU int32 length tensors have
-shape `[B]`. KV inputs are views of the first B rows of the eight-row allocation.
-Native AOTI always receives 60 flat inputs. See
+shape `[B]`. KV inputs are views of the first B rows of the runtime's allocated
+cache (1 through 8 rows; scalar CLI and benchmark allocate 1 row, defaulting to
+8). Native AOTI always receives 60 flat inputs. See
 [the dynamic batch interface](../../docs/package-metadata.md#dynamic-batch-interfaces)
 for padding, inactive rows and state ownership.
 Training, arbitrary masks and attention-weight outputs are unsupported.

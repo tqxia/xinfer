@@ -156,6 +156,30 @@ int main() {
       reject([&] { state.accept(valid_outputs(state), 9); });
     });
 
+    check("allocated_batch_size_bounds_and_allocation", [&] {
+      reject([&] { StatePolicy state({}, cpu); });
+      reject([&] { StatePolicy state(mixed_specs(8), cpu, 0); });
+      reject([&] { StatePolicy state(mixed_specs(8), cpu, -1); });
+      reject([&] { StatePolicy state(mixed_specs(8), cpu, 9); });
+
+      for (const int64_t allocated : {1, 3}) {
+        StatePolicy state(mixed_specs(8), cpu, allocated);
+        require(state.allocated_batch_size() == allocated, "Incorrect allocated batch size");
+        state.reset(7);
+        const auto before = state.tensors();
+        for (const auto &tensor : before)
+          require(tensor.size(0) == allocated, "State did not allocate requested batch size");
+
+        Tensors outputs{at::zeros({allocated}), before[0] + 1, before[1] + 2, before[2], before[3]};
+        state.accept(outputs, allocated);
+        require(state.tensors()[0].const_data_ptr() == outputs[1].const_data_ptr() &&
+                    state.tensors()[1].const_data_ptr() == outputs[2].const_data_ptr(),
+                "Full allocated batch did not adopt functional output directly");
+        reject([&] { state.accept(outputs, 0); });
+        reject([&] { state.accept(outputs, allocated + 1); });
+      }
+    });
+
     using Mutation = std::function<void(Tensors &)>;
     const std::vector<std::pair<const char *, Mutation>> bad_outputs{
         {"missing_output", [](auto &outputs) { outputs.pop_back(); }},

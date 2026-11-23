@@ -75,7 +75,7 @@ void run_generation(const Options &options) {
     c10::InferenceMode inference;
 
     const auto load_start = Clock::now();
-    auto runtime = make_runtime();
+    auto runtime = make_runtime(1);
     torch::cuda::synchronize();
 
     const auto run_start = Clock::now();

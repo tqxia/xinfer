@@ -63,13 +63,15 @@ requested value; replacement state is initialized to zero.
 ## Dynamic batch interfaces
 
 One prefill/decode bundle accepts every batch size B=1..8, including scalar
-generation. The range is hardcoded; all state descriptors specify eight allocated
-rows. Export and compilation enable `backed_size_oblivious` to retain B=1 in the
-symbolic range.
+generation. The package ceiling is hardcoded to eight in state descriptors; at
+runtime, `Runner` and `StatePolicy` accept an optional `allocated_batch_size`
+in `1..8` (defaulting to the package ceiling 8; scalar CLI and benchmark tools
+allocate 1 row). Export and compilation enable `backed_size_oblivious` to
+retain B=1 in the symbolic range.
 
 - Python inputs: `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
   IDs and positions are CUDA int64 `[B,T]`. State inputs are contiguous views
-  into the first B rows of the full eight-row allocations.
+  into the first B rows of the allocated state buffers.
 - Flat AOTI inputs: IDs, positions, ordered state tensors, KV lengths, query
   lengths. Qwen3 has 56 state tensors / 60 inputs; Qwen3.5-0.8B has 48 / 52;
   Qwen3.5-4B has 64 / 68.
@@ -84,15 +86,17 @@ symbolic range.
 - Qwen3 returns only logits and updates KV in place. Qwen3.5 returns logits
   followed by all state tensors: KV outputs alias input buffers, while fresh
   convolution/recurrent outputs replace the active rows. Recurrent state is FP32.
-- State allocation and row identity persist across calls. Smaller B omits tail
-  rows without modifying them. Larger B resumes those rows or starts unused rows
-  with their first tokens. The runtime retains eight rows, combining functional
-  outputs with the unchanged tail without modifying the previous functional
-  input. Full-batch functional outputs can be adopted directly.
-- Reset clears all rows; KV storage is retained. The state policy checks returned
-  shape, dtype, device, contiguity and required aliases before adopting outputs.
+- State allocation and row identity persist across calls up to
+  `allocated_batch_size`. Smaller B omits tail rows without modifying them.
+  Larger B resumes those rows or starts unused rows with their first tokens.
+  The runtime retains all allocated rows, combining functional outputs with the
+  unchanged tail without modifying the previous functional input. Full-batch
+  functional outputs (`B == allocated_batch_size`) are adopted directly.
+- Reset clears all allocated rows; KV storage is retained. The state policy
+  checks returned shape, dtype, device, contiguity and required aliases before
+  adopting outputs.
 - The runner validates every supplied row before execution. `positions()` exposes
-  all eight row counts; `position()` is their maximum for trace handling.
+  all allocated row counts; `position()` is their maximum for trace handling.
 
 Qwen3 flattens independent positions around HF's RoPE call to avoid singleton
 matmul specialization. Qwen3.5 computes the equivalent text-only frequencies

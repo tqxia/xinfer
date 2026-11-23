@@ -13,11 +13,15 @@ template <class Function> decltype(auto) with_model(const fs::path &packages, Fu
   switch (metadata.model_type) {
   case ModelType::Qwen3: {
     const qwen::Spec spec(metadata);
-    return function(spec, [&] { return std::make_unique<qwen::Runtime>(packages, spec); });
+    return function(spec, [&](std::optional<int64_t> allocated_batch_size = std::nullopt) {
+      return std::make_unique<qwen::Runtime>(packages, spec, allocated_batch_size);
+    });
   }
   case ModelType::Qwen35: {
     const qwen35::Spec spec(metadata);
-    return function(spec, [&] { return std::make_unique<qwen35::Runtime>(packages, spec); });
+    return function(spec, [&](std::optional<int64_t> allocated_batch_size = std::nullopt) {
+      return std::make_unique<qwen35::Runtime>(packages, spec, allocated_batch_size);
+    });
   }
   }
   throw std::runtime_error("Unsupported model type");

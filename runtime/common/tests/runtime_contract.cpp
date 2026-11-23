@@ -103,6 +103,45 @@ void check_ownership(const std::filesystem::path &packages, const Spec &validate
     report["cases"].push_back({{"name", "scoped_spec_destroyed"}, {"passed", true}});
   }
 
+  {
+    for (const int64_t invalid : {int64_t{0}, validated.max_batch_size + 1}) {
+      auto broken = validated;
+      broken.shared_weights = Json();
+      bool rejected = false;
+      try {
+        Runtime runtime(packages, broken, invalid);
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()) == "Invalid allocated batch size";
+      }
+      require(rejected, "Invalid allocated batch size was not rejected before loading");
+    }
+
+    Runtime scalar(packages, validated, 1);
+    require(scalar.allocated_batch_size() == 1 && scalar.positions().size() == 1,
+            "Scalar runtime did not allocate one batch row");
+    for (const auto &tensor : state(scalar))
+      require(tensor.size(0) == 1, "Scalar runtime allocated extra state rows");
+
+    const auto scalar_trace = trace(scalar);
+    require(scalar_trace.size() == expected.size(), "Scalar trace length differs");
+    for (size_t i = 0; i < scalar_trace.size(); ++i)
+      require(at::equal(scalar_trace[i], expected[i].narrow(0, 0, 1)),
+              "Allocated batch size 1 changed logits or active state");
+    require(scalar.generate({42, 13}, 3, nullptr) == expected_ids,
+            "Allocated batch size 1 changed generation");
+
+    const auto before_positions = scalar.positions();
+    bool rejected = false;
+    try {
+      scalar.step_batch({{42}, {13}});
+    } catch (const std::runtime_error &error) {
+      rejected = std::string(error.what()) == "Batch size exceeds allocated state";
+    }
+    require(rejected && scalar.positions() == before_positions,
+            "Batch exceeding allocated state was not rejected cleanly");
+    report["cases"].push_back({{"name", "allocated_batch_size_one"}, {"passed", true}});
+  }
+
   report["trace_tensors_per_case"] = expected.size();
   report["generated_ids"] = expected_ids;
 }
