@@ -53,7 +53,6 @@ class AOTIRuntimeLoading(unittest.TestCase):
                 package_bytes=1,
                 package_sha256="1" * 64,
                 shared_weights=dict(
-                    format=3,
                     file="weights.safetensors",
                     identity="2" * 64,
                     bytes=1,

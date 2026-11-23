@@ -191,9 +191,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   metadata_check(metadata_digest(m.at("package_sha256")), "package_sha256");
   const auto &weights = m.at("shared_weights");
   metadata_check(
-      metadata_keys(weights, {"format", "file", "identity", "bytes", "sha256"}) &&
-          metadata_integer(weights.at("format"), 1) &&
-          weights.at("format") == kSharedWeightsFormat &&
+      metadata_keys(weights, {"file", "identity", "bytes", "sha256"}) &&
           weights.at("file") == kSharedWeightsFile && metadata_integer(weights.at("bytes"), 1) &&
           metadata_digest(weights.at("identity")) && metadata_digest(weights.at("sha256")),
       "shared_weights");

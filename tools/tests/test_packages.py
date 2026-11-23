@@ -40,7 +40,6 @@ def metadata(*, cache_length=1024):
             "always_keep_tensor_constants": True,
         },
         shared_weights=dict(
-            format=3,
             file="weights.safetensors",
             identity="b" * 64,
             bytes=128,
@@ -127,7 +126,6 @@ class SharedWeightBundleContract(unittest.TestCase):
         # Preflight reads safetensors header metadata and file bytes without loading tensors.
         identity = dict(model=model, revision="cpu-fixture")
         self.manifest = dict(
-            format=3,
             identity=identity,
             identity_sha256=json_sha256(identity),
             entries={
@@ -144,7 +142,6 @@ class SharedWeightBundleContract(unittest.TestCase):
         ).encode("utf-8")
         path.write_bytes(struct.pack("<Q", len(header)) + header)
         self.contract = dict(
-            format=3,
             file="weights.safetensors",
             identity=self.manifest["identity_sha256"],
             bytes=path.stat().st_size,

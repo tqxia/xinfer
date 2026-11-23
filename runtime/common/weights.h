@@ -22,7 +22,6 @@
 
 namespace xinfer {
 
-constexpr int64_t kSharedWeightsFormat = 3;
 constexpr const char *kSharedWeightsFile = "weights.safetensors";
 constexpr const char *kSharedWeightsManifestKey = "xinfer_manifest";
 constexpr uint64_t kMaxSafetensorsHeaderBytes = 100ULL << 20;
@@ -153,11 +152,13 @@ public:
     }
 
     const auto &contract = decode.at("shared_weights");
-    require(contract.is_object() && contract.value("format", 0) == kSharedWeightsFormat &&
-                contract.value("file", std::string()) == kSharedWeightsFile &&
+    require(contract.is_object() && contract.size() == 4 && contract.contains("file") &&
+                contract.at("file").is_string() &&
+                contract.at("file").get<std::string>() == kSharedWeightsFile &&
                 contract.contains("identity") && contract.at("identity").is_string() &&
                 contract.contains("bytes") && contract.at("bytes").is_number_integer() &&
-                contract.contains("sha256") && contract.at("sha256").is_string(),
+                contract.at("bytes").get<int64_t>() >= 0 && contract.contains("sha256") &&
+                contract.at("sha256").is_string(),
             "Shared weights metadata is required; re-export both packages");
 
     const auto path = root / kSharedWeightsFile;
@@ -178,8 +179,10 @@ public:
                   meta.at(kSharedWeightsManifestKey).is_string(),
               "Shared weights archive metadata is missing");
       data = Json::parse(meta.at(kSharedWeightsManifestKey).get<std::string>());
-      require(data.is_object() && data.value("format", 0) == kSharedWeightsFormat,
-              "Shared weights archive metadata has unsupported format");
+      require(data.is_object() && data.size() == 6 && data.contains("identity") &&
+                  data.contains("identity_sha256") && data.contains("entries") &&
+                  data.contains("sources") && data.contains("storages") && data.contains("tensors"),
+              "Shared weights archive metadata has invalid fields");
     } catch (const std::exception &error) {
       throw std::runtime_error(std::string("Shared weights archive metadata is invalid: ") +
                                error.what());

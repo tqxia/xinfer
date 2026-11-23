@@ -2,8 +2,7 @@
 
 Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.safetensors`,
 `prefill.json` and `decode.json` together. Metadata and model interfaces follow
-the current implementation without separate version fields. The shared archive
-uses format 3.
+the current implementation without separate version fields.
 
 `compiler/common/metadata.py` writes and validates the common format.
 `tools/packages.py` owns model ABI and shared-weight bundle checks for Python
@@ -120,12 +119,12 @@ views over deduplicated storage, preserving shape, stride, offset, dtype and dev
 Tied embeddings and shared packed sources can therefore share storage without
 changing their views.
 
-The sidecar `shared_weights` descriptor records `format: 3`,
-`file: weights.safetensors`, logical identity, byte size and SHA-256. The embedded
-manifest also records the exact package hashes. Archive bytes cover both mappings and
-tensor data; the archive binds package hashes, not sidecar hashes. Native loading
-validates the safetensors header and copies deduplicated storages directly from an
-`mmap`ped file without TorchScript (`torch.jit`) dependencies.
+The sidecar `shared_weights` descriptor records `file: weights.safetensors`,
+logical identity, byte size and SHA-256. The embedded manifest also records the
+exact package hashes. Archive bytes cover both mappings and tensor data; the
+archive binds package hashes, not sidecar hashes. Native loading validates the
+safetensors header and copies deduplicated storages directly from an `mmap`ped
+file without TorchScript (`torch.jit`) dependencies.
 
 One export invocation loads the model once, compiles both entries sequentially,
 requires consistent shared tensor content, and serializes the archive once.

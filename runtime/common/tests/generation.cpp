@@ -55,8 +55,7 @@ struct Bundle {
         {"package_bytes", 1},
         {"package_sha256", std::string(64, 'a')},
         {"shared_weights",
-         {{"format", xinfer::kSharedWeightsFormat},
-          {"file", xinfer::kSharedWeightsFile},
+         {{"file", xinfer::kSharedWeightsFile},
           {"identity", std::string(64, 'b')},
           {"bytes", 1},
           {"sha256", std::string(64, 'c')}}},
@@ -444,7 +443,6 @@ int main() {
       // Pack U8 (1 byte) before I64 (16 bytes at odd offset 1) + BF16 (12 bytes) + empty F32.
       const std::vector<uint8_t> payload(29, 0x2a);
       const Json base_manifest = {
-          {"format", xinfer::kSharedWeightsFormat},
           {"identity", {{"kind", "cpu_test"}}},
           {"identity_sha256", identity},
           {"entries",
@@ -508,7 +506,6 @@ int main() {
       const auto archive = weights_bundle.directory / xinfer::kSharedWeightsFile;
       auto update_contract = [&] {
         const Json contract = {
-            {"format", xinfer::kSharedWeightsFormat},
             {"file", xinfer::kSharedWeightsFile},
             {"identity", identity},
             {"bytes", xinfer::fs::file_size(archive)},
@@ -538,7 +535,7 @@ int main() {
         require(matched, "Expected error containing: " + expected);
       };
 
-      // Legacy format 2 / weights.pt sidecar metadata must be rejected.
+      // Legacy weights.pt and retired format fields must be rejected.
       {
         auto legacy = prefill;
         legacy["shared_weights"]["format"] = 2;
@@ -548,6 +545,27 @@ int main() {
         expect_error(
             [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, legacy, legacy); },
             "Shared weights metadata is required");
+
+        auto retired = prefill;
+        retired["shared_weights"]["format"] = 3;
+        expect_error([&] { xinfer::validate_metadata(retired, "prefill"); },
+                     "Unsupported package metadata: shared_weights");
+        expect_error(
+            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, retired, retired); },
+            "Shared weights metadata is required");
+      }
+
+      // Retired format key inside embedded manifest must be rejected during preflight.
+      {
+        Json bad_manifest = base_manifest;
+        bad_manifest["format"] = 3;
+        Json header = base_header;
+        header["__metadata__"][xinfer::kSharedWeightsManifestKey] = bad_manifest.dump();
+        write_safetensors(archive, header, payload);
+        update_contract();
+        expect_error(
+            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
+            "Shared weights archive metadata is invalid");
       }
 
       // Missing __metadata__ in safetensors header must be rejected during preflight.

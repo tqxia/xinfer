@@ -385,10 +385,12 @@ class SharedWeightBundle(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "archive metadata is invalid"):
                 read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
-    def test_archive_contract_rejects_noncanonical_path_and_legacy_format(self):
+    def test_archive_contract_rejects_noncanonical_path_and_retired_format(self):
         for altered in (
             dict(self.contract, file="../weights.safetensors"),
+            dict(self.contract, file="weights.pt"),
             dict(self.contract, format=2, file="weights.pt"),
+            dict(self.contract, format=3),
         ):
             with (
                 self.subTest(altered=altered),

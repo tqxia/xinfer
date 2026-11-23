@@ -22,9 +22,11 @@ from compiler.common.metadata import finalize_metadata, validate_metadata_pair
 from compiler.common.package import compile_package
 
 
-SHARED_WEIGHTS_FORMAT = 3
 SHARED_WEIGHTS_FILE = "weights.safetensors"
 SHARED_WEIGHTS_MANIFEST_KEY = "xinfer_manifest"
+SHARED_WEIGHTS_MANIFEST_FIELDS = frozenset(
+    {"identity", "identity_sha256", "entries", "sources", "storages", "tensors"}
+)
 MAX_HEADER_BYTES = 100 * 1024 * 1024
 SHARED_WEIGHT_OPTIONS = {
     "aot_inductor.package_constants_in_so": False,
@@ -51,7 +53,7 @@ def read_shared_weight_manifest(directory, contract):
     directory = Path(directory)
     require(
         isinstance(contract, dict)
-        and contract.get("format") == SHARED_WEIGHTS_FORMAT
+        and set(contract) == {"file", "identity", "bytes", "sha256"}
         and contract.get("file") == SHARED_WEIGHTS_FILE
         and isinstance(contract.get("identity"), str)
         and type(contract.get("bytes")) is int
@@ -74,8 +76,8 @@ def read_shared_weight_manifest(directory, contract):
         )
         data = json.loads(meta[SHARED_WEIGHTS_MANIFEST_KEY])
         require(
-            isinstance(data, dict) and data.get("format") == SHARED_WEIGHTS_FORMAT,
-            "Shared weights archive metadata has unsupported format",
+            isinstance(data, dict) and set(data) == SHARED_WEIGHTS_MANIFEST_FIELDS,
+            "Shared weights archive metadata has invalid fields",
         )
     except (OSError, ValueError, UnicodeDecodeError, struct.error) as error:
         raise ValueError(f"Shared weights archive metadata is invalid: {error}") from error
@@ -336,7 +338,6 @@ def compile_shared(
     directory.parent.mkdir(parents=True, exist_ok=True)
     identity_sha256 = json_sha256(identity)
     data = dict(
-        format=SHARED_WEIGHTS_FORMAT,
         identity=identity,
         identity_sha256=identity_sha256,
         entries={},
@@ -377,7 +378,6 @@ def compile_shared(
             metadata={SHARED_WEIGHTS_MANIFEST_KEY: canonical_json(data)},
         )
         contract = dict(
-            format=SHARED_WEIGHTS_FORMAT,
             file=SHARED_WEIGHTS_FILE,
             identity=identity_sha256,
             bytes=archive_path.stat().st_size,
