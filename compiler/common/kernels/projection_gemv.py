@@ -1,10 +1,11 @@
-"""Experimental singleton projections with FP32 row reductions."""
+"""Dynamic small-batch (B=1..8) projections with weight-stationary FP32 reductions."""
 
 import torch
 import triton
 import triton.language as tl
 
 
+MAX_BATCH_SIZE = 8
 ROWS_PER_PROGRAM = 4
 NUM_WARPS = 4
 
@@ -14,6 +15,8 @@ def projection_gemv_kernel(
     X,
     Weight,
     Output,
+    M,
+    stride_xm,
     K: tl.constexpr,
     N: tl.constexpr,
     BLOCK_K: tl.constexpr,
@@ -21,26 +24,38 @@ def projection_gemv_kernel(
 ):
     rows = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
     columns = tl.arange(0, BLOCK_K)
-    x = tl.load(X + columns, columns < K, other=0).to(tl.float32)
+    row_mask = rows < N
+    col_mask = columns < K
     weights = tl.load(
         Weight + rows[:, None] * K + columns[None, :],
-        (rows[:, None] < N) & (columns[None, :] < K),
+        row_mask[:, None] & col_mask[None, :],
         other=0,
     ).to(tl.float32)
-    result = tl.sum(weights * x[None, :], axis=1)
-    tl.store(Output + rows, result, rows < N)
+    for batch_idx in range(M):
+        x = tl.load(X + batch_idx * stride_xm + columns, col_mask, other=0).to(tl.float32)
+        result = tl.sum(weights * x[None, :], axis=1)
+        tl.store(Output + batch_idx * N + rows, result, row_mask)
 
 
 @torch.library.triton_op("xinfer::projection_gemv", mutates_args={})
 def projection_gemv(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    """Return F.linear-shaped output for one contiguous input row; no mutation."""
+    """Return F.linear-shaped output for 1..8 contiguous input rows; no mutation."""
     if x.device.type != "cuda" or weight.device != x.device:
         raise ValueError("Projection GEMV requires colocated CUDA tensors")
     if x.dtype not in (torch.bfloat16, torch.float32) or weight.dtype != x.dtype:
         raise ValueError("Projection GEMV requires matching BF16 or FP32 tensors")
-    if x.ndim < 2 or weight.ndim != 2 or any(size != 1 for size in x.shape[:-1]):
-        raise ValueError("Projection GEMV requires one input row and a 2D weight")
-    if x.shape[-1] != weight.shape[1] or x.stride(-1) != 1 or not weight.is_contiguous():
+    if x.ndim < 2 or weight.ndim != 2 or any(size != 1 for size in x.shape[1:-1]):
+        raise ValueError("Projection GEMV requires [B, 1..., K] input and a 2D weight")
+    batch = x.shape[0]
+    if batch < 1 or batch > MAX_BATCH_SIZE:
+        raise ValueError(f"Projection GEMV requires 1..{MAX_BATCH_SIZE} input rows")
+    stride_xm = x.stride(0)
+    if (
+        x.shape[-1] != weight.shape[1]
+        or x.stride(-1) != 1
+        or stride_xm < 0
+        or not weight.is_contiguous()
+    ):
         raise ValueError("Projection GEMV requires matching contiguous reduction dimensions")
     n, k = weight.shape
     if n <= 0 or k <= 0:
@@ -51,6 +66,8 @@ def projection_gemv(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         x,
         weight,
         output,
+        batch,
+        stride_xm,
         k,
         n,
         triton.next_power_of_2(k),

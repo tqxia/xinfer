@@ -1,13 +1,13 @@
-"""Experimentally replace the profiled decoder singleton linear projections."""
+"""Replace profiled dynamic small-batch (B=1..8) decoder linear projections."""
 
 import torch
 from torch.export.graph_signature import InputKind
 from torch.fx.experimental.symbolic_shapes import statically_known_true
 
-from compiler.common.kernels.projection_gemv import projection_gemv  # registers the operator
+from compiler.common.kernels.projection_gemv import MAX_BATCH_SIZE  # registers the operator
 
 
-# Scope the experiment to the measured decoder regions, leaving the vocabulary
+# Scope the rewrite to the measured decoder regions, leaving the vocabulary
 # head and every unprofiled geometry on their existing implementation.
 PROFILED_SHAPES = frozenset({(1024, 8224), (2048, 1024), (1024, 7168), (3584, 1024), (1024, 5120)})
 
@@ -44,9 +44,17 @@ def replace_projection_gemv(exported):
         n, k = value.shape
         if (k, n) not in PROFILED_SHAPES or x.ndim < 2:
             continue
-        if not all(statically_known_true(size == 1) for size in x.shape[:-1]):
+        if not statically_known_true(x.shape[0] >= 1) or not statically_known_true(
+            x.shape[0] <= MAX_BATCH_SIZE
+        ):
             continue
-        if not statically_known_true(x.shape[-1] == k) or x.stride(-1) != 1:
+        if not all(statically_known_true(size == 1) for size in x.shape[1:-1]):
+            continue
+        if not statically_known_true(x.shape[-1] == k) or not statically_known_true(
+            x.stride(-1) == 1
+        ):
+            continue
+        if not statically_known_true(x.stride(0) >= 0):
             continue
         if not value.is_contiguous():
             continue

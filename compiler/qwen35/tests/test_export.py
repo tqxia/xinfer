@@ -183,6 +183,11 @@ class ExportGraph(unittest.TestCase):
                 self.assertNotIn(torch.ops.aten.index_copy.default, targets)
                 self.assertNotIn(torch.ops.aten.scaled_dot_product_attention.default, targets)
                 if kind == "decode":
+                    self.assertEqual(
+                        targets.count(torch.ops.xinfer.projection_gemv.default),
+                        4 * self.model.config.num_hidden_layers,
+                    )
+                else:
                     self.assertNotIn(torch.ops.xinfer.projection_gemv.default, targets)
                 self.assert_delta_dispatch(exported, kind)
                 executable = exported.module()

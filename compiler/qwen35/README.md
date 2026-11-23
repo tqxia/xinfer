@@ -171,13 +171,13 @@ reduces launches, not weight bytes; output copies can cost time during prefill.
 The policy version is in metadata, while detailed source/group mappings live in
 `prefill.packing.json` / `decode.packing.json` diagnostics.
 
-The existing GEMV pass targets five profiled 0.8B singleton BF16 projection
-geometries. It does not match dynamic-batch graphs, whose linear operations
-remain eligible for ordinary Inductor lowering. Its shared Triton kernel's FP32
-accumulation uses four rows/program for `K=1024`, one for `K>=2048`, four warps
-and one stage. The vocabulary head and unsupported geometries keep the existing
-linear implementation. Preserve
-eligibility and alignment guards when extending the pass.
+The GEMV pass targets five profiled 0.8B BF16 decoder geometries for dynamic
+small-batch (`B=1..8`, `T=1`) decode graphs; prefill, the vocabulary head and
+unsupported geometries remain on ordinary Inductor lowering. Its shared Triton
+kernel loads each weight tile once across `B` rows and performs identical
+per-row FP32 reductions using four rows/program for `K=1024`, one for
+`K>=2048`, four warps and one stage. Preserve eligibility and alignment guards
+when extending the pass.
 
 The [GEMV case study](../../docs/experiments/qwen35-gemv-2026-11-13.md) explains
 the measured bottleneck, target-dependent gains and FP-fusion caveat. Full-model
