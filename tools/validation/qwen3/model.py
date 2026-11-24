@@ -12,7 +12,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME, require
 from compiler.qwen3.model import ModelStep, load_model
 from compiler.common.context import model_context_limit
 from tools.packages import validate_qwen3_metadata as validate_model_metadata
-from compiler.qwen3.config import DEFAULT_MODEL
+from tools.prepare.qwen3 import default_model_dir as prepare_default_model_dir
 from tools.prepare.common import encode_prompt, load_tokenizer
 from tools.validation.common.prompts import chat_prompts
 from tools.validation.common.runner import ExplicitRuntime, Stage, greedy
@@ -21,7 +21,8 @@ from tools.validation.common.context import capture_long_state, long_context_cas
 
 
 def default_model_dir(pair):
-    return DEFAULT_MODEL
+    """Select the prepared checkpoint matching the package's pinned model ID."""
+    return prepare_default_model_dir(pair["decode"]["checkpoint"]["model_id"])
 
 
 class HFRuntime:

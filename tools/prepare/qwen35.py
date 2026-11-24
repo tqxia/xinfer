@@ -8,9 +8,8 @@ from compiler.qwen35.config import TEXT_DIR
 from tools.prepare import common
 
 
-MODEL_ID = "Qwen/Qwen3.5-0.8B"
 REVISIONS = {
-    MODEL_ID: "2fc06364715b967f1860aea9cf38778875588b17",
+    "Qwen/Qwen3.5-0.8B": "2fc06364715b967f1860aea9cf38778875588b17",
     "Qwen/Qwen3.5-4B": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
 }
 MODEL_FILES = ("config.json", "tokenizer.json", "tokenizer_config.json", "chat_template.jinja")
@@ -23,7 +22,7 @@ def default_model_dir(model_id):
     return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
 
 
-def prepare(directory, model=MODEL_ID, cache_dir=None):
+def prepare(directory, model, cache_dir=None):
     """Extract only language-model tensors and publish one verified text checkpoint."""
     require(isinstance(model, str) and model in REVISIONS, f"Unsupported checkpoint: {model}")
     from safetensors import safe_open

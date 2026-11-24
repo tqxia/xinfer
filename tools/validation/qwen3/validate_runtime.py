@@ -144,7 +144,7 @@ def reject_inputs(packages, out, spec, capital_prompt, env, run, report):
     cases = [
         ("empty", "", [], f"Expected 1..{spec['cache_length']} input tokens"),
         ("negative", "-1", [], "Token ID out of range"),
-        ("vocab", "151936", [], "Token ID out of range"),
+        ("vocab", str(spec["vocab_size"]), [], "Token ID out of range"),
         ("fraction", "1.5", [], "Invalid integer"),
         ("overflow", "999999999999999999999999999999", [], "Invalid integer"),
         (
@@ -208,7 +208,7 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
         ("legacy_eager_numerics", "Unsupported package metadata: eager_numerics"),
         ("mixed_state_layout", "Package metadata differs: state"),
         ("odd_state_count", "Unsupported package metadata: state"),
-        ("invalid_cache_shape", "Unsupported Flash cache shape"),
+        ("mismatched_kv_shapes", "K/V shapes differ"),
         ("mixed_export_settings", "Package metadata differs: export_options"),
     )
     package_cases += tuple(
@@ -236,7 +236,7 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
                 metadata["state"][0]["shape"][-1] += 1
             elif name == "odd_state_count":
                 metadata["state"].pop()
-            elif name == "invalid_cache_shape":
+            elif name == "mismatched_kv_shapes":
                 metadata["state"][0]["shape"][1] = 4
             elif name == "mixed_export_settings" and kind == "prefill":
                 metadata["export_options"]["backed_size_oblivious"] = False

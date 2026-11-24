@@ -77,12 +77,13 @@ the selected model's Python environment before enabling `HF_HUB_OFFLINE` or
 
 ```bash
 "$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
+"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
 "$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
 "$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
 ```
 
 These use fixed revisions and default to `work/models/qwen3-0.6b`,
-`work/qwen35/0.8b/text` and `work/qwen35/4b/text`. `--output` selects another
+`work/models/qwen3-1.7b`, `work/qwen35/0.8b/text` and `work/qwen35/4b/text`. `--output` selects another
 prepared directory; `--cache-dir` selects a Hub cache. Qwen3 downloads the
 required HF files and writes their manifest. Qwen3.5 additionally extracts and
 renames language-model tensors into `text.safetensors`. Preparation runs on CPU

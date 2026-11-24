@@ -6,7 +6,7 @@ shared weights and explicit model state. Generation uses batch one; both model
 families support dynamic batches of 1–8 through explicit steps with independent
 request lengths, using the same package.
 
-The model pipelines cover [Qwen3-0.6B](compiler/qwen3/README.md) and
+The model pipelines cover [Qwen3-0.6B / 1.7B](compiler/qwen3/README.md) and
 [Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) (text only). Device-specific
 setup and validation status are documented for [L20 and GB10](environments/README.md).
 Numerical acceptance depends on the model, package and workload; see

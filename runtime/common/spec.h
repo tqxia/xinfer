@@ -38,7 +38,7 @@ inline ModelType parse_model_type(const std::string &type) {
 
 inline ModelType model_from_identity(const Json &identity) {
   const auto model = identity.at("model").get<std::string>();
-  if (model == "qwen3-0.6b")
+  if (model == "qwen3")
     return ModelType::Qwen3;
   if (model == "qwen3.5")
     return ModelType::Qwen35;

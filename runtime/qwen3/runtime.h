@@ -20,14 +20,15 @@ struct Spec : xinfer::SpecBase {
     xinfer::metadata_check(metadata.at("model_specific").empty(), "model_specific");
     xinfer::metadata_check(!state.empty() && state.size() % 2 == 0, "state");
 
-    const std::vector<int64_t> shape{max_batch_size, 8, capacity, 128};
-    for (size_t i = 0; i < state.size(); ++i) {
-      const auto &item = state[i];
-      xinfer::metadata_check(item.layer == int64_t(i / 2) &&
-                                 item.kind == (i % 2 ? "value" : "key") &&
-                                 item.dtype == at::kBFloat16 && item.inplace,
+    for (size_t i = 0; i < state.size(); i += 2) {
+      const auto &key = state[i];
+      const auto &value = state[i + 1];
+      xinfer::metadata_check(key.layer == int64_t(i / 2) && value.layer == key.layer &&
+                                 key.kind == "key" && value.kind == "value" &&
+                                 key.dtype == at::kBFloat16 && value.dtype == at::kBFloat16 &&
+                                 key.inplace && value.inplace,
                              "state");
-      require(item.shape == shape, "Unsupported Flash cache shape");
+      require(key.shape == value.shape, "K/V shapes differ");
     }
   }
 };

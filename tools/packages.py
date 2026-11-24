@@ -39,9 +39,7 @@ def validate_shared_weights(directory, prefill, decode):
             )
     manifest = read_shared_weight_manifest(directory, decode["shared_weights"])
     if "model_type" in decode:
-        model_type = {"qwen3-0.6b": "qwen3", "qwen3.5": "qwen35"}.get(
-            manifest["identity"].get("model")
-        )
+        model_type = {"qwen3": "qwen3", "qwen3.5": "qwen35"}.get(manifest["identity"].get("model"))
         require(model_type == decode["model_type"], "Package model identity mismatch")
     return manifest
 
@@ -51,18 +49,20 @@ def validate_qwen3_metadata(metadata):
     require(metadata["model_specific"] == {}, "Unsupported package metadata: model_specific")
     state = metadata["state"]
     require(bool(state) and len(state) % 2 == 0, "Unsupported package metadata: state")
-    for index, item in enumerate(state):
+    for layer in range(len(state) // 2):
+        key, value = state[2 * layer : 2 * layer + 2]
         require(
-            item["layer"] == index // 2
-            and item["kind"] == ("value" if index % 2 else "key")
-            and item["dtype"] == "bfloat16"
-            and item["update"] == "inplace",
+            key["layer"] == layer
+            and value["layer"] == layer
+            and key["kind"] == "key"
+            and value["kind"] == "value"
+            and key["dtype"] == "bfloat16"
+            and value["dtype"] == "bfloat16"
+            and key["update"] == "inplace"
+            and value["update"] == "inplace",
             "Unsupported package metadata: state",
         )
-        require(
-            item["shape"] == [metadata["state"][0]["shape"][0], 8, metadata["cache_length"], 128],
-            "Unsupported Flash cache shape",
-        )
+        require(key["shape"] == value["shape"], "K/V shapes differ")
 
 
 def validate_qwen35_metadata(metadata):

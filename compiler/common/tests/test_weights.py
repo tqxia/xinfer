@@ -149,7 +149,7 @@ class SharedWeightBundle(unittest.TestCase):
         read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
     def test_model_identity_does_not_select_operator_payload_checks(self):
-        for model in ("qwen3-0.6b", "qwen3.5"):
+        for model in ("qwen3", "qwen3.5"):
             with self.subTest(model=model):
                 directory = self.copy_bundle()
                 contract = self.rewrite_archive(

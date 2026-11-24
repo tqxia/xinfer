@@ -131,7 +131,7 @@ def export_model(*, model_dir, output, max_context_length=None):
         compile_shared(
             output,
             prepare_entry,
-            identity=dict(model="qwen3-0.6b", revision=revision),
+            identity=dict(model="qwen3", revision=revision),
             inductor_configs=options,
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),

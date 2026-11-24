@@ -769,6 +769,52 @@ int main() {
               "Dangling symlink was not detected by path_exists");
     });
 
+    check("qwen3_spec_accepts_general_kv_shapes_and_size_free_identity", [&] {
+      require(xinfer::model_from_identity(Json{{"model", "qwen3"}}) == xinfer::ModelType::Qwen3,
+              "qwen3 identity was not accepted");
+      require(xinfer::model_from_identity(Json{{"model", "qwen3.5"}}) == xinfer::ModelType::Qwen35,
+              "qwen3.5 identity was not accepted");
+      bool rejected = false;
+      try {
+        (void)xinfer::model_from_identity(Json{{"model", "qwen3-0.6b"}});
+      } catch (const std::runtime_error &) {
+        rejected = true;
+      }
+      require(rejected, "Size-qualified qwen3-0.6b identity was still accepted");
+
+      Bundle geometry_bundle;
+      for (const auto &shape :
+           std::vector<Json>{{8, 4, 16384, 128}, {8, 8, 16384, 64}, {8, 8, 16384, 256}}) {
+        for (const auto *kind : {"prefill", "decode"}) {
+          auto meta = xinfer::read_json(geometry_bundle.directory / (std::string(kind) + ".json"));
+          for (auto &item : meta["state"])
+            item["shape"] = shape;
+          auto file =
+              xinfer::output_file(geometry_bundle.directory / (std::string(kind) + ".json"));
+          file << meta.dump();
+        }
+        const qwen::Spec ok(geometry_bundle.directory);
+        require(ok.state.size() == 2 && ok.state[0].shape == ok.state[1].shape,
+                "Alternate Qwen3 KV geometry failed to load");
+      }
+
+      for (const auto *kind : {"prefill", "decode"}) {
+        auto meta = xinfer::read_json(geometry_bundle.directory / (std::string(kind) + ".json"));
+        meta["state"][0]["shape"] = {8, 4, 16384, 128};
+        meta["state"][1]["shape"] = {8, 8, 16384, 128};
+        auto file = xinfer::output_file(geometry_bundle.directory / (std::string(kind) + ".json"));
+        file << meta.dump();
+      }
+      rejected = false;
+      try {
+        const qwen::Spec mismatch(geometry_bundle.directory);
+        (void)mismatch;
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()) == "K/V shapes differ";
+      }
+      require(rejected, "Mismatched Qwen3 K/V shapes were accepted");
+    });
+
     report["passed"] = true;
     report["case_count"] = report["cases"].size();
     std::cout << report.dump(2) << '\n';

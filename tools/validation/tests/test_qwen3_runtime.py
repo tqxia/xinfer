@@ -67,14 +67,23 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], "unrelated-attention.so")
 
     def test_geometry_validation_precedes_loading(self):
+        for index, shape in enumerate(([8, 4, 1024, 128], [8, 8, 1024, 256])):
+            with self.subTest(valid_shape=shape):
+                value = copy.deepcopy(self.pair)
+                for entry in value.values():
+                    for state in entry["state"]:
+                        state["shape"] = shape
+                self.read.return_value = value
+                with self.assertRaises(StopBeforeRuntime):
+                    self.run_validator(f"valid-{index}")
+        self.manifest.reset_mock()
         for kind in ("prefill", "decode"):
-            for index, shape in enumerate(([1, 4, 1024, 128], [1, 8, 1024, 64])):
+            for index, shape in enumerate(([8, 4, 1024, 128], [8, 8, 1024, 64])):
                 with self.subTest(entry=kind, shape=shape):
                     value = copy.deepcopy(self.pair)
-                    for state in value[kind]["state"]:
-                        state["shape"] = shape
+                    value[kind]["state"][0]["shape"] = shape
                     self.read.return_value = value
-                    with self.assertRaisesRegex(ValueError, "^Unsupported Flash cache shape"):
+                    with self.assertRaisesRegex(ValueError, "^K/V shapes differ"):
                         self.run_validator(f"{kind}-{index}")
                     self.load.assert_not_called()
                     self.manifest.assert_not_called()

@@ -64,13 +64,17 @@ class Qwen3PackageContract(unittest.TestCase):
         item["state"][0]["shape"][2] = 1024
         self.reject(item, "Unsupported package metadata: state")
 
-    def test_invalid_geometry_is_rejected(self):
-        for shape in ([8, 4, 1024, 128], [8, 8, 1024, 64]):
+    def test_geometry_accepts_additional_sizes_and_rejects_mismatched_kv_shapes(self):
+        for shape in ([8, 4, 1024, 128], [8, 8, 1024, 64], [8, 8, 1024, 256]):
             with self.subTest(shape=shape):
                 item = metadata()
                 for state in item["state"]:
                     state["shape"] = shape
-                self.reject(item, "Unsupported Flash cache shape")
+                validate_metadata(item, model_type="qwen3")
+                validate_model_metadata(item)
+        item = metadata()
+        item["state"][0]["shape"] = [8, 4, 1024, 128]
+        self.reject(item, "K/V shapes differ")
 
     def test_removed_geometry_fields_are_rejected(self):
         for field in (
@@ -163,7 +167,7 @@ class SharedWeightBundleContract(unittest.TestCase):
         self.assertEqual(
             validate_shared_weights(self.bundle, self.metadata, self.metadata), self.manifest
         )
-        for model, model_type in (("qwen3-0.6b", "qwen3"), ("qwen3.5", "qwen35")):
+        for model, model_type in (("qwen3", "qwen3"), ("qwen3.5", "qwen35")):
             with self.subTest(model=model):
                 self.write_archive(model)
                 pair = self.model_metadata(model_type)
@@ -187,9 +191,12 @@ class SharedWeightBundleContract(unittest.TestCase):
                         archive.assert_not_called()
 
     def test_model_metadata_rejects_a_different_archive_model(self):
-        pair = self.model_metadata()
-        with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
-            validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
+        for model in ("cpu-tied-view-fixture", "qwen3-0.6b"):
+            with self.subTest(model=model):
+                self.write_archive(model)
+                pair = self.model_metadata()
+                with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
+                    validate_shared_weights(self.bundle, pair["prefill"], pair["decode"])
 
     def test_contract_and_compiler_options_cannot_select_another_pool(self):
         altered = copy.deepcopy(self.metadata)

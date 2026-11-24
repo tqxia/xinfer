@@ -72,8 +72,8 @@ retain B=1 in the symbolic range.
   IDs and positions are CUDA int64 `[B,T]`. State inputs are contiguous views
   into the first B rows of the allocated state buffers.
 - Flat AOTI inputs: IDs, positions, ordered state tensors, KV lengths, query
-  lengths. Qwen3 has 56 state tensors / 60 inputs; Qwen3.5-0.8B has 48 / 52;
-  Qwen3.5-4B has 64 / 68.
+  lengths. Qwen3-0.6B/1.7B have 56 state tensors / 60 inputs; Qwen3.5-0.8B has
+  48 / 52; Qwen3.5-4B has 64 / 68.
 - The two length inputs are CPU int32 `[B]`: populated length after this call
   and real input count for each row. The graph builds cumulative lengths and
   their CUDA copy once, shared across layers.

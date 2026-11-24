@@ -11,8 +11,10 @@ from unittest.mock import patch
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME
 from compiler.qwen3.config import DEFAULT_MODEL
-from tools.prepare.qwen3 import MODEL_FILES, MODEL_ID, REVISIONS
+from tools.prepare.qwen3 import MODEL_FILES, REVISIONS
 from tools.prepare import common, qwen3
+
+MODEL_ID = "Qwen/Qwen3-0.6B"
 
 
 class PreparedCheckpoint(unittest.TestCase):
@@ -86,6 +88,50 @@ class PreparedCheckpoint(unittest.TestCase):
                 hub.assert_not_called()
                 self.assertFalse(output.exists())
         self.assertEqual(qwen3.default_model_dir(MODEL_ID), DEFAULT_MODEL)
+        self.assertEqual(qwen3.default_model_dir("Qwen/Qwen3-1.7B"), Path("work/models/qwen3-1.7b"))
+
+    def test_sharded_checkpoint_downloads_and_verifies_all_referenced_shards(self):
+        model_id = "Qwen/Qwen3-1.7B"
+        shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+        index_bytes = json.dumps(
+            {"weight_map": {"model.embed_tokens.weight": shards[0], "lm_head.weight": shards[1]}}
+        ).encode()
+        contents = {name: ("original HF bytes: " + name).encode() for name in qwen3.BASE_FILES}
+        contents[qwen3.WEIGHT_INDEX] = index_bytes
+        for shard in shards:
+            contents[shard] = ("shard bytes: " + shard).encode()
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output, cache = root / "model", root / "hub-cache"
+
+            def copy(name, destination):
+                data = contents[name]
+                destination.write_bytes(data)
+                return self.descriptor(data)
+
+            with (
+                patch.object(common, "Hub") as hub,
+                patch.object(qwen3.importlib.metadata, "version", return_value="2.3.0"),
+            ):
+                hub.return_value.files = dict.fromkeys(contents)
+                hub.return_value.copy.side_effect = copy
+                manifest = qwen3.prepare(output, model_id, cache_dir=cache)
+            hub.assert_called_once_with(model_id, REVISIONS[model_id], cache_dir=cache)
+            self.assertEqual(manifest["repo_id"], model_id)
+            self.assertEqual(manifest["revision"], REVISIONS[model_id])
+            self.assertEqual(set(manifest["files"]), set(contents))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(qwen3.verify_model(output), manifest)
+
+            # Removing a shard from the manifest must fail verification against the index.
+            bad_manifest = dict(
+                manifest,
+                files={k: v for k, v in manifest["files"].items() if k != shards[1]},
+            )
+            (output / MODEL_MANIFEST_NAME).write_text(json.dumps(bad_manifest))
+            with redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(ValueError, "file manifest"):
+                    qwen3.verify_model(output)
 
     def test_existing_output_is_preserved_without_network_access(self):
         with TemporaryDirectory() as temporary:
@@ -94,7 +140,7 @@ class PreparedCheckpoint(unittest.TestCase):
             retained.write_text("keep")
             with patch.object(common, "Hub") as hub:
                 with self.assertRaises(FileExistsError):
-                    qwen3.prepare(output)
+                    qwen3.prepare(output, MODEL_ID)
             hub.assert_not_called()
             self.assertEqual(retained.read_text(), "keep")
             self.assertEqual(list(output.iterdir()), [retained])
@@ -116,7 +162,7 @@ class PreparedCheckpoint(unittest.TestCase):
             with patch.object(common, "Hub") as hub:
                 hub.return_value.copy.side_effect = copy
                 with self.assertRaisesRegex(ValueError, "Hub checksum mismatch"):
-                    qwen3.prepare(output)
+                    qwen3.prepare(output, MODEL_ID)
             self.assertTrue(copied)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.iterdir()), [])

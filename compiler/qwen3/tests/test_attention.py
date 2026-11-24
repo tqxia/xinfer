@@ -221,6 +221,41 @@ class PrefixFlashAdapter(unittest.TestCase):
             self.assertIs(layer.self_attn, previous)
             self.assertIs(layer.self_attn.original, original)
 
+    def test_adapter_accepts_non_0p6b_geometries_and_rejects_invalid_flash_shapes(self):
+        for heads, kv_heads, dim in ((32, 8, 128), (8, 4, 64), (16, 4, 256)):
+            with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
+                config = Qwen3Config(
+                    hidden_size=heads * dim,
+                    intermediate_size=heads * dim * 2,
+                    num_hidden_layers=1,
+                    num_attention_heads=heads,
+                    num_key_value_heads=kv_heads,
+                    head_dim=dim,
+                    max_position_embeddings=1024,
+                    use_sliding_window=False,
+                )
+                attention = Qwen3Attention(config, layer_idx=0).eval()
+                wrapped = FlashAttention(attention)
+                self.assertIs(wrapped.original, attention)
+        for heads, kv_heads, dim, message in (
+            (10, 4, 128, "Query heads must be a positive multiple of KV heads"),
+            (8, 4, 68, "Flash head dimension must be a multiple of 8 in 8..256"),
+            (8, 4, 320, "Flash head dimension must be a multiple of 8 in 8..256"),
+        ):
+            with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
+                config = Qwen3Config(
+                    hidden_size=heads * dim,
+                    intermediate_size=heads * dim * 2,
+                    num_hidden_layers=1,
+                    num_attention_heads=heads,
+                    num_key_value_heads=kv_heads,
+                    head_dim=dim,
+                    max_position_embeddings=1024,
+                    use_sliding_window=False,
+                )
+                with self.assertRaisesRegex(ValueError, message):
+                    FlashAttention(Qwen3Attention(config, layer_idx=0).eval())
+
 
 if __name__ == "__main__":
     unittest.main()

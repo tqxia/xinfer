@@ -1,4 +1,4 @@
-# Qwen3-0.6B AOTI / C++
+# Qwen3 AOTI / C++
 
 Qwen3 compiles BF16 AOTInductor with valid-prefix FlashAttention and native
 grouped-query attention. The original Hugging Face model provides the weights
@@ -67,12 +67,15 @@ Dependency pins live in the per-device
 
 ```bash
 "$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
+"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
 "$Q3_PY" -m compiler.qwen3.export \
   --model-dir work/models/qwen3-0.6b --output artifacts/qwen3-flash
 ```
 
-The pinned checkpoint revision is `c1899de289a04d12100db370d81485cdf75e47ca`.
-Preparation downloads the required HF files and writes `model_manifest.json`.
+The pinned checkpoint revisions are `c1899de289a04d12100db370d81485cdf75e47ca`
+(Qwen3-0.6B) and `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` (Qwen3-1.7B).
+Preparation downloads the required HF files (single-file or sharded safetensors)
+and writes `model_manifest.json`.
 Reuse a prepared directory on later exports; run download before enabling Hub
 or Transformers offline mode. See the
 [preparation commands](../../docs/development-tools.md#checkpoint-preparation-and-tokenization)
@@ -107,13 +110,18 @@ call across the batch. Metadata is prepared once per step and reused by all
 layers; packing excludes padded queries. See the [attention guide](../../docs/flash-attention.md)
 for cache-layout handling.
 
-| Property | Qwen3-0.6B |
-| --- | --- |
-| Layers | 28 |
-| Query / KV heads | 16 / 8 |
-| Head dimension | 128 |
-| KV inputs | 56 BF16 cache views, each `[B,8,C,128]` |
-| Output | Last-token BF16 logits `[B,151936]` |
+| Property | Qwen3-0.6B | Qwen3-1.7B |
+| --- | --- | --- |
+| Layers | 28 | 28 |
+| Hidden / MLP | 1,024 / 3,072 | 2,048 / 6,144 |
+| Query / KV heads | 16 / 8 | 16 / 8 |
+| Head dimension | 128 | 128 |
+| KV inputs | 56 BF16 cache views, each `[B,8,C,128]` | 56 BF16 cache views, each `[B,8,C,128]` |
+| Output | Last-token BF16 logits `[B,151936]` | Last-token BF16 logits `[B,151936]` |
+
+The adapter and runtime derive layer count, KV heads and head dimension from the
+checkpoint config and package metadata (supporting any FlashAttention-compatible
+GQA head multiple and head dimension multiple of 8 in `8..256`).
 
 `B` is the runtime batch size (1 through 8), and `C` is the exported capacity.
 All batch sizes use the same Python step signature:

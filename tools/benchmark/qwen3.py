@@ -1,11 +1,11 @@
 """Qwen3 checkpoint loading and tokenization for the shared benchmark."""
 
-from compiler.qwen3.config import DEFAULT_MODEL
 from tools.benchmark.common import CONTINUATION_TEXT, PROMPT_TEXT, hf_eager_loader
+from tools.prepare.qwen3 import default_model_dir as prepare_default_model_dir
 
 
 def default_model_dir(metadata):
-    return DEFAULT_MODEL
+    return prepare_default_model_dir(metadata["decode"]["checkpoint"]["model_id"])
 
 
 def prepare_tokens(model_dir):

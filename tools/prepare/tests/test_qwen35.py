@@ -13,8 +13,10 @@ from safetensors.torch import load_file, save_file
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256
 from compiler.qwen35.config import TEXT_DIR
-from tools.prepare.qwen35 import MODEL_FILES, MODEL_ID, REVISIONS
+from tools.prepare.qwen35 import MODEL_FILES, REVISIONS
 from tools.prepare import cli, qwen35
+
+MODEL_ID = "Qwen/Qwen3.5-0.8B"
 
 
 class PreparedCheckpoint(unittest.TestCase):
@@ -123,7 +125,7 @@ class PreparedCheckpoint(unittest.TestCase):
             self.network(source, info)
             with patch("safetensors.safe_open") as open_weights:
                 with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-                    qwen35.prepare(output)
+                    qwen35.prepare(output, MODEL_ID)
             open_weights.assert_not_called()
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
@@ -144,7 +146,7 @@ class PreparedCheckpoint(unittest.TestCase):
             retained.write_text("keep")
             with patch("huggingface_hub.HfApi") as api:
                 with self.assertRaises(FileExistsError):
-                    qwen35.prepare(output)
+                    qwen35.prepare(output, MODEL_ID)
             api.assert_not_called()
             self.assertEqual(retained.read_text(), "keep")
 
@@ -156,7 +158,7 @@ class PreparedCheckpoint(unittest.TestCase):
             info, _ = self.source(source, text=False)
             self.network(source, info)
             with self.assertRaisesRegex(ValueError, "No text weights"):
-                qwen35.prepare(output)
+                qwen35.prepare(output, MODEL_ID)
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
 
@@ -169,7 +171,7 @@ class PreparedCheckpoint(unittest.TestCase):
             self.network(source, info)
             (source / "chat_template.jinja").unlink()
             with self.assertRaises(FileNotFoundError):
-                qwen35.prepare(output)
+                qwen35.prepare(output, MODEL_ID)
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
 
