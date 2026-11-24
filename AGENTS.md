@@ -4,112 +4,118 @@ Read [README.md](README.md) and the relevant model guide before changing code.
 Use [environments/README.md](environments/README.md) for setup and builds,
 [docs/development-tools.md](docs/development-tools.md) for formatting and tests,
 and [docs/package-metadata.md](docs/package-metadata.md) for package contracts.
-[PLAN.md](PLAN.md) describes pending work. [Validation status](docs/validation-status.md)
-records current tested profiles, unresolved findings and validation gaps. Keep it
-concise; detailed run histories and per-case results belong in local artifacts.
+[PLAN.md](PLAN.md) tracks pending work; [validation status](docs/validation-status.md)
+summarizes current tested profiles, open findings and gaps (keep detailed run
+histories in local artifacts).
 
 ## Code ownership
 
 - `compiler/<model>/` owns model loading, adapters, kernels and export.
   `compiler/common/` owns shared compilation, metadata and weight helpers;
   `compiler/common/kernels/` owns shared native kernels and their C shims.
-- `runtime/common/` owns shared native loading, state and generation.
-  Model-specific runtime headers validate their model's ABI.
-- `tools/` owns preparation, numerical validation and benchmarking.
-  C++ tool drivers and helpers live in `tools/benchmark/native/` and
-  `tools/validation/native/`, separate from Python orchestration.
-  Production compiler code must not depend on tooling.
+- `runtime/common/` owns shared native loading, state and generation;
+  model-specific headers validate their model's ABI.
+- `tools/` owns preparation, validation and benchmarking, with native C++
+  drivers under `tools/{benchmark,validation}/native/`. Production compiler code
+  must not depend on tooling.
 - `environments/` owns setup, device/model requirements and hardware profiles.
-- `plugins/` owns coding-agent skills and their reusable performance-analysis
-  helpers. Reuse project export, validation and benchmark tools; keep plugin
-  helpers general and model-specific details in the existing model guides.
-- Tests follow the code they cover. Keep module/operator/kernel checks in unit
-  tests and full export-to-native accuracy checks in `tools/validation/`.
-- Functions and helpers used only by tests or tooling belong in their respective
-  test or tool modules. Production code must not expose test-only or tool-only
-  APIs. Put shared test helpers in test modules and test-only native helpers in
-  test translation units.
-- Extend shared implementations and model hooks before introducing parallel
+- `plugins/` owns general coding-agent skills and performance bookkeeping
+  helpers that reuse project tools; keep model-specific details in model guides.
+- Tests follow the code they cover: module/operator/kernel checks belong in unit
+  tests; full export-to-native checks belong in `tools/validation/`.
+- Keep test-only and tool-only helpers in test/tool modules (and native test
+  translation units); never expose them from production code.
+- Extend shared implementations and model hooks before adding parallel
   model-specific orchestration. Derive geometry and bounds from inputs or
-  metadata where supported; make actual model/ABI restrictions explicit.
+  metadata where supported, and make actual model/ABI restrictions explicit.
+- Keep native tools read-only on caller-supplied inputs, stage multi-model GPU
+  validation sequentially (at most one full GPU model resident at a time), and
+  refuse occupied output paths including dangling symlinks (`path_exists` /
+  `symlink_status` in C++, `exists() or is_symlink()` in Python).
 
 ## Environment and builds
 
-Use `environments/<target>/<model>_requirements.txt` as the dependency source for
-that environment. Keep package pins out of setup scripts and hardware profiles.
-Create fresh independent venvs with the device's Bash setup script; preserve
-existing environments and use `--venv` to choose another destination.
+Use `environments/<target>/<model>_requirements.txt` as the dependency source
+for each environment; keep package pins out of setup scripts and hardware
+profiles. Keep shared Python dependency pins aligned across models (updating
+Docker lockfiles and `SHA256SUMS` together) unless a verified incompatibility
+requires divergence. Create fresh independent venvs with the device's setup
+script (use `--venv` for another destination; preserve existing environments).
 
 Run Python tools as modules from the repository root with the matching model
-interpreter. Build native code against that interpreter's LibTorch in
-`build/<model>/`. Build the compiler's `xinfer_attention_ops` target before
-model export or standalone attention tests. Runtime targets build independently
-and consume the kernels carried by compiled packages. Use environment checking
-to verify the selected stack and configured build.
+interpreter, and build native code against that interpreter's LibTorch in
+`build/<model>/`. Build `xinfer_attention_ops` before export or standalone
+attention tests; runtime targets build independently and consume packaged
+kernels. Enforce C++20 as the minimum native standard, avoid deprecated
+serialization (`torch.jit`) and extra native runtime dependencies (e.g.,
+OpenSSL, Python), and use environment checking to verify the stack and build.
 
 ## Correctness contracts
 
-Preserve BF16 HF → adapted/optimized eager → Python AOTI → C++ AOTI validation,
-with identical teacher-forced inputs and an unmodified BF16 HF baseline. Generate
-HF references during validation. Full-model validation does not load a separate
-FP32 HF control model. DeltaNet component tests compare matching input dtypes:
-BF16 kernels against HF's BF16 tensor operations, with algorithm-defined FP32
-accumulation and recurrent state preserved. FP32 kernel support tests use FP32
-references; BF16 acceptance does not require an upcast FP32 control. Keep
-native/Python bitwise equality, finite-value, state ownership, masking, reset/reuse,
-native generation and boundary checks strict. Both models follow the
+Preserve the BF16 `HF → adapted/optimized eager → Python AOTI → C++ AOTI` chain
+with identical teacher-forced inputs and an unmodified live HF baseline.
+Preserve checkpoint-native parameter dtypes on load (`dtype="auto"`, keeping
+native FP32 weights such as `A_log` and `norm.weight`) rather than globally
+casting all parameters to BF16. Component tests compare matching input dtypes
+(BF16 against BF16 with algorithm-defined FP32 accumulation and recurrent state;
+FP32 against FP32); neither full-model nor BF16 kernel validation loads a
+separate upcast FP32 control.
+
+Keep native/Python bitwise equality, finite-value, state ownership, masking,
+reset/reuse, generation and boundary checks strict. Both models follow the
 [shared numerical policy](docs/development-tools.md#shared-numerical-policy):
-matched-input logit bounds are required; full-model state and HF token/greedy
-differences are diagnostic. Run affected kernel/block tests separately; their
-output and carried-state acceptance limits remain required.
+matched-input logit bounds are required, while full-model state and HF
+token/greedy differences are diagnostic; component kernel/block tests retain
+their own required output and state limits. After changing export tracing,
+dynamic shapes or graph passes, verify from export diagnostics or tests that
+expected passes still match (`replaced > 0`) rather than becoming silent no-ops.
+Do not loosen tolerances, alter references or suppress failures to make an
+optimization pass, and report HF numerical acceptance separately from native
+parity.
 
-Do not loosen tolerances, change references or suppress failures to make an
-optimization pass. Report HF numerical acceptance separately from native parity;
-passing native checks does not resolve existing HF failures.
-
-Preserve shared-weight ownership and metadata-driven state handling. Metadata or
-ABI changes must update the shared Python writer/validators, C++ readers, tests
-and documentation together. Follow the documented migration/re-export contract
-for retained packages. Keep metadata focused on runtime and artifact contracts; put build
-diagnostics in export logs.
+Preserve shared-weight ownership and metadata-driven state handling. Keep
+checkpoint manifests, metadata schemas and logical model identities uniform
+across model families without model sizes or separate format/schema version
+fields; put build diagnostics in export logs. Metadata or ABI changes must
+update shared Python writers/validators, C++ readers, tests and documentation
+together; re-export retained packages when contracts change.
 
 ## C++ spacing
 
 Use blank lines as paragraphs: one blank line between function definitions and
-between distinct logical phases within a function, such as validation,
-preparation, execution and reporting. Keep related statements together, including
-a declaration and its immediate use or an operation and its error check. Related
-one-line accessors may stay grouped without blank lines between them.
-
-Avoid blank lines immediately inside function bodies and multiple consecutive
-blank lines. Apply this grouping deliberately; clang-format limits excess blank
-lines but does not identify logical phases within a function.
+between distinct logical phases within a function (validation, preparation,
+execution, reporting). Keep declarations with their immediate uses and
+operations with their error checks; related one-line accessors may stay grouped.
+Avoid leading blank lines inside function bodies and consecutive blank lines
+(`clang-format` caps excess blank lines but does not group logical phases).
 
 ## Verification and measurement
 
-Use the pinned Ruff and clang-format tools with the repository configurations.
-Run relevant CPU tests first in the correct model environment. Follow the model
-guides for GPU, export/AOTI and native checks affected by a change. Report what
-ran, what could not run and any remaining failures.
+Use the pinned Ruff and clang-format tools with repository configs: verify
+`ruff format --check .`, `ruff check --select E,F,W .`, and
+`clang-format --dry-run --Werror`. Run CPU unit tests via
+`CUDA_VISIBLE_DEVICES="" python -m unittest discover` rather than hand-picked
+module lists, and keep preflight and CPU contract checks runnable with
+`CUDA_VISIBLE_DEVICES=""`. Follow model guides for affected GPU, export/AOTI
+and native checks, and report what ran, what could not run and any failures.
 
 Keep benchmarks separate from accuracy validation. Use the same GPU UUID for
 workers, idle checks and telemetry. Establish idle conditions and repeat
 measurements before making performance claims; busy-GPU runs demonstrate only
-functionality. Use suitable resources rather than changing tracing or model
-semantics to accommodate a constrained test host.
+functionality. Use suitable resources rather than altering tracing or model
+semantics for a constrained host.
 
 ## Repository hygiene
 
-Generated environments and scratch scripts belong in ignored `work/`, native
-builds in `build/`, and packages/results in `artifacts/`. Preserve unrelated files
-and retained checkpoints/packages. Keep private infrastructure identifiers and
-access details out of tracked code and documentation.
+Generated environments and scratch/one-off scripts belong in ignored `work/`,
+native builds in `build/`, and packages/run artifacts in `artifacts/`; maintain
+only reusable project tooling in Git. Preserve unrelated files and retained
+checkpoints/packages, and keep private infrastructure identifiers and access
+details out of tracked files.
 
-Generate one-off profiling and experiment scripts in scratch space; maintain
-only reusable project tooling. Give shared commands, contracts and validation
-status one documented home and link to them from model guides. Keep model-specific
-design and constraints in those guides. Preserve reusable technical conclusions
-and dated evidence links when retiring development journals; raw run artifacts
-remain outside Git. Update current usage documentation when interfaces change.
+Give shared commands, contracts and validation status one documented home linked
+from model guides, keeping model-specific design and constraints in those
+guides. Preserve reusable technical conclusions and dated evidence links when
+retiring development journals, and update documentation when interfaces change.
 
 Commit, push or rewrite history only when requested.
