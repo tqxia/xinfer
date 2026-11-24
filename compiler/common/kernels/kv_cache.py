@@ -29,7 +29,8 @@ def _append(
     pt,
     BLOCK: tl.constexpr,
 ):
-    head, row = tl.program_id(1), tl.program_id(2)
+    head = tl.program_id(1).to(tl.int64)
+    row = tl.program_id(2).to(tl.int64)
     offsets = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
     token, feature = offsets // dim, offsets % dim
     count = tl.load(CuQuery + row + 1) - tl.load(CuQuery + row)

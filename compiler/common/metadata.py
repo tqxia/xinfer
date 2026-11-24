@@ -31,6 +31,9 @@ FIELDS = (
 )
 ENTRY_FIELDS = {"entry_point", "token_range", "package_bytes", "package_sha256"}
 STATE_FIELDS = {"layer", "kind", "shape", "dtype", "update"}
+MAX_BATCH_SIZE = 8
+# Keep cumulative int32 KV lengths across all compiled batch slots below INT32_MAX.
+MAX_CACHE_LENGTH = (2**31 - 1) // MAX_BATCH_SIZE
 INDUCTOR_FIELDS = {
     "emulate_precision_casts",
     "aot_inductor.package_constants_in_so",
@@ -135,7 +138,9 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
         and (entry_point is None or m["entry_point"] == entry_point),
         "entry_point",
     )
-    _check(_integer(m["cache_length"], 512) and m["cache_length"] < 2**63 - 1, "cache_length")
+    _check(
+        _integer(m["cache_length"], 512) and m["cache_length"] <= MAX_CACHE_LENGTH, "cache_length"
+    )
     _check(_integer(m["vocab_size"], 1), "vocab_size")
     tokens = m["token_range"]
     _check(
@@ -200,7 +205,7 @@ def validate_metadata(metadata, model_type=None, entry_point=None):
             isinstance(shape, list)
             and len(shape) == (3 if kind == "conv" else 4)
             and all(_integer(n, 1) for n in shape)
-            and shape[0] == 8
+            and shape[0] == MAX_BATCH_SIZE
             and math.prod(shape) <= (2**63 - 1) // 4,
             "state",
         )

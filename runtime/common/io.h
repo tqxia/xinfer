@@ -32,6 +32,11 @@ inline Json read_json(const fs::path &path, const std::string &prefix = "Cannot 
   return Json::parse(file);
 }
 
+inline bool path_exists(const fs::path &path) {
+  // symlink_status detects dangling symlinks that fs::exists(path) treats as absent.
+  return fs::exists(fs::symlink_status(path));
+}
+
 inline std::ofstream output_file(const fs::path &path, bool binary = false) {
   if (path.has_parent_path())
     fs::create_directories(path.parent_path());

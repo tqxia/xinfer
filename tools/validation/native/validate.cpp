@@ -35,8 +35,8 @@ struct Case {
 
 template <class Spec>
 std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::path &output) {
-  require(!fs::exists(output) || fs::is_directory(output), "Output must be a directory");
-  require(!fs::exists(output / "native.json"), "Output already exists");
+  require(!path_exists(output) || fs::is_directory(output), "Output must be a directory");
+  require(!path_exists(output / "native.json"), "Output already exists");
 
   std::unordered_set<std::string> names;
   std::vector<Case> cases;
@@ -124,9 +124,9 @@ std::vector<Case> parse_cases(const Json &manifest, const Spec &spec, const fs::
       suffixes.push_back(".kv.bf16");
 
     for (const auto &suffix : suffixes)
-      require(!fs::exists(output / (c.name + suffix)), "Output already exists");
+      require(!path_exists(output / (c.name + suffix)), "Output already exists");
     for (auto step : c.state_steps)
-      require(!fs::exists(output / (c.name + "." + std::to_string(step) + ".states")),
+      require(!path_exists(output / (c.name + "." + std::to_string(step) + ".states")),
               "Output already exists");
 
     cases.push_back(std::move(c));

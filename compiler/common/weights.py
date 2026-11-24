@@ -160,11 +160,10 @@ class SharedWeights:
         self.directory = Path(directory)
         self.manifest = read_shared_weight_manifest(self.directory, contract)
         cpu = _archive_storages(self.directory, self.manifest)
-        self.storages = {
-            name: value.to(device=descriptor["device"])
-            for name, descriptor in self.manifest["storages"].items()
-            for value in (cpu[name],)
-        }
+        self.storages = {}
+        for name, descriptor in self.manifest["storages"].items():
+            # Pop each CPU buffer as it moves to its target device to avoid retaining both copies.
+            self.storages[name] = cpu.pop(name).to(device=descriptor["device"])
         self.tensors = {
             name: _view(self.storages[descriptor["storage"]], descriptor)
             for name, descriptor in self.manifest["tensors"].items()
@@ -192,19 +191,19 @@ def _capture_constants():
     from torch._inductor.graph import GraphLowering
 
     original = GraphLowering.allocate_non_dup_const_name
-    captured = {}
+    by_runtime_name, by_name = {}, {}
 
     def allocate(graph, name, tensor):
         runtime_name = original(graph, name, tensor)
         if isinstance(tensor, torch.Tensor):
-            captured[runtime_name] = tensor
+            by_runtime_name[runtime_name] = tensor
             if name is not None:
-                captured[str(name)] = tensor
+                by_name.setdefault(str(name), tensor)
         return runtime_name
 
     GraphLowering.allocate_non_dup_const_name = allocate
     try:
-        yield captured
+        yield by_runtime_name, by_name
     finally:
         GraphLowering.allocate_non_dup_const_name = original
 
@@ -266,7 +265,7 @@ def _compile_entry(
         json.dumps(dict(event="compile_options", entry_point=kind, inductor_configs=options)),
         flush=True,
     )
-    with _capture_constants() as captured:
+    with _capture_constants() as (captured_runtime, captured_name):
         compile_package(
             exported,
             compiled_path,
@@ -295,7 +294,9 @@ def _compile_entry(
         data["sources"][name] = view
     constants = {}
     for name in names:
-        tensor = values.get(name, captured.get(name))
+        tensor = values.get(name)
+        if tensor is None:
+            tensor = captured_runtime.get(name, captured_name.get(name))
         require(
             isinstance(tensor, torch.Tensor),
             f"Shared weights cannot resolve exact constant FQN: {name}",

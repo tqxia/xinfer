@@ -18,6 +18,10 @@
 
 namespace xinfer {
 
+inline constexpr int64_t kMaxBatchSize = 8;
+// Keep cumulative int32 KV lengths across all compiled batch slots below INT32_MAX.
+inline constexpr int64_t kMaxCacheLength = std::numeric_limits<int32_t>::max() / kMaxBatchSize;
+
 enum class ModelType { Qwen3, Qwen35 };
 
 inline const char *model_name(ModelType model) {
@@ -116,7 +120,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
   const auto &m = metadata;
   metadata_check(m.at("entry_point") == entry, "entry_point");
   metadata_check(metadata_integer(m.at("cache_length"), 512) &&
-                     m.at("cache_length").get<int64_t>() < std::numeric_limits<int64_t>::max(),
+                     m.at("cache_length").get<int64_t>() <= kMaxCacheLength,
                  "cache_length");
   metadata_check(metadata_integer(m.at("vocab_size"), 1), "vocab_size");
   const Json expected_tokens = entry == "prefill" ? Json::array({2, 512}) : Json::array({1, 1});
@@ -180,7 +184,7 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                      "state");
       elements *= dim.get<int64_t>();
     }
-    metadata_check(shape[0] == 8, "state");
+    metadata_check(shape[0] == kMaxBatchSize, "state");
     metadata_check(item.at("dtype") == (kind == "recurrent" ? "float32" : "bfloat16"), "state");
     metadata_check(item.at("update") == (kv ? "inplace" : "replace"), "state");
     if (kv)
@@ -249,7 +253,17 @@ struct SpecBase {
     shared_weights = metadata.at("shared_weights");
 
     const auto version = metadata.at("torch_version").get<std::string>();
-    require(version.substr(0, version.find('+')) == TORCH_VERSION, "Torch version mismatch");
+    const auto plus = version.find('+');
+    require(version.substr(0, plus) == TORCH_VERSION, "Torch version mismatch");
+    if (plus != std::string::npos) {
+      const auto suffix = version.substr(plus + 1);
+      if (!suffix.starts_with("git")) {
+        const long cudart = at::Context::versionCUDART();
+        const std::string expected =
+            "cu" + std::to_string(cudart / 1000) + std::to_string((cudart % 1000) / 10);
+        require(suffix == expected, "Torch version mismatch");
+      }
+    }
     require(metadata.at("cxx11_abi") == bool(_GLIBCXX_USE_CXX11_ABI), "C++ ABI mismatch");
 
     for (const auto &item : metadata.at("state")) {

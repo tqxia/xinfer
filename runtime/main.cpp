@@ -32,14 +32,14 @@ std::vector<int64_t> validate_request(const Options &options, const SpecBase &sp
   const auto prompt = read_ids(options.input, spec);
   spec.check_request(prompt, options.limit);
 
-  require(!fs::exists(options.output), "Output already exists");
+  require(!path_exists(options.output), "Output already exists");
   const auto input_path = fs::weakly_canonical(options.input);
   const auto canonical_output = fs::weakly_canonical(options.output);
   require(input_path != canonical_output, "Input and output paths must differ");
   require(options.trace.empty() || (fs::weakly_canonical(options.trace) != input_path &&
                                     fs::weakly_canonical(options.trace) != canonical_output),
           "Trace path must differ from input and output");
-  require(options.trace.empty() || !fs::exists(options.trace), "Trace path already exists");
+  require(options.trace.empty() || !path_exists(options.trace), "Trace path already exists");
 
   return prompt;
 }

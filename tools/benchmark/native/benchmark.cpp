@@ -37,7 +37,7 @@ void write_report(const fs::path &path, const Json &report) {
 
 void run_benchmark(const Options &options) {
   const auto workload = read_json(options.workload);
-  require(!fs::exists(options.output), "Output already exists");
+  require(!path_exists(options.output), "Output already exists");
   require(!workload.contains("max_prompt_length"),
           "Benchmark workload no longer accepts max_prompt_length");
 

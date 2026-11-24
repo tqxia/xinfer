@@ -192,6 +192,23 @@ int main() {
         for (auto &state : small["state"])
           state["shape"][2] = 512;
         xinfer::validate_metadata(small, kind);
+
+        auto too_large = small;
+        too_large["cache_length"] = xinfer::kMaxCacheLength + 1;
+        for (auto &state : too_large["state"])
+          state["shape"][2] = xinfer::kMaxCacheLength + 1;
+        rejected = false;
+        try {
+          xinfer::validate_metadata(too_large, kind);
+        } catch (const std::runtime_error &error) {
+          rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
+        }
+        require(rejected, "Over-int32-safe capacity was not rejected as a capacity error");
+
+        too_large["cache_length"] = xinfer::kMaxCacheLength;
+        for (auto &state : too_large["state"])
+          state["shape"][2] = xinfer::kMaxCacheLength;
+        xinfer::validate_metadata(too_large, kind);
       }
 
       auto retired_field = metadata;
@@ -651,6 +668,105 @@ int main() {
             },
             "Shared weights tensor layout is invalid");
       }
+    });
+
+    check("sha256_matches_nist_vectors_and_scalar_fallback", [&] {
+      Bundle temp_bundle;
+      const auto hash_bytes = [&](const std::string &name, const std::string &bytes) {
+        const auto path = temp_bundle.directory / name;
+        auto file = xinfer::output_file(path, true);
+        if (!bytes.empty())
+          file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        file.close();
+        require(bool(file), "Failed to write SHA-256 fixture");
+        return xinfer::sha256_file(path);
+      };
+
+      require(hash_bytes("empty.bin", "") ==
+                  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              "SHA-256 mismatch on empty input");
+      require(hash_bytes("abc.bin", "abc") ==
+                  "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+              "SHA-256 mismatch on 'abc'");
+      require(hash_bytes("56.bin", "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+                  "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+              "SHA-256 mismatch on 56-byte NIST vector");
+      require(hash_bytes("million.bin", std::string(1000000, 'a')) ==
+                  "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+              "SHA-256 mismatch on 1,000,000 'a' bytes");
+
+      // Exercise exact 256 KiB buffer boundary and 64-byte block boundaries against scalar
+      // transform.
+      for (const size_t length : {size_t{55}, size_t{63}, size_t{64}, size_t{65}, size_t{262144},
+                                  size_t{262144 + 55}, size_t{262144 + 63}}) {
+        std::string data(length, '\0');
+        for (size_t i = 0; i < length; ++i)
+          data[i] = static_cast<char>((i * 131 + 17) & 0xff);
+        const auto actual = hash_bytes("len_" + std::to_string(length) + ".bin", data);
+
+        std::array<uint32_t, 8> scalar_state{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+                                             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
+        std::vector<unsigned char> padded(data.begin(), data.end());
+        padded.push_back(0x80);
+        while (padded.size() % 64 != 56)
+          padded.push_back(0);
+        const uint64_t bits = uint64_t{length} * 8;
+        for (int shift = 56; shift >= 0; shift -= 8)
+          padded.push_back(static_cast<unsigned char>((bits >> shift) & 0xffu));
+        xinfer::detail::sha256_transform_scalar(scalar_state, padded.data(), padded.size() / 64);
+
+        std::ostringstream expected;
+        expected << std::hex << std::setfill('0');
+        for (auto word : scalar_state)
+          expected << std::setw(8) << word;
+        require(actual == expected.str(),
+                "Hardware/buffered SHA-256 diverged from scalar transform at length " +
+                    std::to_string(length));
+      }
+    });
+
+    check("spec_checks_torch_cuda_suffix_and_dangling_symlinks", [&] {
+      Bundle version_bundle;
+      const auto write_version = [&](const std::string &version) {
+        for (const auto *kind : {"prefill", "decode"}) {
+          auto meta = xinfer::read_json(version_bundle.directory / (std::string(kind) + ".json"));
+          meta["torch_version"] = version;
+          auto file = xinfer::output_file(version_bundle.directory / (std::string(kind) + ".json"));
+          file << meta.dump();
+        }
+      };
+
+      const long cudart = at::Context::versionCUDART();
+      const std::string cuda_tag =
+          "cu" + std::to_string(cudart / 1000) + std::to_string((cudart % 1000) / 10);
+      for (const auto &accepted :
+           {std::string(TORCH_VERSION), std::string(TORCH_VERSION) + "+" + cuda_tag,
+            std::string(TORCH_VERSION) + "+gitabcdef"}) {
+        write_version(accepted);
+        const xinfer::SpecBase ok(version_bundle.directory);
+        require(ok.capacity == 16384, "Accepted torch_version failed to load SpecBase");
+      }
+
+      for (const auto &bad :
+           {std::string(TORCH_VERSION) + "+cu999", std::string(TORCH_VERSION) + "+cpu",
+            std::string(TORCH_VERSION) + "+", std::string("0.0.0+") + cuda_tag}) {
+        write_version(bad);
+        bool rejected = false;
+        try {
+          const xinfer::SpecBase fail(version_bundle.directory);
+          (void)fail;
+        } catch (const std::runtime_error &error) {
+          rejected = std::string(error.what()) == "Torch version mismatch";
+        }
+        require(rejected, "Mismatched torch_version was accepted: " + bad);
+      }
+
+      const auto missing = version_bundle.directory / "nonexistent_target";
+      const auto dangling = version_bundle.directory / "dangling_output";
+      xinfer::fs::create_symlink(missing, dangling);
+      require(!xinfer::path_exists(missing), "Missing path reported as existing");
+      require(!xinfer::fs::exists(dangling) && xinfer::path_exists(dangling),
+              "Dangling symlink was not detected by path_exists");
     });
 
     report["passed"] = true;

@@ -10,6 +10,7 @@ import unittest
 
 from compiler.common.artifacts import ROOT, sha256
 from compiler.common.metadata import (
+    MAX_CACHE_LENGTH,
     finalize_metadata,
     make_metadata,
     read_package_metadata,
@@ -112,7 +113,7 @@ class PackageMetadata(unittest.TestCase):
                     self.assertNotIn("max_prompt_length", pair["decode"])
 
     def test_capacity_is_a_required_integer_contract(self):
-        for invalid in (0, -1, 511, True, 1024.0, "1024", 2**63):
+        for invalid in (0, -1, 511, True, 1024.0, "1024", MAX_CACHE_LENGTH + 1, 2**63 - 1, 2**63):
             with self.subTest(value=invalid):
                 metadata = metadata_pair()["decode"]
                 metadata["cache_length"] = invalid
@@ -120,10 +121,9 @@ class PackageMetadata(unittest.TestCase):
                     ValueError, "Unsupported package metadata: cache_length"
                 ):
                     validate_metadata(metadata)
-        metadata = metadata_pair()["decode"]
-        metadata["cache_length"] = 2**63 - 1
-        with self.assertRaisesRegex(ValueError, "Unsupported package metadata: cache_length"):
-            validate_metadata(metadata)
+        validate_metadata_pair(
+            *metadata_pair(cache_length=MAX_CACHE_LENGTH).values(),
+        )
         metadata = metadata_pair()["decode"]
         metadata["max_prompt_length"] = 8192
         with self.assertRaisesRegex(ValueError, "Unsupported package metadata: max_prompt_length"):
