@@ -14,7 +14,7 @@ from compiler.qwen35.config import configure
 from compiler.qwen35.model import load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
-from tools.validation.common.batch import case_groups, validate_python_group, validate_native
+from tools.validation.common.batch import case_groups, validate_native, validate_python_stages
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
 from tools.validation.qwen35.model import HFStage
 
@@ -39,29 +39,34 @@ def delta_cases(prompts):
 
 def collect_hf(factory, steps):
     runtimes = [factory() for _ in range(max(map(len, steps)))]
-    for runtime in runtimes:
-        runtime.reset()
-    logits = []
-    for rows in steps:
-        scores = [
-            runtime.step(tokens).cpu()
-            if tokens
-            else torch.zeros((1, runtime.vocab_size), dtype=torch.bfloat16)
-            for runtime, tokens in zip(runtimes, rows)
+    try:
+        for runtime in runtimes:
+            runtime.reset()
+        logits = []
+        for rows in steps:
+            scores = [
+                runtime.step(tokens).cpu()
+                if tokens
+                else torch.zeros((1, runtime.vocab_size), dtype=torch.bfloat16)
+                for runtime, tokens in zip(runtimes, rows)
+            ]
+            require(all(torch.isfinite(score).all() for score in scores), "Nonfinite HF logits")
+            logits.append(torch.cat(scores))
+        states = [runtime.state for runtime in runtimes]
+        state = [
+            (
+                values[index][:, :, : runtime.position]
+                if spec["update"] == "inplace"
+                else values[index]
+            ).cpu()
+            for index, spec in enumerate(runtimes[0].specs)
+            for runtime, values in zip(runtimes, states)
         ]
-        require(all(torch.isfinite(score).all() for score in scores), "Nonfinite HF logits")
-        logits.append(torch.cat(scores))
-    states = [runtime.state for runtime in runtimes]
-    state = [
-        (
-            values[index][:, :, : runtime.position]
-            if spec["update"] == "inplace"
-            else values[index]
-        ).cpu()
-        for index, spec in enumerate(runtimes[0].specs)
-        for runtime, values in zip(runtimes, states)
-    ]
-    return logits, state
+        return logits, state
+    finally:
+        for runtime in runtimes:
+            if hasattr(runtime, "close"):
+                runtime.close()
 
 
 @torch.inference_mode()
@@ -72,36 +77,39 @@ def validate_python(args, meta):
     for name, (_, cases) in groups.items():
         if name != "transitions":
             cases.extend(delta_cases(cases[0]["batch_steps"][0]))
-    hf = load_model(args.model_dir)
-    specs = [dict(spec, shape=[1, *spec["shape"][1:]]) for spec in meta["state"]]
-    reference = lambda: HFStage(hf, specs, meta["cache_length"])
-    adapted = load_model(args.model_dir)
-    install_delta(adapted)
-    functions = {
-        kind: export_step(adapted, kind, meta["cache_length"])[0].module()
-        for kind in ("prefill", "decode")
-    }
-    eager = ExplicitRuntime(
-        functions, meta["state"], meta["vocab_size"], meta["cache_length"], require_write=True
+
+    def load_reference():
+        hf = load_model(args.model_dir)
+        specs = [dict(spec, shape=[1, *spec["shape"][1:]]) for spec in meta["state"]]
+
+        def factory():
+            return HFStage(hf, specs, meta["cache_length"])
+
+        return factory
+
+    def load_eager():
+        adapted = load_model(args.model_dir)
+        install_delta(adapted)
+        functions = {
+            kind: export_step(adapted, kind, meta["cache_length"])[0].module()
+            for kind in ("prefill", "decode")
+        }
+        return ExplicitRuntime(
+            functions, meta["state"], meta["vocab_size"], meta["cache_length"], require_write=True
+        )
+
+    def load_aoti():
+        return load_aoti_runtime(args.packages, model_type="qwen35", specs=meta["state"])
+
+    return validate_python_stages(
+        args,
+        groups,
+        meta,
+        load_reference=load_reference,
+        collect_reference=collect_hf,
+        load_eager=load_eager,
+        load_aoti=load_aoti,
     )
-    aoti = load_aoti_runtime(args.packages, model_type="qwen35", specs=meta["state"])
-    try:
-        for group, (texts, cases) in groups.items():
-            validate_python_group(
-                args,
-                group,
-                texts,
-                cases,
-                meta,
-                reference,
-                eager,
-                aoti,
-                collect_reference=collect_hf,
-            )
-    finally:
-        eager.close()
-        aoti.close()
-    return list(groups)
 
 
 def validate(args):

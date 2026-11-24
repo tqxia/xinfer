@@ -251,42 +251,64 @@ class BatchValidation(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), expected)
                 self.assertEqual(digest, hashlib.sha256(expected).hexdigest())
 
-    def test_models_are_loaded_once_and_closed_after_all_batches_or_failure(self):
+    def test_models_are_staged_once_and_closed_before_the_next_stage(self):
+        from tools.validation.common import batch as common_batch
         from tools.validation.qwen3 import validate_batch as batch
 
         names = [f"b{size}" for size in range(1, 9)] + ["transitions"]
-        groups = {name: ([name], [dict(name="fixture")]) for name in names}
+        groups = {
+            name: (
+                [name],
+                [dict(name="prompts", batch_steps=[[[1]]], state_steps=[0])],
+            )
+            for name in names
+        }
+        logits = [torch.ones(1, 4, dtype=torch.bfloat16)]
+        state = [torch.ones(1, 1, 1, 2, dtype=torch.bfloat16)]
         for fail_at in (None, "b4", "transitions"):
-            with self.subTest(fail_at=fail_at):
-                args = SimpleNamespace(model_dir=Path("model"), packages=Path("package"))
+            with self.subTest(fail_at=fail_at), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                (root / "expected").mkdir()
+                args = SimpleNamespace(
+                    model_dir=Path("model"), packages=Path("package"), output=root
+                )
                 meta = dict(state=[], vocab_size=64, cache_length=1024)
-                eager, aoti = Mock(), Mock()
-                seen = []
+                events = []
 
-                def execute(
-                    actual_args,
-                    group,
-                    texts,
-                    cases,
-                    actual_meta,
-                    hf,
-                    actual_eager,
-                    actual_aoti,
-                    *,
-                    collect_reference,
-                ):
-                    self.assertIs(actual_args, args)
-                    self.assertIs(actual_meta, meta)
-                    self.assertIs(texts, groups[group][0])
-                    self.assertIs(cases, groups[group][1])
+                class TrackedRuntime:
+                    def __init__(self, label):
+                        self.label = label
+                        self.position = 1
+                        self.positions = [1] + [0] * 7
+                        self.closed = False
+
+                    def close(self):
+                        self.closed = True
+                        events.append(f"close:{self.label}")
+
+                eager = TrackedRuntime("eager")
+                aoti = TrackedRuntime("aoti")
+                seen_aoti = []
+
+                def load_model_side_effect(_model_dir):
+                    if not events:
+                        events.append("load:hf")
+                        return sentinel.hf
+                    events.append("load:eager")
+                    return sentinel.base
+
+                def collect_ref(hf, _steps):
                     self.assertIs(hf, sentinel.hf)
-                    self.assertIs(actual_eager, eager)
-                    self.assertIs(actual_aoti, aoti)
-                    eager.close.assert_not_called()
-                    aoti.close.assert_not_called()
-                    seen.append(group)
-                    if group == fail_at:
-                        raise RuntimeError("case failed")
+                    return logits, state
+
+                def collect_exp(runtime, _case):
+                    if runtime is aoti:
+                        self.assertTrue(eager.closed)
+                        group = names[len(seen_aoti)]
+                        seen_aoti.append(group)
+                        if group == fail_at:
+                            raise RuntimeError("case failed")
+                    return logits, state
 
                 with (
                     patch.object(batch, "load_packaged_attention_ops") as library,
@@ -294,28 +316,30 @@ class BatchValidation(unittest.TestCase):
                         batch, "load_tokenizer", return_value=sentinel.tokenizer
                     ) as tokenizer,
                     patch.object(batch, "case_groups", return_value=groups) as fixtures,
-                    patch.object(
-                        batch, "load_model", side_effect=[sentinel.hf, sentinel.base]
-                    ) as loader,
+                    patch.object(batch, "load_model", side_effect=load_model_side_effect) as loader,
                     patch.object(batch, "ModelStep", return_value=sentinel.adapter) as adapter,
                     patch.object(batch, "ExplicitRuntime", return_value=eager),
                     patch.object(batch, "load_aoti_runtime", return_value=aoti) as compiled,
-                    patch.object(batch, "validate_python_group", side_effect=execute),
+                    patch.object(batch, "collect_hf", side_effect=collect_ref),
+                    patch.object(common_batch, "collect_explicit", side_effect=collect_exp),
+                    patch.object(common_batch, "capture_state", return_value=state),
                 ):
                     if fail_at is None:
                         self.assertEqual(batch.validate_python(args, meta), names)
                     else:
                         with self.assertRaisesRegex(RuntimeError, "case failed"):
                             batch.validate_python(args, meta)
-                    self.assertEqual(seen, names[: names.index(fail_at) + 1] if fail_at else names)
+                    self.assertEqual(
+                        seen_aoti, names[: names.index(fail_at) + 1] if fail_at else names
+                    )
                     self.assertEqual(loader.call_count, 2)
                     adapter.assert_called_once_with(sentinel.base)
                     library.assert_called_once_with(args.packages)
                     tokenizer.assert_called_once_with(args.model_dir)
                     fixtures.assert_called_once_with(sentinel.tokenizer, 1024)
                     compiled.assert_called_once_with(args.packages, model_type="qwen3", specs=[])
-                eager.close.assert_called_once_with()
-                aoti.close.assert_called_once_with()
+                self.assertEqual(events, ["load:hf", "load:eager", "close:eager", "close:aoti"])
+                self.assertFalse((root / "_staging").exists())
 
     def test_one_native_run_preserves_failures_and_requires_complete_parity(self):
         from tools.validation.common import batch
@@ -326,10 +350,14 @@ class BatchValidation(unittest.TestCase):
         for defect in (None, "coverage", "positions", "parity"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
+                (root / "expected").mkdir()
                 args = SimpleNamespace(output=root, packages=root / "package", native=root / "exe")
                 for group, names in groups.items():
                     directory = root / group
                     directory.mkdir()
+                    for name in names:
+                        (root / "expected" / f"{group}_{name}.0.states").write_bytes(b"state")
+                        (root / "expected" / f"{group}_{name}.f32").write_bytes(b"logits")
                     write_json(
                         directory / "cases.json",
                         dict(cases=[dict(name=name, state_steps=[0]) for name in names]),
@@ -377,6 +405,8 @@ class BatchValidation(unittest.TestCase):
                     if defect:
                         with self.assertRaises(ValueError):
                             batch.validate_native(args, list(groups))
+                        # Failed native parity preserves expected state dumps for inspection.
+                        self.assertTrue((root / "expected/b1_prompt.0.states").is_file())
                     else:
                         result = batch.validate_native(args, list(groups))
                         self.assertEqual(result["b2"]["required_failures"], 1)
@@ -388,6 +418,13 @@ class BatchValidation(unittest.TestCase):
                             self.assertEqual(
                                 [case["name"] for case in report["native"]["cases"]], names
                             )
+                            for name in names:
+                                self.assertFalse(
+                                    (root / "expected" / f"{group}_{name}.0.states").exists()
+                                )
+                                self.assertTrue(
+                                    (root / "expected" / f"{group}_{name}.f32").is_file()
+                                )
                     native.assert_called_once()
 
 

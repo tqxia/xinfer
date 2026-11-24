@@ -336,7 +336,9 @@ class ValidationPipeline(unittest.TestCase):
         cases = [dict(name="teacher", steps=[[1, 2], [1]])]
         chats = [dict(name="chat", prompt=[1, 2], limit=2)]
         specs = [KEY, CONV]
-        capture = lambda case, step: True
+
+        def capture(_case, _step):
+            return True
 
         class BF16Runtime(CPURuntime):
             def __init__(self, optimized=False):
@@ -451,7 +453,10 @@ class StageExecution(unittest.TestCase):
 
     def test_teacher_stages_reset_and_consume_identical_partitions(self):
         first, second = CPURuntime(), CPURuntime()
-        capture = lambda case, step: True
+
+        def capture(_case, _step):
+            return True
+
         left = teacher_trace(first, self.cases(), self.specs, capture)
         right = teacher_trace(second, self.cases(), self.specs, capture)
         self.assertEqual(first.resets, [0, 7])
@@ -477,7 +482,9 @@ class StageExecution(unittest.TestCase):
         self.assertTrue(torch.equal(trace.states["clean", 0][0], before))
 
     def test_disk_snapshots_preserve_all_values_and_survive_reset(self):
-        capture = lambda case, step: True
+        def capture(_case, _step):
+            return True
+
         expected = teacher_trace(CPURuntime(), self.cases(), self.specs, capture)
         runtime = CPURuntime()
         with TemporaryDirectory() as directory:

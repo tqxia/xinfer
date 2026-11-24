@@ -69,6 +69,7 @@ def install_attention(model):
     for kind, layer in zip(model.config.layer_types, model.model.layers):
         if kind == "full_attention" and not isinstance(layer.self_attn, FlashAttention):
             replacement = FlashAttention(layer.self_attn)
+            # Inherit the wrapped layer's mode so eval models stay eval and train mode still fails.
             replacement.train(layer.self_attn.training)
             replacements.append((layer, replacement))
     load_attention_ops(model="qwen35")

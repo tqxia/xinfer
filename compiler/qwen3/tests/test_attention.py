@@ -212,6 +212,14 @@ class PrefixFlashAdapter(unittest.TestCase):
             self.assertIsInstance(layer.self_attn, FlashAttention)
             self.assertIs(layer.self_attn.original, original)
             self.assertFalse(layer.self_attn.training)
+        # Repeated ModelStep construction must be idempotent and preserve existing wrappers.
+        wrapped = [layer.self_attn for layer in model.model.layers]
+        repeated = ModelStep(model)
+        self.assertIs(repeated.model, model)
+        self.assertEqual(parameters, {id(parameter) for parameter in repeated.parameters()})
+        for layer, previous, original in zip(model.model.layers, wrapped, originals):
+            self.assertIs(layer.self_attn, previous)
+            self.assertIs(layer.self_attn.original, original)
 
 
 if __name__ == "__main__":

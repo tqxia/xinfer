@@ -68,7 +68,13 @@ class FlashAttention(torch.nn.Module):
 def install_attention(model):
     """Replace attention modules while retaining their original weights."""
     # Construct all replacements before modifying the model. No weight copies.
-    replacements = [FlashAttention(layer.self_attn) for layer in model.model.layers]
+    replacements = []
+    for layer in model.model.layers:
+        if not isinstance(layer.self_attn, FlashAttention):
+            replacement = FlashAttention(layer.self_attn)
+            # Inherit the wrapped layer's mode so eval models stay eval and train mode still fails.
+            replacement.train(layer.self_attn.training)
+            replacements.append((layer, replacement))
     load_attention_ops(model="qwen3")
-    for layer, attention in zip(model.model.layers, replacements):
+    for layer, attention in replacements:
         layer.self_attn = attention

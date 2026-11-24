@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
 
 from compiler.common.export import ExportInputError, prepare_export
 

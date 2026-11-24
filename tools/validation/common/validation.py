@@ -92,8 +92,12 @@ def write_trace(path, tensors):
 
 def disk_snapshot(path, tensors):
     """Keep complete snapshots without retaining every state allocation in RAM."""
+    tensors = tuple(tensors)
     write_trace(path, tensors)
-    data = torch.from_file(str(path), shared=False, size=path.stat().st_size, dtype=torch.uint8)
+    size = path.stat().st_size
+    if size == 0:
+        return tuple(torch.empty(tensor.shape, dtype=tensor.dtype) for tensor in tensors)
+    data = torch.from_file(str(path), shared=False, size=size, dtype=torch.uint8)
     result, offset = [], 0
     for tensor in tensors:
         width = tensor.numel() * tensor.element_size()

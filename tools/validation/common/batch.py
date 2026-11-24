@@ -1,6 +1,8 @@
 """Shared dynamic-batch fixtures, numerical comparisons and native parity checks."""
 
+import gc
 import json
+import shutil
 import subprocess
 
 import torch
@@ -10,6 +12,7 @@ from tools.prepare.common import encode_prompt
 from tools.validation.common.runner import capture_state
 from tools.validation.common.validation import (
     bits_equal,
+    disk_snapshot,
     tensor_metrics,
     record_failure,
     write_trace,
@@ -187,89 +190,176 @@ def compare_stage(report, name, stage, actual, reference, *, logits):
         record_failure(report["failures"], metric, required=logits, **context)
 
 
-def validate_python_group(args, group, texts, cases, meta, hf, eager, aoti, *, collect_reference):
-    output = args.output / group
-    output.mkdir()
-    batch_size = len(texts)
-    manifest = dict(trace_format=2, cases=cases)
-    write_json(output / "cases.json", manifest)
-    report = dict(
-        batch_size=batch_size,
-        prompts=texts,
-        prompt_tokens=[len(row) for row in cases[0]["batch_steps"][0]],
-        numerical_policy=dict(name="shared_bf16", version=1),
-        comparisons=[],
-        failures=[],
-        structural_checks=[],
-        parity_digests={},
-        cases=[],
-    )
-    base_logits = None
-    for case in cases:
-        name = case["name"]
-        print(f"{group}: validating {name}", flush=True)
-        hf_logits, hf_state = collect_reference(hf, case["batch_steps"])
-        eager_logits, eager_state = collect_explicit(eager, case)
-        actual_logits, actual_state = collect_explicit(aoti, case)
-        stages = [
-            ("eager/hf", (eager_logits, eager_state), (hf_logits, hf_state)),
-            ("aoti/eager", (actual_logits, actual_state), (eager_logits, eager_state)),
-            ("aoti/hf", (actual_logits, actual_state), (hf_logits, hf_state)),
-        ]
-        for stage, actual, reference in stages:
-            compare_stage(report, name, stage, actual[0], reference[0], logits=True)
-            compare_stage(report, name, stage, actual[1], reference[1], logits=False)
-        if name == "prompts":
-            base_logits = actual_logits
-            base_row_state = [tensor.clone() for tensor in actual_state]
-        elif name in ("reset", "poison", "perturb", "padding"):
-            for current, base in zip(actual_logits, base_logits):
-                require(
-                    bits_equal(
-                        current[1:] if name == "perturb" else current,
-                        base[1:] if name == "perturb" else base,
-                    ),
-                    f"{name} changed outputs",
-                )
-            for index, (current, base) in enumerate(zip(actual_state, base_row_state)):
-                if name != "perturb" or index % batch_size != 0:
-                    require(
-                        bits_equal(current, base),
-                        f"{name} changed unaffected state row {index % batch_size}",
-                    )
-            report["structural_checks"].append(name)
-        prefix = args.output / "expected" / f"{group}_{name}"
-        report["parity_digests"][name] = {
-            ".states": write_trace(
-                prefix.with_suffix(f".{case['state_steps'][0]}.states"),
-                capture_state(aoti, meta["state"], case.get("fill", 0)),
-            ),
-            ".f32": write_trace(prefix.with_suffix(".f32"), (t.float() for t in actual_logits)),
-        }
-        if case.get("check_overflow"):
-            before = [tensor.clone() for tensor in aoti.state]
-            positions = list(aoti.positions)
-            try:
-                aoti.step_batch([[1] for _ in range(batch_size)])
-            except ValueError as error:
-                require("capacity" in str(error), str(error))
-            else:
-                raise ValueError("Overflow accepted")
-            require(aoti.positions == positions, "Overflow changed position")
-            require(
-                all(bits_equal(a, b) for a, b in zip(aoti.state, before)), "Overflow mutated state"
-            )
-            report["structural_checks"].append("overflow")
-            del before
-        report["cases"].append(
-            dict(
-                name=name,
-                position=aoti.position,
-                positions=list(aoti.positions),
-                steps=len(actual_logits),
-            )
+def _release_stage(runtime):
+    if hasattr(runtime, "close"):
+        runtime.close()
+    del runtime
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _snapshot_paths(staging, stage, group, name):
+    return staging / f"{stage}_{group}_{name}.logits", staging / f"{stage}_{group}_{name}.state"
+
+
+def validate_python_stages(
+    args,
+    groups,
+    meta,
+    *,
+    load_reference,
+    collect_reference,
+    load_eager,
+    load_aoti,
+):
+    """Run HF, eager and Python AOTI in separate stages so only one GPU model stays resident."""
+    staging = args.output / "_staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    expected_dir = args.output / "expected"
+    reports = {}
+    for group, (texts, cases) in groups.items():
+        output = args.output / group
+        output.mkdir()
+        write_json(output / "cases.json", dict(trace_format=2, cases=cases))
+        reports[group] = dict(
+            batch_size=len(texts),
+            prompts=texts,
+            prompt_tokens=[len(row) for row in cases[0]["batch_steps"][0]],
+            numerical_policy=dict(name="shared_bf16", version=1),
+            comparisons=[],
+            failures=[],
+            structural_checks=[],
+            parity_digests={},
+            cases=[],
         )
-        write_json(output / "report.json", report)
+
+    hf_traces, eager_traces = {}, {}
+    try:
+        reference = load_reference()
+        try:
+            for group, (_, cases) in groups.items():
+                for case in cases:
+                    name = case["name"]
+                    print(f"{group}: collecting hf {name}", flush=True)
+                    hf_logits, hf_state = collect_reference(reference, case["batch_steps"])
+                    logits_path, state_path = _snapshot_paths(staging, "hf", group, name)
+                    hf_traces[group, name] = (
+                        disk_snapshot(logits_path, hf_logits),
+                        disk_snapshot(state_path, hf_state),
+                    )
+        finally:
+            _release_stage(reference)
+            del reference
+
+        eager = load_eager()
+        try:
+            for group, (_, cases) in groups.items():
+                for case in cases:
+                    name = case["name"]
+                    print(f"{group}: collecting eager {name}", flush=True)
+                    eager_logits, eager_state = collect_explicit(eager, case)
+                    logits_path, state_path = _snapshot_paths(staging, "eager", group, name)
+                    eager_traces[group, name] = (
+                        disk_snapshot(logits_path, eager_logits),
+                        disk_snapshot(state_path, eager_state),
+                    )
+        finally:
+            _release_stage(eager)
+            del eager
+
+        aoti = load_aoti()
+        try:
+            for group, (texts, cases) in groups.items():
+                output = args.output / group
+                report = reports[group]
+                batch_size = len(texts)
+                base_logits = None
+                base_row_state = None
+                for case in cases:
+                    name = case["name"]
+                    print(f"{group}: validating {name}", flush=True)
+                    actual_logits, actual_state = collect_explicit(aoti, case)
+                    hf_logits, hf_state = hf_traces.pop((group, name))
+                    eager_logits, eager_state = eager_traces.pop((group, name))
+                    stages = [
+                        ("eager/hf", (eager_logits, eager_state), (hf_logits, hf_state)),
+                        ("aoti/eager", (actual_logits, actual_state), (eager_logits, eager_state)),
+                        ("aoti/hf", (actual_logits, actual_state), (hf_logits, hf_state)),
+                    ]
+                    for stage, actual, reference_data in stages:
+                        compare_stage(
+                            report, name, stage, actual[0], reference_data[0], logits=True
+                        )
+                        compare_stage(
+                            report, name, stage, actual[1], reference_data[1], logits=False
+                        )
+                    del hf_logits, hf_state, eager_logits, eager_state
+                    for stage_name in ("hf", "eager"):
+                        for path in _snapshot_paths(staging, stage_name, group, name):
+                            path.unlink(missing_ok=True)
+                    if name == "prompts":
+                        base_logits = actual_logits
+                        base_row_state = [tensor.clone() for tensor in actual_state]
+                    elif name in ("reset", "poison", "perturb", "padding"):
+                        for current, base in zip(actual_logits, base_logits):
+                            require(
+                                bits_equal(
+                                    current[1:] if name == "perturb" else current,
+                                    base[1:] if name == "perturb" else base,
+                                ),
+                                f"{name} changed outputs",
+                            )
+                        for index, (current, base) in enumerate(zip(actual_state, base_row_state)):
+                            if name != "perturb" or index % batch_size != 0:
+                                require(
+                                    bits_equal(current, base),
+                                    f"{name} changed unaffected state row {index % batch_size}",
+                                )
+                        report["structural_checks"].append(name)
+                    stem = f"{group}_{name}"
+                    report["parity_digests"][name] = {
+                        ".states": write_trace(
+                            expected_dir / f"{stem}.{case['state_steps'][0]}.states",
+                            capture_state(aoti, meta["state"], case.get("fill", 0)),
+                        ),
+                        ".f32": write_trace(
+                            expected_dir / f"{stem}.f32", (t.float() for t in actual_logits)
+                        ),
+                    }
+                    if case.get("check_overflow"):
+                        before = [tensor.clone() for tensor in aoti.state]
+                        positions = list(aoti.positions)
+                        try:
+                            aoti.step_batch([[1] for _ in range(batch_size)])
+                        except ValueError as error:
+                            require("capacity" in str(error), str(error))
+                        else:
+                            raise ValueError("Overflow accepted")
+                        require(aoti.positions == positions, "Overflow changed position")
+                        require(
+                            all(bits_equal(a, b) for a, b in zip(aoti.state, before)),
+                            "Overflow mutated state",
+                        )
+                        report["structural_checks"].append("overflow")
+                        del before
+                    report["cases"].append(
+                        dict(
+                            name=name,
+                            position=aoti.position,
+                            positions=list(aoti.positions),
+                            steps=len(actual_logits),
+                        )
+                    )
+                    write_json(output / "report.json", report)
+        finally:
+            _release_stage(aoti)
+            del aoti
+    finally:
+        hf_traces.clear()
+        eager_traces.clear()
+        shutil.rmtree(staging, ignore_errors=True)
+    return list(groups)
 
 
 def validate_native(args, groups):
@@ -277,12 +367,13 @@ def validate_native(args, groups):
     for group in groups:
         manifest = read_json(args.output / group / "cases.json")
         cases.extend(dict(case, name=f"{group}_{case['name']}") for case in manifest["cases"])
+    expected_dir = args.output / "expected"
     write_json(
         args.output / "cases.json",
         dict(
             trace_format=2,
             cases=cases,
-            expected_directory=str((args.output / "expected").resolve()),
+            expected_directory=str(expected_dir.resolve()),
         ),
     )
     subprocess.run(
@@ -319,6 +410,10 @@ def validate_native(args, groups):
         report["native_bitwise_parity"] = True
         write_json(output / "report.json", report)
         results[group] = dict(required_failures=len(report["failures"]))
+    # Discard large expected state dumps only after every native parity check passes.
+    for case in cases:
+        for step in case.get("state_steps", ()):
+            (expected_dir / f"{case['name']}.{step}.states").unlink(missing_ok=True)
     write_json(args.output / "summary.json", results)
     print(json.dumps(results))
     return results

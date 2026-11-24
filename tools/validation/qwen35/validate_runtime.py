@@ -480,7 +480,9 @@ def check_native_parity(args, metadata, teacher, chats, keys, capital, expected)
         greedy_logit_rows=sum(len(value["rows"]) for value in expected.greedy.values()),
         greedy_state_tensors=sum(len(value["state"]) for value in expected.greedy.values()),
         binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)},
-        state_snapshot_policy="complete functional state and populated KV prefix; future fill checked separately",
+        state_snapshot_policy=(
+            "complete functional state and populated KV prefix; future fill checked separately"
+        ),
     )
     assert not report["failures"], report["failures"]
     return report

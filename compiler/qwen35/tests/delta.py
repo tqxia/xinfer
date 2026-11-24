@@ -260,11 +260,13 @@ def run_cases(call, cases):
     for case in cases:
         # .contiguous() leaves unused B=1 strides unchanged. Force the exact
         # packed strides expected by AOTI guards.
-        convert = lambda x: x.to(
-            device="cuda",
-            copy=True,
-            memory_format=torch.contiguous_format,
-        )
+        def convert(x):
+            return x.to(
+                device="cuda",
+                copy=True,
+                memory_format=torch.contiguous_format,
+            )
+
         conv, state, weight, A_log, dt_bias = (
             convert(case[k]) for k in ("conv", "state", "weight", "A_log", "dt_bias")
         )

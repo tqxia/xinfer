@@ -524,7 +524,8 @@ def write_report(out, report):
     )
     (out / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     print(
-        "PASS: native generation/AOTI parity, package/input rejection, limits and Python-free linkage",
+        "PASS: native generation/AOTI parity, package/input rejection, limits "
+        "and Python-free linkage",
         flush=True,
     )
 

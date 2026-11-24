@@ -13,7 +13,7 @@ from compiler.qwen3.model import ModelStep, load_model
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
-from tools.validation.common.batch import case_groups, validate_python_group, validate_native
+from tools.validation.common.batch import case_groups, validate_native, validate_python_stages
 
 
 def collect_hf(model, steps):
@@ -49,26 +49,33 @@ def validate_python(args, meta):
     load_packaged_attention_ops(args.packages)
     tokenizer = load_tokenizer(args.model_dir)
     groups = case_groups(tokenizer, meta["cache_length"])
-    hf = load_model(args.model_dir)
-    adapted = ModelStep(load_model(args.model_dir))
-    eager = ExplicitRuntime(
-        dict(prefill=adapted, decode=adapted),
-        meta["state"],
-        meta["vocab_size"],
-        meta["cache_length"],
-        logits_only=True,
-        require_write=True,
+
+    def load_reference():
+        return load_model(args.model_dir)
+
+    def load_eager():
+        adapted = ModelStep(load_model(args.model_dir))
+        return ExplicitRuntime(
+            dict(prefill=adapted, decode=adapted),
+            meta["state"],
+            meta["vocab_size"],
+            meta["cache_length"],
+            logits_only=True,
+            require_write=True,
+        )
+
+    def load_aoti():
+        return load_aoti_runtime(args.packages, model_type="qwen3", specs=meta["state"])
+
+    return validate_python_stages(
+        args,
+        groups,
+        meta,
+        load_reference=load_reference,
+        collect_reference=collect_hf,
+        load_eager=load_eager,
+        load_aoti=load_aoti,
     )
-    aoti = load_aoti_runtime(args.packages, model_type="qwen3", specs=meta["state"])
-    try:
-        for group, (texts, cases) in groups.items():
-            validate_python_group(
-                args, group, texts, cases, meta, hf, eager, aoti, collect_reference=collect_hf
-            )
-    finally:
-        eager.close()
-        aoti.close()
-    return list(groups)
 
 
 def validate(args):

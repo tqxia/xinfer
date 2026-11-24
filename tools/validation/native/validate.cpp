@@ -396,11 +396,11 @@ void check_parity(const Case &c, const fs::path &output, const fs::path &expecte
     compare_files(output / name, expected / name);
   }
   row["bitwise_parity"] = true;
-  // Keep failed traces; discard large state dumps only after exact comparisons.
+  // Keep failed traces; discard large native state dumps only after exact comparisons.
+  // Leave caller-supplied expected_directory files intact so re-runs stay idempotent.
   for (auto step : c.state_steps) {
     const auto name = c.name + "." + std::to_string(step) + ".states";
     fs::remove(output / name);
-    fs::remove(expected / name);
   }
 }
 
