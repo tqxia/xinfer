@@ -117,7 +117,7 @@ def export_model(*, model_dir, output, max_context_length=None):
     step = ModelStep(model)
     manifest = read_json(model_dir / MODEL_MANIFEST_NAME)
     revision = manifest["revision"]
-    checkpoint = dict(model_id=manifest["repo_id"], revision=revision, manifest=manifest)
+    checkpoint = dict(model_id=manifest["model"], revision=revision, manifest=manifest)
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
     options = {"emulate_precision_casts": True}
     prepare_entry = partial(

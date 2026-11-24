@@ -25,7 +25,7 @@ def model_hooks(model):
 def checkpoint_model(directory):
     manifest = read_json(directory / MODEL_MANIFEST_NAME)
     require(isinstance(manifest, dict), "Prepared checkpoint manifest must be an object")
-    model = manifest.get("repo_id", manifest.get("model"))
+    model = manifest.get("model")
     require(isinstance(model, str) and model in MODELS, f"Unsupported checkpoint: {model}")
     return model
 

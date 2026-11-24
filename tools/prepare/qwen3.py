@@ -90,7 +90,7 @@ def prepare(directory, model, cache_dir=None):
             # Single-file checkpoints (such as Qwen3-0.6B) carry weights in model.safetensors.
             files = {name: hub.copy(name, staging / name) for name in MODEL_FILES}
         manifest = dict(
-            repo_id=model,
+            model=model,
             revision=REVISIONS[model],
             status="complete",
             huggingface_hub=importlib.metadata.version("huggingface-hub"),
@@ -105,7 +105,7 @@ def verify_model(model_dir):
     directory = Path(model_dir)
     manifest = read_json(directory / MODEL_MANIFEST_NAME)
     require(isinstance(manifest, dict), "Prepared checkpoint manifest must be an object")
-    model_id = manifest.get("repo_id")
+    model_id = manifest.get("model")
     require(
         isinstance(model_id, str)
         and model_id in REVISIONS

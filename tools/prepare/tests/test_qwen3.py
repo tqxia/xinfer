@@ -26,7 +26,7 @@ class PreparedCheckpoint(unittest.TestCase):
 
     def manifest(self, contents):
         return dict(
-            repo_id=MODEL_ID,
+            model=MODEL_ID,
             revision=REVISIONS[MODEL_ID],
             status="complete",
             huggingface_hub="2.3.0",
@@ -117,7 +117,7 @@ class PreparedCheckpoint(unittest.TestCase):
                 hub.return_value.copy.side_effect = copy
                 manifest = qwen3.prepare(output, model_id, cache_dir=cache)
             hub.assert_called_once_with(model_id, REVISIONS[model_id], cache_dir=cache)
-            self.assertEqual(manifest["repo_id"], model_id)
+            self.assertEqual(manifest["model"], model_id)
             self.assertEqual(manifest["revision"], REVISIONS[model_id])
             self.assertEqual(set(manifest["files"]), set(contents))
             with redirect_stdout(io.StringIO()):
@@ -172,8 +172,12 @@ class PreparedCheckpoint(unittest.TestCase):
         valid = self.manifest(contents)
         invalid = (
             ([], "must be an object"),
-            (dict(valid, repo_id="Qwen/unknown"), "pinned revision"),
-            (dict(valid, repo_id=[]), "pinned revision"),
+            (dict(valid, model="Qwen/unknown"), "pinned revision"),
+            (dict(valid, model=[]), "pinned revision"),
+            (
+                {k: v for k, v in valid.items() if k != "model"} | {"repo_id": MODEL_ID},
+                "pinned revision",
+            ),
             (dict(valid, revision="main"), "pinned revision"),
             (dict(valid, files={}), "file manifest"),
             (dict(valid, files=valid["files"] | {"../escape": {}}), "file manifest"),

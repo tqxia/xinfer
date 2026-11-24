@@ -189,8 +189,8 @@ class OfflineTokens(unittest.TestCase):
 
 
 class PreparationCLI(unittest.TestCase):
-    def checkpoint(self, directory, model, *, qwen3=False):
-        manifest = {"repo_id" if qwen3 else "model": model, "revision": REVISION}
+    def checkpoint(self, directory, model):
+        manifest = {"model": model, "revision": REVISION}
         (directory / MODEL_MANIFEST_NAME).write_text(json.dumps(manifest))
         (directory / "config.json").write_text(json.dumps(dict(max_position_embeddings=32768)))
         return manifest
@@ -222,11 +222,11 @@ class PreparationCLI(unittest.TestCase):
                     else:
                         hooks.default_model_dir.assert_called_once_with(model)
 
-    def test_verify_identifies_both_manifest_forms_without_loading_a_tokenizer(self):
-        for model, family in cli.MODELS.items():
+    def test_verify_identifies_checkpoints_without_loading_a_tokenizer(self):
+        for model in cli.MODELS:
             with self.subTest(model=model), TemporaryDirectory() as temporary:
                 directory = Path(temporary)
-                manifest = self.checkpoint(directory, model, qwen3=family == "qwen3")
+                manifest = self.checkpoint(directory, model)
                 hooks = SimpleNamespace(verify_model=Mock(return_value=manifest))
                 with (
                     patch.object(cli, "model_hooks", return_value=hooks) as route,
@@ -245,7 +245,12 @@ class PreparationCLI(unittest.TestCase):
                 cli.main(["download", "--model", "Qwen/unknown"])
             self.assertEqual(stopped.exception.code, 2)
             hooks.assert_not_called()
-        for manifest in ([], {"model": "Qwen/unknown"}, {"repo_id": []}):
+        for manifest in (
+            [],
+            {"model": "Qwen/unknown"},
+            {"model": []},
+            {"repo_id": next(iter(cli.MODELS))},
+        ):
             with self.subTest(manifest=manifest), TemporaryDirectory() as temporary:
                 directory = Path(temporary)
                 (directory / MODEL_MANIFEST_NAME).write_text(json.dumps(manifest))
@@ -257,7 +262,7 @@ class PreparationCLI(unittest.TestCase):
     def test_encode_uses_shared_offline_helpers_and_refuses_existing_output(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            self.checkpoint(directory, next(iter(cli.MODELS)), qwen3=True)
+            self.checkpoint(directory, next(iter(cli.MODELS)))
             output = directory / "inputs/prompt.ids"
             tokenizer = SimpleNamespace(apply_chat_template=Mock(return_value=[4, 5]))
             args = [
@@ -287,7 +292,7 @@ class PreparationCLI(unittest.TestCase):
     def test_encode_uses_declared_model_ceiling_and_rejects_retired_prompt_cap(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            self.checkpoint(directory, next(iter(cli.MODELS)), qwen3=True)
+            self.checkpoint(directory, next(iter(cli.MODELS)))
             (directory / "config.json").write_text(
                 json.dumps(dict(text_config=dict(max_position_embeddings=10000)))
             )
@@ -326,7 +331,7 @@ class PreparationCLI(unittest.TestCase):
     def test_decode_rejects_invalid_ids_before_calling_the_tokenizer_decoder(self):
         with TemporaryDirectory() as temporary:
             directory = Path(temporary)
-            self.checkpoint(directory, next(iter(cli.MODELS)), qwen3=True)
+            self.checkpoint(directory, next(iter(cli.MODELS)))
             source = directory / "generated.ids"
             tokenizer = MagicMock()
             tokenizer.__len__.return_value = 10
