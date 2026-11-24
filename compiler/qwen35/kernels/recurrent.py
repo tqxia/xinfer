@@ -30,11 +30,43 @@ def _recurrent_step(q, k, v, g, beta, state, D: tl.constexpr):
 
 
 @triton.jit
-def _causal_conv(
-    QKV, Conv, Weight, NextConv, channels, t, length, write_state, N: tl.constexpr, C: tl.constexpr
+def _copy_conv(Conv, NextConv, channels, write_state, C: tl.constexpr):
+    # Preserve conv history unchanged for inactive (length == 0) rows.
+    for tap in tl.static_range(C):
+        original = tl.load(Conv + channels * C + tap, mask=write_state, other=0)
+        tl.store(NextConv + channels * C + tap, original, mask=write_state)
+
+
+@triton.jit
+def _load_conv_weights(Weight, channels, C: tl.constexpr):
+    # Hoist the 4 depthwise conv taps into FP32 registers once per head/tile.
+    tl.static_assert(C == 4, "Expected width-4 convolution kernel")
+    w0 = tl.load(Weight + channels * C + 0).to(tl.float32)
+    w1 = tl.load(Weight + channels * C + 1).to(tl.float32)
+    w2 = tl.load(Weight + channels * C + 2).to(tl.float32)
+    w3 = tl.load(Weight + channels * C + 3).to(tl.float32)
+    return w0, w1, w2, w3
+
+
+@triton.jit
+def _causal_conv_active(
+    QKV,
+    Conv,
+    w0,
+    w1,
+    w2,
+    w3,
+    NextConv,
+    channels,
+    t,
+    length,
+    write_state,
+    N: tl.constexpr,
+    C: tl.constexpr,
 ):
     # Scalar taps avoid a BF16 shared-layout conversion that miscompiled V on
     # the tested Triton build. Both history/input loads stay explicitly masked.
+    save = (t == length - 1) & write_state
     total = tl.full(channels.shape, 0, tl.float32)
     for tap in tl.static_range(C):
         sample = t - (C - 1) + tap
@@ -43,15 +75,9 @@ def _causal_conv(
             QKV + sample * N + channels, mask=(sample >= 0) & (sample < length), other=0
         )
         history = tl.where(sample < 0, old, current)
-        # Empty rows retain all taps; nonempty rows save their last real window.
-        original = tl.load(Conv + channels * C + tap, mask=length == 0, other=0)
-        tl.store(
-            NextConv + channels * C + tap,
-            tl.where(length == 0, original, history),
-            mask=(t == tl.maximum(length - 1, 0)) & write_state,
-        )
-        weight = tl.load(Weight + channels * C + tap)
-        total += history.to(tl.float32) * weight.to(tl.float32)
+        tl.store(NextConv + channels * C + tap, history, mask=save)
+        weight = w0 if tap == 0 else (w1 if tap == 1 else (w2 if tap == 2 else w3))
+        total += history.to(tl.float32) * weight
     dtype = QKV.dtype.element_ty
     # HF conv1d accumulates in FP32, then rounds before the SiLU activation.
     value = total.to(dtype).to(tl.float32)
@@ -83,7 +109,7 @@ def fused_kernel(
     group: tl.constexpr = HV // HK
     channels: tl.constexpr = (2 * HK + HV) * D
     key_head = head // group
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     QKV += batch * tokens * channels
     B += batch * tokens * HV
     A += batch * tokens * HV
@@ -96,31 +122,46 @@ def fused_kernel(
     cols = tile * BV + tl.arange(0, BV)
     offsets = head * D * D + rows[:, None] * D + cols[None, :]
     state = tl.load(Initial + offsets)
-    scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
-    dt = tl.load(DTBias + head).to(tl.float32)
-    for t in range(tokens):
-        # Grouped value heads share Q/K history. One head and tile own its writes.
-        owns_qk = (head % group == 0) & (tile == 0)
-        q = _causal_conv(
-            QKV, Conv, Weight, NextConv, key_head * D + rows, t, length, owns_qk, channels, C
-        )
-        k = _causal_conv(
-            QKV, Conv, Weight, NextConv, (HK + key_head) * D + rows, t, length, owns_qk, channels, C
-        )
-        v = _causal_conv(
-            QKV, Conv, Weight, NextConv, (2 * HK + head) * D + cols, t, length, True, channels, C
-        )
-        beta = (
-            tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32))
-            .to(B.dtype.element_ty)
-            .to(tl.float32)
-        )
-        x = tl.load(A + t * HV + head).to(tl.float32) + dt
-        softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
-        g = scale * softplus
-        out, updated = _recurrent_step(q, k, v, g, beta, state, D)
-        state = tl.where(t < length, updated, state)
-        tl.store(Output + (t * HV + head) * D + cols, tl.where(t < length, out, 0))
+    # Grouped value heads share Q/K history. One head and tile own its writes.
+    owns_qk = (head % group == 0) & (tile == 0)
+    q_ch = key_head * D + rows
+    k_ch = (HK + key_head) * D + rows
+    v_ch = (2 * HK + head) * D + cols
+    # Inactive rows carry states unchanged; active rows hoist weights and loop only over 0..length.
+    if length == 0:
+        _copy_conv(Conv, NextConv, q_ch, owns_qk, C)
+        _copy_conv(Conv, NextConv, k_ch, owns_qk, C)
+        _copy_conv(Conv, NextConv, v_ch, True, C)
+    else:
+        scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
+        dt = tl.load(DTBias + head).to(tl.float32)
+        wq0, wq1, wq2, wq3 = _load_conv_weights(Weight, q_ch, C)
+        wk0, wk1, wk2, wk3 = _load_conv_weights(Weight, k_ch, C)
+        wv0, wv1, wv2, wv3 = _load_conv_weights(Weight, v_ch, C)
+        for t in range(length):
+            q = _causal_conv_active(
+                QKV, Conv, wq0, wq1, wq2, wq3, NextConv, q_ch, t, length, owns_qk, channels, C
+            )
+            k = _causal_conv_active(
+                QKV, Conv, wk0, wk1, wk2, wk3, NextConv, k_ch, t, length, owns_qk, channels, C
+            )
+            v = _causal_conv_active(
+                QKV, Conv, wv0, wv1, wv2, wv3, NextConv, v_ch, t, length, True, channels, C
+            )
+            beta = (
+                tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32))
+                .to(B.dtype.element_ty)
+                .to(tl.float32)
+            )
+            x = tl.load(A + t * HV + head).to(tl.float32) + dt
+            softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
+            g = scale * softplus
+            out, state = _recurrent_step(q, k, v, g, beta, state, D)
+            tl.store(Output + (t * HV + head) * D + cols, out)
+    # Zero padded tail slots without running conv or recurrence math.
+    zero_out = tl.zeros((BV,), dtype=Output.dtype.element_ty)
+    for t in range(length, tokens):
+        tl.store(Output + (t * HV + head) * D + cols, zero_out)
     tl.store(Final + offsets, state)
 
 
@@ -150,7 +191,7 @@ def prepare_kernel(
     group: tl.constexpr = HV // HK
     channels: tl.constexpr = (2 * HK + HV) * D
     key_head = head // group
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     QKV += batch * tokens * channels
     B += batch * tokens * HV
     A += batch * tokens * HV
@@ -163,30 +204,52 @@ def prepare_kernel(
     Beta += batch * tokens * HV
     rows = tl.arange(0, D)
     owns_qk = head % group == 0
-    q = _causal_conv(
-        QKV, Conv, Weight, NextConv, key_head * D + rows, t, length, owns_qk, channels, C
-    )
-    k = _causal_conv(
-        QKV, Conv, Weight, NextConv, (HK + key_head) * D + rows, t, length, owns_qk, channels, C
-    )
-    v = _causal_conv(
-        QKV, Conv, Weight, NextConv, (2 * HK + head) * D + rows, t, length, True, channels, C
-    )
-    q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D**-0.5)
-    k = k * tl.rsqrt(tl.sum(k * k, 0) + 1e-6)
-    beta = (
-        tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32)).to(B.dtype.element_ty).to(tl.float32)
-    )
-    scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
-    x = tl.load(A + t * HV + head).to(tl.float32) + tl.load(DTBias + head).to(tl.float32)
-    softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
-    # Materialize one Q/K vector per value head for the existing chunked scan.
+    q_ch = key_head * D + rows
+    k_ch = (HK + key_head) * D + rows
+    v_ch = (2 * HK + head) * D + rows
     base = (t * HV + head) * D + rows
-    tl.store(Q + base, tl.where(t < length, q, 0))
-    tl.store(K + base, tl.where(t < length, k, 0))
-    tl.store(V + base, tl.where(t < length, v, 0))
-    tl.store(G + t * HV + head, tl.where(t < length, scale * softplus, 0))
-    tl.store(Beta + t * HV + head, tl.where(t < length, beta, 0))
+    # Run conv/normalization only for real tokens; padded CTAs skip math and store zeros.
+    if t < length:
+        wq0, wq1, wq2, wq3 = _load_conv_weights(Weight, q_ch, C)
+        wk0, wk1, wk2, wk3 = _load_conv_weights(Weight, k_ch, C)
+        wv0, wv1, wv2, wv3 = _load_conv_weights(Weight, v_ch, C)
+        q = _causal_conv_active(
+            QKV, Conv, wq0, wq1, wq2, wq3, NextConv, q_ch, t, length, owns_qk, channels, C
+        )
+        k = _causal_conv_active(
+            QKV, Conv, wk0, wk1, wk2, wk3, NextConv, k_ch, t, length, owns_qk, channels, C
+        )
+        v = _causal_conv_active(
+            QKV, Conv, wv0, wv1, wv2, wv3, NextConv, v_ch, t, length, True, channels, C
+        )
+        q = q * tl.rsqrt(tl.sum(q * q, 0) + 1e-6) * (D**-0.5)
+        k = k * tl.rsqrt(tl.sum(k * k, 0) + 1e-6)
+        beta = (
+            tl.sigmoid(tl.load(B + t * HV + head).to(tl.float32))
+            .to(B.dtype.element_ty)
+            .to(tl.float32)
+        )
+        scale = -libdevice.exp(tl.load(ALog + head).to(tl.float32))
+        x = tl.load(A + t * HV + head).to(tl.float32) + tl.load(DTBias + head).to(tl.float32)
+        softplus = tl.where(x > 20.0, x, libdevice.log1p(libdevice.exp(x)))
+        # Materialize one Q/K vector per value head for the existing chunked scan.
+        tl.store(Q + base, q)
+        tl.store(K + base, k)
+        tl.store(V + base, v)
+        tl.store(G + t * HV + head, scale * softplus)
+        tl.store(Beta + t * HV + head, beta)
+    else:
+        # A single CTA (t == 0) carries conv history forward for inactive rows.
+        if (length == 0) & (t == 0):
+            _copy_conv(Conv, NextConv, q_ch, owns_qk, C)
+            _copy_conv(Conv, NextConv, k_ch, owns_qk, C)
+            _copy_conv(Conv, NextConv, v_ch, True, C)
+        zero_vec = tl.zeros((D,), dtype=tl.float32)
+        tl.store(Q + base, zero_vec)
+        tl.store(K + base, zero_vec)
+        tl.store(V + base, zero_vec)
+        tl.store(G + t * HV + head, 0.0)
+        tl.store(Beta + t * HV + head, 0.0)
 
 
 @torch.library.triton_op("xinfer::delta_cond_short", mutates_args={})

@@ -5,6 +5,7 @@
 #include "state.h"
 
 #include <torch/csrc/inductor/aoti_package/model_package_loader.h>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -39,29 +40,39 @@ public:
       require(positions_[row] + rows[row].size() > 0, "Each row must start with tokens");
     }
 
-    std::vector<int64_t> tokens(rows.size() * length, 0), positions(tokens.size(), 0);
-    for (size_t row = 0; row < rows.size(); ++row)
-      for (size_t token = 0; token < rows[row].size(); ++token) {
-        tokens[row * length + token] = rows[row][token];
-        positions[row * length + token] = positions_[row] + token;
-      }
-    const auto options = at::TensorOptions().device(device_).dtype(at::kLong);
-    auto cache_positions = at::tensor(positions, at::kLong).view({batch_size, length}).to(options);
-    std::vector<at::Tensor> inputs{
-        at::tensor(tokens, at::kLong).view({batch_size, length}).to(options), cache_positions};
-    const auto &tensors = state_.tensors();
-    // Prefix views preserve the allocation and unused rows' state.
-    for (const auto &tensor : tensors)
-      inputs.push_back(tensor.narrow(0, 0, batch_size));
-    std::vector<int32_t> kv_lengths, query_lengths;
+    const int64_t count = batch_size * length;
+    // Keep cache_positions 16-byte aligned for AOTI's compiled input alignment.
+    const int64_t stride = (count + 1) & ~int64_t{1};
+    auto *token_data = host_token_pos_.data_ptr<int64_t>();
+    auto *position_data = token_data + stride;
+    std::fill_n(token_data, stride + count, int64_t{0});
+    auto *kv_data = host_lengths_.data_ptr<int32_t>();
+    auto *query_data = kv_data + allocated_batch_size_;
     for (size_t row = 0; row < rows.size(); ++row) {
-      kv_lengths.push_back(positions_[row] + rows[row].size());
-      query_lengths.push_back(rows[row].size());
+      const auto row_tokens = static_cast<int64_t>(rows[row].size());
+      for (int64_t token = 0; token < row_tokens; ++token) {
+        token_data[row * length + token] = rows[row][token];
+        position_data[row * length + token] = positions_[row] + token;
+      }
+      kv_data[row] = static_cast<int32_t>(positions_[row] + row_tokens);
+      query_data[row] = static_cast<int32_t>(row_tokens);
     }
-    inputs.push_back(at::tensor(kv_lengths, at::kInt));
-    inputs.push_back(at::tensor(query_lengths, at::kInt));
 
-    auto output = run_inputs(inputs, length, batch_size);
+    // One coalesced pageable H2D copy avoids stalling the GPU stream while
+    // keeping staging buffers safe to reuse on the next step_batch call.
+    auto staged = device_token_pos_.narrow(0, 0, stride + count);
+    staged.copy_(host_token_pos_.narrow(0, 0, stride + count));
+    inputs_.clear();
+    inputs_.push_back(staged.narrow(0, 0, count).view({batch_size, length}));
+    inputs_.push_back(staged.narrow(0, stride, count).view({batch_size, length}));
+    // Prefix views preserve the allocation and unused rows' state.
+    for (const auto &tensor : state_.tensors())
+      inputs_.push_back(tensor.narrow(0, 0, batch_size));
+    inputs_.push_back(host_lengths_.select(0, 0).narrow(0, 0, batch_size));
+    inputs_.push_back(host_lengths_.select(0, 1).narrow(0, 0, batch_size));
+
+    auto output = run_inputs(inputs_, length, batch_size);
+    inputs_.clear();
     for (size_t row = 0; row < rows.size(); ++row)
       positions_[row] += rows[row].size();
     position_ = *std::max_element(positions_.begin(), positions_.end());
@@ -124,9 +135,18 @@ private:
         weights_(std::move(bundle), spec_.shared_weights),
         prefill_(weights_.package_path("prefill").string()),
         decode_(weights_.package_path("decode").string()),
-        state_(spec_.state, device_, allocated_batch_size_) {
+        state_(spec_.state, device_, allocated_batch_size_),
+        host_token_pos_(
+            at::empty({2 * ((allocated_batch_size_ * spec_.max_prefill + 1) & ~int64_t{1})},
+                      at::TensorOptions().device(at::kCPU).dtype(at::kLong))),
+        device_token_pos_(
+            at::empty({2 * ((allocated_batch_size_ * spec_.max_prefill + 1) & ~int64_t{1})},
+                      at::TensorOptions().device(device_).dtype(at::kLong))),
+        host_lengths_(at::empty({2, allocated_batch_size_},
+                                at::TensorOptions().device(at::kCPU).dtype(at::kInt))) {
     weights_.load(prefill_, "prefill");
     weights_.load(decode_, "decode");
+    inputs_.reserve(state_.tensors().size() + 4);
 
     reset();
   }
@@ -139,6 +159,8 @@ private:
   SharedWeights weights_;
   Loader prefill_, decode_;
   StatePolicy state_;
+  at::Tensor host_token_pos_, device_token_pos_, host_lengths_;
+  std::vector<at::Tensor> inputs_;
   std::vector<int64_t> positions_;
   int64_t position_ = 0, prefill_calls_ = 0, decode_calls_ = 0;
 };

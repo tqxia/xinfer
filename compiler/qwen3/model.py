@@ -86,7 +86,7 @@ class ModelStep(torch.nn.Module):
                 use_cache=True,
             )
         hidden = base.norm(hidden)
-        counts = query_lengths.to(device=hidden.device, dtype=torch.int64)
+        counts = (cache.cuda_offsets[0, 1:] - cache.cuda_offsets[0, :-1]).to(torch.int64)
         indices = (counts - 1).clamp_min(0)
         last = hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
         logits = self.model.lm_head(last)[:, -1, :]

@@ -345,6 +345,45 @@ class PrefixFlash(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
                     self.op(*invalid, cache_extent(3), dim**-0.5)
 
+    def test_batched_validation_guards_and_nonunit_strides(self):
+        op = torch.ops.xinfer.batched_flash_attention.default
+        with torch.inference_mode():
+            for batch, width, capacity in ((1, 1, 513), (2, 1, 1024), (2, 4, 1024)):
+                with self.subTest(batch=batch, width=width, capacity=capacity):
+                    q, k, v = self.inputs(
+                        16, 8, 128, width, feature_stride=2, capacity=capacity, batch_size=batch
+                    )
+                    lengths = torch.tensor([width + 4 + r for r in range(batch)], dtype=torch.int32)
+                    counts = torch.full((batch,), width, dtype=torch.int32)
+                    host, cu, blocks = batched_attention_metadata(lengths, counts, q.device)
+                    actual = op(q, k, v, host, cu, blocks, 128**-0.5)
+                    reference = op(
+                        q.contiguous(), k.contiguous(), v.contiguous(), host, cu, blocks, 128**-0.5
+                    )
+                    self.assertTrue(torch.equal(actual, reference))
+                    self.assertEqual(actual.stride(), torch.empty(q.shape).stride())
+
+            q, k, v = self.inputs(8, 2, 128, 2, capacity=1024, batch_size=2)
+            lengths = torch.tensor([4, 5], dtype=torch.int32)
+            counts = torch.tensor([2, 2], dtype=torch.int32)
+            host, cu, blocks = batched_attention_metadata(lengths, counts, q.device)
+            with self.assertRaisesRegex(RuntimeError, "Query heads must be a positive multiple"):
+                op(q[:, :3], k, v, host, cu, blocks, 128**-0.5)
+            for bad_dim in (7, 127, 264):
+                bad_q, bad_k, bad_v = self.inputs(8, 2, bad_dim, 2, capacity=1024, batch_size=2)
+                with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
+                    op(bad_q, bad_k, bad_v, host, cu, blocks, 128**-0.5)
+            for bad_scale in (0.0, -1.0, float("nan"), float("inf")):
+                with self.assertRaisesRegex(RuntimeError, "Attention scale must be finite"):
+                    op(q, k, v, host, cu, blocks, bad_scale)
+            wide_q, _, _ = self.inputs(8, 2, 128, 513, capacity=1024, batch_size=2)
+            with self.assertRaisesRegex(RuntimeError, "Unsupported Q shape"):
+                op(wide_q, k, v, host, cu, blocks, 128**-0.5)
+
+        grad_q = q.clone().requires_grad_(True)
+        with self.assertRaisesRegex(RuntimeError, "inference only"):
+            op(grad_q, k, v, host, cu, blocks, 128**-0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

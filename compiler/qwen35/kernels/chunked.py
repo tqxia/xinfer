@@ -15,39 +15,131 @@ OPTIONS = dict(num_warps=4, num_stages=1)
 
 
 @triton.jit
+def _invert_16(neg_l):
+    # Forward-substitute a 16x16 strictly lower-triangular block (-L) into (I + L)^-1.
+    rows = tl.arange(0, 16)
+    inv = neg_l
+    for i in range(1, 16):
+        row = tl.sum(tl.where(rows[:, None] == i, inv, 0), 0)
+        row = row + tl.sum(row[:, None] * inv, 0)
+        inv = tl.where(rows[:, None] == i, row[None, :], inv)
+    return inv + (rows[:, None] == rows[None, :]).to(tl.float32)
+
+
+@triton.jit
 def _solve(
     K, G, Beta, Inverse, Prefix, Lengths, tokens, H: tl.constexpr, D: tl.constexpr, C: tl.constexpr
 ):
+    tl.static_assert(C == 64, "Block inversion expects C == 64")
     chunk, batch_head = tl.program_id(0), tl.program_id(1)
     batch, head = batch_head // H, batch_head % H
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     chunks = tl.cdiv(tokens, C)
     K += batch * tokens * H * D
     G += batch * tokens * H
     Beta += batch * tokens * H
     Inverse += batch * chunks * H * C * C
     Prefix += batch * chunks * H * C
-    rows = tl.arange(0, C)
+    r = tl.arange(0, 16)
     dims = tl.arange(0, D)
-    time = chunk * C + rows
-    valid = time < length
-    key = tl.load(K + (time[:, None] * H + head) * D + dims[None, :], mask=valid[:, None], other=0)
-    beta = tl.load(Beta + time * H + head, mask=valid, other=0)
-    g = tl.load(G + time * H + head, mask=valid, other=0)
-    prefix = tl.cumsum(g, 0)
-    tl.store(Prefix + (chunk * H + head) * C + rows, prefix)
-    # Mask before exp: future-token differences can otherwise overflow.
-    lower = rows[:, None] > rows[None, :]
-    decay = tl.exp(tl.where(lower, prefix[:, None] - prefix[None, :], -float("inf")))
-    inverse = -tl.dot(key * beta[:, None], tl.trans(key), input_precision="ieee") * decay
-    # Build (I+L)^-1 by forward substitution, matching the HF chunk formula.
-    for i in range(1, C):
-        row = tl.sum(tl.where(rows[:, None] == i, inverse, 0), 0)
-        row = row + tl.sum(row[:, None] * inverse, 0)
-        inverse = tl.where(rows[:, None] == i, row[None, :], inverse)
-    inverse = inverse + (rows[:, None] == rows[None, :]).to(tl.float32)
-    offsets = (chunk * H + head) * C * C + rows[:, None] * C + rows[None, :]
-    tl.store(Inverse + offsets, inverse)
+
+    t0 = chunk * C + r
+    t1 = chunk * C + 16 + r
+    t2 = chunk * C + 32 + r
+    t3 = chunk * C + 48 + r
+    v0, v1, v2, v3 = t0 < length, t1 < length, t2 < length, t3 < length
+
+    # Chain four 16-token cumsums so prefix sums and block inverses stay on 16-wide tiles.
+    g0 = tl.load(G + t0 * H + head, mask=v0, other=0)
+    g1 = tl.load(G + t1 * H + head, mask=v1, other=0)
+    g2 = tl.load(G + t2 * H + head, mask=v2, other=0)
+    g3 = tl.load(G + t3 * H + head, mask=v3, other=0)
+    p0 = tl.cumsum(g0, 0)
+    s0 = tl.sum(g0, 0)
+    p1 = tl.cumsum(g1, 0) + s0
+    s1 = s0 + tl.sum(g1, 0)
+    p2 = tl.cumsum(g2, 0) + s1
+    s2 = s1 + tl.sum(g2, 0)
+    p3 = tl.cumsum(g3, 0) + s2
+    p_base = (chunk * H + head) * C
+    tl.store(Prefix + p_base + r, p0)
+    tl.store(Prefix + p_base + 16 + r, p1)
+    tl.store(Prefix + p_base + 32 + r, p2)
+    tl.store(Prefix + p_base + 48 + r, p3)
+
+    k0 = tl.load(K + (t0[:, None] * H + head) * D + dims[None, :], mask=v0[:, None], other=0)
+    k1 = tl.load(K + (t1[:, None] * H + head) * D + dims[None, :], mask=v1[:, None], other=0)
+    k2 = tl.load(K + (t2[:, None] * H + head) * D + dims[None, :], mask=v2[:, None], other=0)
+    k3 = tl.load(K + (t3[:, None] * H + head) * D + dims[None, :], mask=v3[:, None], other=0)
+    b0 = tl.load(Beta + t0 * H + head, mask=v0, other=0)
+    b1 = tl.load(Beta + t1 * H + head, mask=v1, other=0)
+    b2 = tl.load(Beta + t2 * H + head, mask=v2, other=0)
+    b3 = tl.load(Beta + t3 * H + head, mask=v3, other=0)
+    kb0, kb1, kb2, kb3 = k0 * b0[:, None], k1 * b1[:, None], k2 * b2[:, None], k3 * b3[:, None]
+
+    # Hierarchical 16x16 block Schur inversion of M = I + L (4x4 grid of 16x16 blocks).
+    # Mask strictly-lower diagonals before exp so future-token differences cannot overflow.
+    # Step 1: invert the four 16x16 diagonal blocks A_kk = M_kk^-1.
+    lower = r[:, None] > r[None, :]
+    a00 = _invert_16(
+        -tl.dot(kb0, tl.trans(k0), input_precision="ieee")
+        * tl.exp(tl.where(lower, p0[:, None] - p0[None, :], -float("inf")))
+    )
+    a11 = _invert_16(
+        -tl.dot(kb1, tl.trans(k1), input_precision="ieee")
+        * tl.exp(tl.where(lower, p1[:, None] - p1[None, :], -float("inf")))
+    )
+    a22 = _invert_16(
+        -tl.dot(kb2, tl.trans(k2), input_precision="ieee")
+        * tl.exp(tl.where(lower, p2[:, None] - p2[None, :], -float("inf")))
+    )
+    a33 = _invert_16(
+        -tl.dot(kb3, tl.trans(k3), input_precision="ieee")
+        * tl.exp(tl.where(lower, p3[:, None] - p3[None, :], -float("inf")))
+    )
+
+    # Strictly-lower off-diagonal 16x16 blocks of L (every row index > every col index).
+    l10 = tl.dot(kb1, tl.trans(k0), input_precision="ieee") * tl.exp(p1[:, None] - p0[None, :])
+    l20 = tl.dot(kb2, tl.trans(k0), input_precision="ieee") * tl.exp(p2[:, None] - p0[None, :])
+    l21 = tl.dot(kb2, tl.trans(k1), input_precision="ieee") * tl.exp(p2[:, None] - p1[None, :])
+    l30 = tl.dot(kb3, tl.trans(k0), input_precision="ieee") * tl.exp(p3[:, None] - p0[None, :])
+    l31 = tl.dot(kb3, tl.trans(k1), input_precision="ieee") * tl.exp(p3[:, None] - p1[None, :])
+    l32 = tl.dot(kb3, tl.trans(k2), input_precision="ieee") * tl.exp(p3[:, None] - p2[None, :])
+
+    # Step 2: combine diagonal pairs into 32x32 inverses: A_10 = -A_11 L_10 A_00 (and A_32).
+    a10 = -tl.dot(a11, tl.dot(l10, a00, input_precision="ieee"), input_precision="ieee")
+    a32 = -tl.dot(a33, tl.dot(l32, a22, input_precision="ieee"), input_precision="ieee")
+    # Step 3: lower-left 32x32 inverse = -M_B^-1 (L_BA M_A^-1), with T = L_BA M_A^-1.
+    t20 = tl.dot(l20, a00, input_precision="ieee") + tl.dot(l21, a10, input_precision="ieee")
+    t21 = tl.dot(l21, a11, input_precision="ieee")
+    t30 = tl.dot(l30, a00, input_precision="ieee") + tl.dot(l31, a10, input_precision="ieee")
+    t31 = tl.dot(l31, a11, input_precision="ieee")
+    a20 = -tl.dot(a22, t20, input_precision="ieee")
+    a21 = -tl.dot(a22, t21, input_precision="ieee")
+    a30 = -(tl.dot(a32, t20, input_precision="ieee") + tl.dot(a33, t30, input_precision="ieee"))
+    a31 = -(tl.dot(a32, t21, input_precision="ieee") + tl.dot(a33, t31, input_precision="ieee"))
+
+    # Store the 4x4 block lower-triangular inverse into [C, C] (upper blocks are zero).
+    inv_base = (chunk * H + head) * C * C
+    zeros = tl.zeros((16, 16), dtype=tl.float32)
+    r0, r1, r2, r3 = r[:, None], (16 + r)[:, None], (32 + r)[:, None], (48 + r)[:, None]
+    c0, c1, c2, c3 = r[None, :], (16 + r)[None, :], (32 + r)[None, :], (48 + r)[None, :]
+    tl.store(Inverse + inv_base + r0 * C + c0, a00)
+    tl.store(Inverse + inv_base + r0 * C + c1, zeros)
+    tl.store(Inverse + inv_base + r0 * C + c2, zeros)
+    tl.store(Inverse + inv_base + r0 * C + c3, zeros)
+    tl.store(Inverse + inv_base + r1 * C + c0, a10)
+    tl.store(Inverse + inv_base + r1 * C + c1, a11)
+    tl.store(Inverse + inv_base + r1 * C + c2, zeros)
+    tl.store(Inverse + inv_base + r1 * C + c3, zeros)
+    tl.store(Inverse + inv_base + r2 * C + c0, a20)
+    tl.store(Inverse + inv_base + r2 * C + c1, a21)
+    tl.store(Inverse + inv_base + r2 * C + c2, a22)
+    tl.store(Inverse + inv_base + r2 * C + c3, zeros)
+    tl.store(Inverse + inv_base + r3 * C + c0, a30)
+    tl.store(Inverse + inv_base + r3 * C + c1, a31)
+    tl.store(Inverse + inv_base + r3 * C + c2, a32)
+    tl.store(Inverse + inv_base + r3 * C + c3, a33)
 
 
 @triton.jit
@@ -70,7 +162,7 @@ def _transforms(
     tl.static_assert(D % BT == 0, "Transform tile must divide the head dimension")
     chunk, batch_head = tl.program_id(0), tl.program_id(1)
     batch, head = batch_head // H, batch_head % H
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     chunks = tl.cdiv(tokens, C)
     K += batch * tokens * H * D
     V += batch * tokens * H * D
@@ -116,7 +208,7 @@ def _states(
 ):
     batch_head, tile = tl.program_id(0), tl.program_id(1)
     batch, head = batch_head // H, batch_head % H
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     chunks = tl.cdiv(tokens, C)
     K += batch * tokens * H * D
     U += batch * chunks * H * C * D
@@ -171,7 +263,7 @@ def _outputs(
 ):
     chunk, batch_head, tile = tl.program_id(0), tl.program_id(1), tl.program_id(2)
     batch, head = batch_head // H, batch_head % H
-    length = tl.load(Lengths + batch)
+    length = tl.minimum(tl.maximum(tl.load(Lengths + batch), 0), tokens)
     chunks = tl.cdiv(tokens, C)
     Q += batch * tokens * H * D
     K += batch * tokens * H * D
