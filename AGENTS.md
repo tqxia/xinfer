@@ -10,9 +10,10 @@ histories in local artifacts).
 
 ## Code ownership
 
-- `compiler/<model>/` owns model loading, adapters, kernels and export.
-  `compiler/common/` owns shared compilation, metadata and weight helpers;
-  `compiler/common/kernels/` owns shared native kernels and their C shims.
+- `compiler/<model>/` owns model defaults, checkpoint validation, loading and
+  export setup, including quantization policy. `compiler/common/` owns shared
+  adapters, compilation, metadata and weight helpers; `compiler/common/kernels/`
+  owns shared kernels and their C shims.
 - `runtime/common/` owns shared native loading, state and generation;
   model-specific headers validate their model's ABI.
 - `tools/` owns preparation, validation and benchmarking, with native C++
@@ -25,9 +26,11 @@ histories in local artifacts).
   tests; full export-to-native checks belong in `tools/validation/`.
 - Keep test-only and tool-only helpers in test/tool modules (and native test
   translation units); never expose them from production code.
-- Extend shared implementations and model hooks before adding parallel
-  model-specific orchestration. Derive geometry and bounds from inputs or
-  metadata where supported, and make actual model/ABI restrictions explicit.
+- Extend shared pipelines through explicit model callbacks before adding
+  parallel orchestration. Derive geometry and bounds from inputs or metadata
+  where supported, and make actual model/ABI restrictions explicit. Keep small
+  construction steps inline when extraction only fragments the flow, and name
+  modules for their responsibility (e.g., `text_checkpoint.py`).
 - Keep native tools read-only on caller-supplied inputs, stage multi-model GPU
   validation sequentially (at most one full GPU model resident at a time), and
   refuse occupied output paths including dangling symlinks (`path_exists` /
@@ -50,19 +53,25 @@ kernels. Enforce C++20 as the minimum native standard, avoid deprecated
 serialization (`torch.jit`) and extra native runtime dependencies (e.g.,
 OpenSSL, Python), and use environment checking to verify the stack and build.
 
+Keep compiler dependency workarounds in version-specific `compiler/patches/`
+directories with applicability checks, focused tests and documentation. Do not
+modify installed dependency sources in place.
+
 ## Correctness contracts
 
-Preserve the BF16 `HF → adapted/optimized eager → Python AOTI → C++ AOTI` chain
-with identical teacher-forced inputs and an unmodified live HF baseline.
-Preserve checkpoint-native parameter dtypes on load (`dtype="auto"`, keeping
-native FP32 weights such as `A_log` and `norm.weight`) rather than globally
-casting all parameters to BF16. Component tests compare matching input dtypes
-(BF16 against BF16 with algorithm-defined FP32 accumulation and recurrent state;
-FP32 against FP32); neither full-model nor BF16 kernel validation loads a
-separate upcast FP32 control.
+Preserve the `HF → adapted/optimized eager → Python AOTI → C++ AOTI` chain
+with identical teacher-forced inputs and the unmodified live HF checkpoint at
+its original precision; use the frontend's export setup for adapted eager and
+distinguish execution drift from quantization loss. Preserve checkpoint-native
+parameter dtypes on load (`dtype="auto"`, keeping native FP32 weights such as
+`A_log` and `norm.weight`) rather than globally casting all parameters to BF16.
+Component tests compare matching input dtypes (BF16 against BF16 with
+algorithm-defined FP32 accumulation and recurrent state; FP32 against FP32);
+neither full-model nor BF16 kernel validation loads a separate upcast FP32
+control.
 
 Keep native/Python bitwise equality, finite-value, state ownership, masking,
-reset/reuse, generation and boundary checks strict. Both models follow the
+reset/reuse, generation and boundary checks strict. All models follow the
 [shared numerical policy](docs/development-tools.md#shared-numerical-policy):
 matched-input logit bounds are required, while full-model state and HF
 token/greedy differences are diagnostic; component kernel/block tests retain
@@ -71,7 +80,12 @@ dynamic shapes or graph passes, verify from export diagnostics or tests that
 expected passes still match (`replaced > 0`) rather than becoming silent no-ops.
 Do not loosen tolerances, alter references or suppress failures to make an
 optimization pass, and report HF numerical acceptance separately from native
-parity.
+parity; passing native checks does not resolve existing HF failures.
+
+Keep package identity distinct from runtime implementation: models sharing a
+runtime retain their own `model_type`. Package tools dispatch by `model_type`;
+preparation routes by checkpoint model ID. Prefer re-exporting over adding
+legacy compatibility unless explicitly requested.
 
 Preserve shared-weight ownership and metadata-driven state handling. Keep
 checkpoint manifests, metadata schemas and logical model identities uniform

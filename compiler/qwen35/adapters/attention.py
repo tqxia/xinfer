@@ -63,7 +63,7 @@ class FlashAttention(torch.nn.Module):
         return a.o_proj(output), None
 
 
-def install_attention(model):
+def install_attention(model, *, build_model="qwen35"):
     """Reuse original HF weights and keep repeated ModelStep construction safe."""
     replacements = []
     for kind, layer in zip(model.config.layer_types, model.model.layers):
@@ -72,6 +72,6 @@ def install_attention(model):
             # Inherit the wrapped layer's mode so eval models stay eval and train mode still fails.
             replacement.train(layer.self_attn.training)
             replacements.append((layer, replacement))
-    load_attention_ops(model="qwen35")
+    load_attention_ops(model=build_model)
     for layer, replacement in replacements:
         layer.self_attn = replacement

@@ -3,7 +3,7 @@
 
 usage() {
   cat <<EOF
-Usage: environments/$target/setup.sh --model qwen3|qwen35 [options]
+Usage: environments/$target/setup.sh --model qwen3|qwen35|qwen38 [options]
 
 Create a fresh model environment from the device and model requirements.
 
@@ -43,8 +43,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 case "$model" in
-  qwen3|qwen35) ;;
-  *) usage >&2; fail "Select --model qwen3 or qwen35" ;;
+  qwen3|qwen35|qwen38) ;;
+  *) usage >&2; fail "Select --model qwen3, qwen35 or qwen38" ;;
 esac
 
 cd "$repo_root"

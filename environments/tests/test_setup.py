@@ -57,6 +57,7 @@ class FreshDeviceSetup(unittest.TestCase):
                 "setup.sh",
                 "qwen3_requirements.txt",
                 "qwen35_requirements.txt",
+                "qwen38_requirements.txt",
             ):
                 shutil.copy2(ENVIRONMENTS / target / name, self.scripts / target / name)
         self.outside = self.base / "caller"
@@ -95,10 +96,12 @@ class FreshDeviceSetup(unittest.TestCase):
         for target, model, suffix in (
             ("l20", "qwen3", "-torch213-venv"),
             ("l20", "qwen35", "-torch213-venv"),
+            ("l20", "qwen38", "-torch213-venv"),
             ("gb10", "qwen3", "-venv"),
             ("gb10", "qwen35", "-venv"),
+            ("gb10", "qwen38", "-venv"),
         ):
-            with self.subTest(target=target):
+            with self.subTest(target=target, model=model):
                 self.record.unlink(missing_ok=True)
                 result = self.run_setup(target, "--model", model)
                 self.assertEqual(result.returncode, 0, result.stderr)

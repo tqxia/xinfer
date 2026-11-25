@@ -6,6 +6,7 @@
 #include <functional>
 #include <iostream>
 #include <sstream>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,7 @@ using xinfer::require;
 struct Bundle {
   xinfer::fs::path directory;
 
-  explicit Bundle(int64_t capacity = 16384) {
+  explicit Bundle(int64_t capacity = 16384, std::string model_type = "qwen3") {
     directory = xinfer::fs::temp_directory_path() /
                 ("xinfer-generation-" +
                  std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -36,7 +37,7 @@ struct Bundle {
          {"update", "inplace"}},
     });
     Json metadata = {
-        {"model_type", "qwen3"},
+        {"model_type", model_type},
         {"torch_version", TORCH_VERSION},
         {"cxx11_abi", bool(_GLIBCXX_USE_CXX11_ABI)},
         {"cuda_compute_capability", {8, 9}},
@@ -157,6 +158,29 @@ int main() {
       }
       report["cases"].push_back({{"name", name}, {"passed", true}});
     };
+
+    check("qwen38_identity_uses_shared_qwen35_runtime", [&] {
+      for (const std::string type : {"qwen35", "qwen38"}) {
+        Bundle hybrid(512, type);
+        xinfer::with_model(hybrid.directory, [&](const auto &selected, auto create) {
+          require((std::is_same_v<std::decay_t<decltype(selected)>, qwen35::Spec>),
+                  "Hybrid package selected another spec implementation");
+          require((std::is_same_v<typename decltype(create())::element_type, qwen35::Runtime>),
+                  "Hybrid package selected another runtime implementation");
+          require(xinfer::model_name(selected.model_type) == type, "Package identity was lost");
+          require(xinfer::parse_model_type(type) == selected.model_type,
+                  "Model type did not roundtrip");
+          const Json identity = {{"model", type == "qwen38" ? "qwen3.8" : "qwen3.5"}};
+          require(xinfer::model_from_identity(identity) == selected.model_type,
+                  "Weight identity selected another model type");
+          for (size_t i = 0; i < selected.state.size(); ++i)
+            require(selected.state[i].output_index == i + 1, "Hybrid state output index missing");
+        });
+        const Json other_identity = {{"model", type == "qwen38" ? "qwen3.5" : "qwen3.8"}};
+        require(xinfer::model_from_identity(other_identity) != xinfer::parse_model_type(type),
+                "Qwen3.5 and Qwen3.8 weight identities collided");
+      }
+    });
 
     check("context_contract_rejects_retired_prompt_field", [&] {
       require(spec.capacity == 16384 && spec.max_prefill == 512,

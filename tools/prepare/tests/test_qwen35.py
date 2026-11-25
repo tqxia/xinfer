@@ -13,17 +13,31 @@ from safetensors.torch import load_file, save_file
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256
 from compiler.qwen35.config import TEXT_DIR
-from tools.prepare.qwen35 import MODEL_FILES, REVISIONS
-from tools.prepare import cli, qwen35
+from tools.prepare.qwen35 import MODEL_FILES
+from tools.prepare import cli, qwen35, qwen38, text_checkpoint
 
 MODEL_ID = "Qwen/Qwen3.5-0.8B"
 
 
 class PreparedCheckpoint(unittest.TestCase):
-    def source(self, directory, revision=REVISIONS[MODEL_ID], *, text=True):
+    frontend = qwen35
+    model_id = MODEL_ID
+
+    def source(self, directory, revision=None, *, text=True):
+        revision = revision or self.frontend.REVISIONS[self.model_id]
         config = dict(text_config=dict(tie_word_embeddings=True))
+        fp8 = self.frontend is qwen38
+        files = self.frontend.MODEL_FILES
+        if fp8:
+            config["text_config"]["tie_word_embeddings"] = False
+            config["quantization_config"] = dict(
+                quant_method="fp8",
+                fmt="e4m3",
+                activation_scheme="dynamic",
+                weight_block_size=[128, 128],
+            )
         (directory / "config.json").write_text(json.dumps(config))
-        for name in MODEL_FILES[1:]:
+        for name in files[1:]:
             (directory / name).write_text("fixture")
         names = (
             "model.language_model.embed_tokens.weight",
@@ -31,6 +45,20 @@ class PreparedCheckpoint(unittest.TestCase):
         )
         values = (torch.arange(4).reshape(2, 2).bfloat16(), torch.ones(2, 2).bfloat16())
         shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+        mapped = ("model.embed_tokens.weight", "model.layers.0.linear_attn.in_proj_qkv.weight")
+        if fp8:
+            names += (
+                "lm_head.weight",
+                "model.language_model.layers.0.linear_attn.in_proj_qkv.weight_scale_inv",
+            )
+            values = (
+                values[0],
+                torch.ones(128, 128).to(torch.float8_e4m3fn),
+                values[0] + 1,
+                torch.ones(1, 1).bfloat16(),
+            )
+            shards += ("head.safetensors", "scale.safetensors")
+            mapped += ("lm_head.weight", "model.layers.0.linear_attn.in_proj_qkv.weight_scale_inv")
         for name, value, shard in zip(names, values, shards):
             save_file({name: value}, directory / shard)
         (directory / "model.safetensors.index.json").write_text(
@@ -42,7 +70,7 @@ class PreparedCheckpoint(unittest.TestCase):
             )
         )
         siblings = []
-        for name in (*MODEL_FILES, "model.safetensors.index.json", *shards):
+        for name in (*files, "model.safetensors.index.json", *shards):
             data = (directory / name).read_bytes()
             blob_id = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
             siblings.append(
@@ -56,21 +84,17 @@ class PreparedCheckpoint(unittest.TestCase):
                 )
             )
         info = SimpleNamespace(sha=revision, siblings=siblings)
-        return info, dict(
-            zip(
-                ("model.embed_tokens.weight", "model.layers.0.linear_attn.in_proj_qkv.weight"),
-                values,
-            )
-        )
+        return info, dict(zip(mapped, values))
 
-    def network(self, source, info, model_id=MODEL_ID, cache_dir=None):
+    def network(self, source, info, model_id=None, cache_dir=None):
+        model_id = model_id or self.model_id
         downloads = []
         api = Mock()
         api.model_info.return_value = info
 
         def download(repo_id, filename, **options):
             self.assertEqual(repo_id, model_id)
-            self.assertEqual(options["revision"], REVISIONS[model_id])
+            self.assertEqual(options["revision"], self.frontend.REVISIONS[model_id])
             selected_cache = options.get("cache_dir")
             self.assertEqual(None if selected_cache is None else Path(selected_cache), cache_dir)
             downloads.append(filename)
@@ -80,8 +104,8 @@ class PreparedCheckpoint(unittest.TestCase):
         self.enterContext(patch("huggingface_hub.hf_hub_download", side_effect=download))
         return api, downloads
 
-    def test_extracts_both_pinned_checkpoints_and_only_text_shards(self):
-        for model_id, revision in REVISIONS.items():
+    def test_extracts_pinned_checkpoints_and_only_text_shards(self):
+        for model_id, revision in self.frontend.REVISIONS.items():
             with self.subTest(model=model_id), TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 source, output = root / "source", root / "text"
@@ -89,7 +113,7 @@ class PreparedCheckpoint(unittest.TestCase):
                 info, expected = self.source(source, revision)
                 cache_dir = root / "cache"
                 api, downloads = self.network(source, info, model_id, cache_dir)
-                manifest = qwen35.prepare(output, model_id, cache_dir=cache_dir)
+                manifest = self.frontend.prepare(output, model_id, cache_dir=cache_dir)
                 api.model_info.assert_called_once_with(
                     model_id, revision=revision, files_metadata=True
                 )
@@ -98,7 +122,12 @@ class PreparedCheckpoint(unittest.TestCase):
                 actual = load_file(output / "text.safetensors")
                 self.assertEqual(set(actual), set(expected))
                 for name in expected:
-                    self.assertTrue(torch.equal(actual[name], expected[name]))
+                    self.assertEqual(actual[name].dtype, expected[name].dtype)
+                    self.assertTrue(
+                        torch.equal(
+                            actual[name].view(torch.uint8), expected[name].view(torch.uint8)
+                        )
+                    )
                 self.assertTrue((output / "model_manifest.json").is_file())
                 self.assertFalse((output / "manifest.json").exists())
                 self.assertEqual(manifest, json.loads((output / MODEL_MANIFEST_NAME).read_text()))
@@ -107,12 +136,16 @@ class PreparedCheckpoint(unittest.TestCase):
                 self.assertEqual(manifest["text_parameters"], len(expected))
                 self.assertEqual(
                     set(manifest["source_shards"]),
-                    set(downloads) - set(MODEL_FILES) - {"model.safetensors.index.json"},
+                    set(downloads)
+                    - set(self.frontend.MODEL_FILES)
+                    - {"model.safetensors.index.json"},
                 )
-                self.assertEqual(set(manifest["files"]), {*MODEL_FILES, "text.safetensors"})
+                self.assertEqual(
+                    set(manifest["files"]), {*self.frontend.MODEL_FILES, "text.safetensors"}
+                )
                 for name, digest in manifest["files"].items():
                     self.assertEqual(sha256(output / name), digest)
-                self.assertEqual(qwen35.verify_model(output), manifest)
+                self.assertEqual(self.frontend.verify_model(output), manifest)
                 self.assertEqual(set(root.iterdir()), {source, output})
 
     def test_rejects_hub_checksum_mismatch_before_reading_weights(self):
@@ -121,11 +154,14 @@ class PreparedCheckpoint(unittest.TestCase):
             source, output = root / "source", root / "output"
             source.mkdir()
             info, _ = self.source(source)
-            next(entry for entry in info.siblings if entry.lfs).lfs.sha256 = "0" * 64
+            first_shard = min(
+                (entry for entry in info.siblings if entry.lfs), key=lambda entry: entry.rfilename
+            )
+            first_shard.lfs.sha256 = "0" * 64
             self.network(source, info)
             with patch("safetensors.safe_open") as open_weights:
                 with self.assertRaisesRegex(ValueError, "checksum mismatch"):
-                    qwen35.prepare(output, MODEL_ID)
+                    self.frontend.prepare(output, self.model_id)
             open_weights.assert_not_called()
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
@@ -135,7 +171,7 @@ class PreparedCheckpoint(unittest.TestCase):
             output = Path(temporary) / "text"
             with patch("huggingface_hub.HfApi") as api:
                 with self.assertRaisesRegex(ValueError, "Unsupported checkpoint"):
-                    qwen35.prepare(output, "Qwen/unknown")
+                    self.frontend.prepare(output, "Qwen/unknown")
             api.assert_not_called()
             self.assertFalse(output.exists())
 
@@ -146,7 +182,7 @@ class PreparedCheckpoint(unittest.TestCase):
             retained.write_text("keep")
             with patch("huggingface_hub.HfApi") as api:
                 with self.assertRaises(FileExistsError):
-                    qwen35.prepare(output, MODEL_ID)
+                    self.frontend.prepare(output, self.model_id)
             api.assert_not_called()
             self.assertEqual(retained.read_text(), "keep")
 
@@ -158,7 +194,7 @@ class PreparedCheckpoint(unittest.TestCase):
             info, _ = self.source(source, text=False)
             self.network(source, info)
             with self.assertRaisesRegex(ValueError, "No text weights"):
-                qwen35.prepare(output, MODEL_ID)
+                self.frontend.prepare(output, self.model_id)
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
 
@@ -171,7 +207,7 @@ class PreparedCheckpoint(unittest.TestCase):
             self.network(source, info)
             (source / "chat_template.jinja").unlink()
             with self.assertRaises(FileNotFoundError):
-                qwen35.prepare(output, MODEL_ID)
+                self.frontend.prepare(output, self.model_id)
             self.assertFalse(output.exists())
             self.assertEqual(set(root.iterdir()), {source})
 
@@ -180,12 +216,20 @@ class PreparedCheckpoint(unittest.TestCase):
             (["--model", MODEL_ID], MODEL_ID, TEXT_DIR),
             (["--model", "Qwen/Qwen3.5-4B"], "Qwen/Qwen3.5-4B", Path("work/qwen35/4b/text")),
             (
+                ["--model", "Qwen/Qwen3.8-27B-FP8"],
+                "Qwen/Qwen3.8-27B-FP8",
+                Path("work/qwen38/27b-fp8/text"),
+            ),
+            (
                 ["--model", "Qwen/Qwen3.5-4B", "--output", "custom/text"],
                 "Qwen/Qwen3.5-4B",
                 Path("custom/text"),
             ),
         ):
-            with self.subTest(arguments=arguments), patch.object(qwen35, "prepare") as prepare:
+            with (
+                self.subTest(arguments=arguments),
+                patch.object(cli.model_hooks(expected_model), "prepare") as prepare,
+            ):
                 prepare.return_value = {}
                 with patch("builtins.print"):
                     cli.main(["download", *arguments])
@@ -193,9 +237,9 @@ class PreparedCheckpoint(unittest.TestCase):
 
     def test_verifier_rejects_unknown_revision_and_incomplete_manifest(self):
         valid = dict(
-            model=MODEL_ID,
-            revision=REVISIONS[MODEL_ID],
-            files={name: "0" * 64 for name in (*MODEL_FILES, "text.safetensors")},
+            model=self.model_id,
+            revision=self.frontend.REVISIONS[self.model_id],
+            files={name: "0" * 64 for name in (*self.frontend.MODEL_FILES, "text.safetensors")},
         )
         invalid = (
             (dict(valid, model="Qwen/unknown"), "pinned revision"),
@@ -207,9 +251,12 @@ class PreparedCheckpoint(unittest.TestCase):
             output = Path(temporary)
             for manifest, message in invalid:
                 (output / MODEL_MANIFEST_NAME).write_text(json.dumps(manifest))
-                with self.subTest(manifest=manifest), patch.object(qwen35, "sha256") as digest:
+                with (
+                    self.subTest(manifest=manifest),
+                    patch.object(text_checkpoint, "sha256") as digest,
+                ):
                     with self.assertRaisesRegex(ValueError, message):
-                        qwen35.verify_model(output)
+                        self.frontend.verify_model(output)
                     digest.assert_not_called()
 
 

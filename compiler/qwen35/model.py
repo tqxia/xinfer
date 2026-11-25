@@ -152,11 +152,11 @@ def text_rotary(rotary, positions, dtype):
 
 
 class ModelStep(torch.nn.Module):
-    def __init__(self, model):
+    def __init__(self, model, *, build_model="qwen35"):
         super().__init__()
         from compiler.qwen35.adapters.attention import install_attention
 
-        install_attention(model)
+        install_attention(model, build_model=build_model)
         self.original = model
 
     def forward(self, input_ids, cache_position, state, kv_lengths, query_lengths):

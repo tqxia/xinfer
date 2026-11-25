@@ -195,6 +195,26 @@ class PreparationCLI(unittest.TestCase):
         (directory / "config.json").write_text(json.dumps(dict(max_position_embeddings=32768)))
         return manifest
 
+    def test_model_ids_select_preparation_modules(self):
+        expected = {
+            "Qwen/Qwen3-0.6B": "qwen3",
+            "Qwen/Qwen3-1.7B": "qwen3",
+            "Qwen/Qwen3.5-0.8B": "qwen35",
+            "Qwen/Qwen3.5-4B": "qwen35",
+            "Qwen/Qwen3.8-27B-FP8": "qwen38",
+        }
+        self.assertEqual(cli.MODELS, expected)
+        for model_id, family in expected.items():
+            with self.subTest(model=model_id):
+                self.assertEqual(cli.model_hooks(model_id).__name__, f"tools.prepare.{family}")
+
+    def test_unknown_model_ids_are_rejected_before_import(self):
+        for model_id in ("Qwen/unknown", "qwen35", None, []):
+            with self.subTest(model=model_id), patch.object(cli, "import_module") as load:
+                with self.assertRaisesRegex(ValueError, "Unsupported checkpoint"):
+                    cli.model_hooks(model_id)
+                load.assert_not_called()
+
     def test_download_routes_every_model_and_honors_explicit_output_and_cache(self):
         for model in cli.MODELS:
             for explicit in (False, True):

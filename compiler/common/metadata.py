@@ -97,7 +97,7 @@ def validate_metadata(metadata, model_type=None):
     """Validate a complete bundle descriptor without loading Torch, files or CUDA."""
     _check(isinstance(metadata, dict), "expected an object")
     require(
-        metadata.get("model_type") in ("qwen3", "qwen35")
+        metadata.get("model_type") in ("qwen3", "qwen35", "qwen38")
         and (model_type is None or metadata["model_type"] == model_type),
         "Unsupported model type",
     )

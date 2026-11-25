@@ -2,6 +2,7 @@
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
+from importlib import import_module
 import json
 import os
 from pathlib import Path
@@ -9,9 +10,37 @@ import tempfile
 import unittest
 from unittest.mock import patch, sentinel
 
+from compiler.common.tests.test_metadata import bundle_metadata
 from tools.tests.test_packages import metadata
 from tools.validation import validate
 from tools.validation.common import pipeline
+
+
+class FrontendDispatch(unittest.TestCase):
+    def test_package_type_selects_frontend_and_build_without_checkpoint_fallback(self):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
+            with self.subTest(model_type=model_type), tempfile.TemporaryDirectory() as temporary:
+                bundle = bundle_metadata(model_type)
+                bundle["checkpoint"]["model"] = "Qwen/Qwen3.8-27B-FP8"
+                root = Path(temporary)
+                binary = root / "xinfer_validate"
+                binary.touch()
+                frontend = import_module(f"tools.validation.{model_type}.model")
+                with (
+                    patch.object(validate, "read_package_metadata", return_value=bundle),
+                    patch.object(validate, "default_build_dir", return_value=root) as build,
+                    patch("tools.packages.validate_shared_weights"),
+                    patch("tools.validation.common.attention.load_packaged_attention_ops"),
+                    patch.object(frontend, "Suite", return_value=sentinel.suite) as suite,
+                ):
+                    actual, actual_metadata, native = validate.prepare_validation(
+                        Path("bundle"), Path("checkpoint"), None
+                    )
+                self.assertIs(actual, sentinel.suite)
+                self.assertIs(actual_metadata, bundle)
+                self.assertEqual(native, binary)
+                build.assert_called_once_with(model_type)
+                suite.assert_called_once_with(Path("checkpoint"), bundle)
 
 
 class ValidationReports(unittest.TestCase):

@@ -23,7 +23,9 @@ def validate_shared_weights(directory, metadata):
             require(sha256(package) == entry["sha256"], f"Package checksum mismatch: {kind}")
     manifest = read_shared_weight_manifest(directory, metadata["shared_weights"])
     if "model_type" in metadata:
-        model_type = {"qwen3": "qwen3", "qwen3.5": "qwen35"}.get(manifest["identity"].get("model"))
+        model_type = {"qwen3": "qwen3", "qwen3.5": "qwen35", "qwen3.8": "qwen38"}.get(
+            manifest["identity"].get("model")
+        )
         require(model_type == metadata["model_type"], "Package model identity mismatch")
     return manifest
 
@@ -68,5 +70,9 @@ def validate_qwen35_metadata(metadata):
 
 def validate_model_metadata(metadata):
     """Check the selected model ABI after common metadata validation."""
-    validators = {"qwen3": validate_qwen3_metadata, "qwen35": validate_qwen35_metadata}
+    validators = {
+        "qwen3": validate_qwen3_metadata,
+        "qwen35": validate_qwen35_metadata,
+        "qwen38": validate_qwen35_metadata,
+    }
     validators[metadata["model_type"]](metadata)

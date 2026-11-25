@@ -29,7 +29,7 @@ from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
 from compiler.common.adapters.gated_delta_net import install_delta
 
 
-def export_step(model, kind, capacity=None):
+def export_step(model, kind, capacity=None, *, build_model="qwen35"):
     """Create the packed graph used by compilation and eager validation."""
     capacity = resolve_context_length(model.config, capacity)
     dynamic = kind == "prefill"
@@ -50,7 +50,9 @@ def export_step(model, kind, capacity=None):
     shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
     # Retain the singleton batch in AOTI guards, including the torch.cond branches.
     with symbolic_config.patch(backed_size_oblivious=True), cleanup_export_globals():
-        exported = torch.export.export(ModelStep(model), inputs, strict=True, dynamic_shapes=shapes)
+        exported = torch.export.export(
+            ModelStep(model, build_model=build_model), inputs, strict=True, dynamic_shapes=shapes
+        )
     exported.validate()
     packing = pack_linears(exported)
     if kind == "decode":
@@ -59,9 +61,9 @@ def export_step(model, kind, capacity=None):
     return exported, packing
 
 
-def bundle_metadata(model, checkpoint, capacity):
+def bundle_metadata(model, checkpoint, capacity, model_type="qwen35"):
     return make_metadata(
-        model_type="qwen35",
+        model_type=model_type,
         checkpoint=checkpoint,
         torch_version=torch.__version__,
         cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
@@ -74,8 +76,8 @@ def bundle_metadata(model, checkpoint, capacity):
     )
 
 
-def export_entry(kind, staging_directory, *, model, capacity):
-    exported, packing = export_step(model, kind, capacity)
+def export_entry(kind, staging_directory, *, model, capacity, step_exporter):
+    exported, packing = step_exporter(model, kind, capacity)
     (staging_directory / f"{kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
     print(
         f"Packed {len(packing['groups'])} groups: "
@@ -93,34 +95,61 @@ def export_entry(kind, staging_directory, *, model, capacity):
     return exported
 
 
-def export_model(*, model_dir, output, max_context_length=None, enable_inductor_optimization=False):
+def export_model(
+    *,
+    model_dir,
+    output,
+    max_context_length=None,
+    enable_inductor_optimization=False,
+    build_model="qwen35",
+    model_type="qwen35",
+    model_loader=None,
+    step_exporter=None,
+):
     """Load one adapted model and publish its paired shared-weight bundle."""
     model_dir, output = Path(model_dir), Path(output)
     capacity = prepare_export(model_dir, output, max_context_length, MAX_PREFILL)
     configure()
-    model = load_model(model_dir)
+    model = (load_model if model_loader is None else model_loader)(model_dir)
     install_delta(model)
     checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)
     options = {"emulate_precision_casts": True}
     if enable_inductor_optimization:
         options.update(combo_kernels=True, benchmark_combo_kernel=True)
-    prepare_entry = partial(export_entry, model=model, capacity=capacity)
+    prepare_entry = partial(
+        export_entry,
+        model=model,
+        capacity=capacity,
+        step_exporter=export_step if step_exporter is None else step_exporter,
+    )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
-        load_attention_ops(model="qwen35")
+        load_attention_ops(model=build_model)
         compile_shared(
             output,
             prepare_entry,
-            identity=dict(model="qwen3.5", checkpoint=checkpoint),
+            identity=dict(
+                model={"qwen35": "qwen3.5", "qwen38": "qwen3.8"}[model_type], checkpoint=checkpoint
+            ),
             inductor_configs=options,
-            metadata=partial(bundle_metadata, model, checkpoint, capacity),
+            metadata=partial(bundle_metadata, model, checkpoint, capacity, model_type),
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),
         )
     print(f"Saved prefill/decode bundle to {output}", flush=True)
 
 
-def main(argv=None):
-    parser = export_parser(__doc__, model_dir=TEXT_DIR, output=ARTIFACT_DIR / "text")
+def main(
+    argv=None,
+    *,
+    description=__doc__,
+    model_dir=TEXT_DIR,
+    output=ARTIFACT_DIR / "text",
+    build_model="qwen35",
+    model_type="qwen35",
+    model_loader=None,
+    step_exporter=None,
+):
+    parser = export_parser(description, model_dir=model_dir, output=output)
     parser.add_argument(
         "--enable-inductor-optimization",
         action="store_true",
@@ -128,7 +157,13 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
-        export_model(**vars(args))
+        export_model(
+            **vars(args),
+            build_model=build_model,
+            model_type=model_type,
+            model_loader=model_loader,
+            step_exporter=step_exporter,
+        )
     except ExportInputError as error:
         parser.error(str(error))
 

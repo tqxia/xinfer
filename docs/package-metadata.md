@@ -1,6 +1,6 @@
 # Package metadata
 
-Both model families deploy **four files** together: `prefill.pt2`, `decode.pt2`,
+All supported models deploy **four files** together: `prefill.pt2`, `decode.pt2`,
 `weights.safetensors` and `metadata.json`. Metadata and model interfaces follow
 the current implementation without separate version fields.
 
@@ -16,7 +16,7 @@ model-specific geometry and `runtime/common/state.h` implements state ownership.
 
 | Fields | Meaning |
 | --- | --- |
-| `model_type` | Model family (`qwen3` or `qwen35`) used to select runtime behavior |
+| `model_type` | Model family (`qwen3`, `qwen35` or `qwen38`) used to select runtime behavior |
 | `torch_version`, `cxx11_abi`, `cuda_compute_capability` | Runtime compatibility |
 | `cache_length`, `max_prefill_tokens` | Allocated context capacity and compiled per-call prefill ceiling (512) |
 | `vocab_size`, `eos_token_ids` | Vocabulary upper bound and explicit EOS stop list |
@@ -29,6 +29,12 @@ Missing/unknown fields and retired aliases are rejected.
 `COMPARISON_EXCLUDED_FIELDS` in `compiler/common/metadata.py` excludes `entries`
 and `shared_weights` from benchmark comparison; shared weights are compared by
 logical identity and source mappings separately from their archive checksum.
+
+`model_type` identifies the package as `qwen3`, `qwen35` or `qwen38`.
+Qwen3.8 exports use `qwen38`; both `qwen35` and `qwen38` select the shared
+`runtime/qwen35/` implementation and state calling convention. Their identities
+remain distinct: the shared archive's embedded `identity.model` must match
+(`qwen3`, `qwen3.5` or `qwen3.8`, respectively).
 
 Fixed export/compiler invariants (`backed_size_oblivious=True`, TF32 disabled,
 `emulate_precision_casts=True`, weightless AOTI compilation) live in code rather
@@ -83,7 +89,7 @@ retain B=1 in the symbolic range.
   widths 2–512 select prefill. Per-row positions identify contiguous appends.
 - Logits are BF16 `[B,vocab_size]` for each row's last real token. Empty rows
   return zero logits without advancing any state or position.
-- Qwen3 returns only logits and updates KV in place. Qwen3.5 returns logits
+- Qwen3 returns only logits and updates KV in place. Qwen3.5 and Qwen3.8 return logits
   followed by all state tensors: KV outputs alias input buffers, while fresh
   convolution/recurrent outputs replace the active rows. Recurrent state is FP32.
 - State allocation and row identity persist across calls up to
@@ -118,8 +124,8 @@ suffix. The manifest JSON is embedded under `__metadata__.xinfer_manifest` in th
 safetensors header, not a separate file. It maps each entry's constants to tensor
 views over deduplicated storage, preserving shape, stride, offset, dtype and device.
 Tied embeddings and shared packed sources can therefore share storage without
-changing their views. Both model families record `identity` as
-`{"model": "<family>", "checkpoint": <manifest>}` (`qwen3` or `qwen3.5`).
+changing their views. All supported models record `identity` as
+`{"model": "<family>", "checkpoint": <manifest>}` (`qwen3`, `qwen3.5` or `qwen3.8`).
 
 `metadata.json`'s `shared_weights` descriptor records the archive's logical
 identity, byte size and SHA-256 (always targeting `weights.safetensors`). The
@@ -141,6 +147,17 @@ The native loader verifies its constant pointers against the supplied storage.
 Weights remain immutable and their owner outlives both loaders; C++ member order
 ensures loaders are destroyed first. Current packages require the supported
 Torch 2.13 stack and weightless compilation, not embedded per-entry weights.
+
+The shared archive also supports E4M3 FP8 storage (`float8_e4m3fn`), with scales
+stored as separate tensors. FP8 bundles require a reader with that dtype support;
+the manifest format and dynamic model ABI are unchanged.
+
+Shared-weight compilation applies the version/hash-guarded
+[Torch 2.13 header overlay](../compiler/patches/torch_2_13/README.md) so cloned
+user-managed constant handles are released with their loaders.
+The overlay preserves shared tensor storage and does not modify installed Torch
+headers. Older bundles need re-export for this lifetime fix; metadata edits cannot
+change their compiled ownership behavior.
 
 ## Loading and native dependencies
 
@@ -165,6 +182,12 @@ CPU instruction-set compatibility is not enforced; see
 [deployment constraints](../environments/README.md#install-and-relocate-the-runtime).
 
 ## Compatibility and retained bundles
+
+Qwen3.8 bundles require `model_type="qwen38"` and archive identity
+`model="qwen3.8"`. Package-based tools dispatch directly by `model_type`;
+checkpoint model IDs do not override that selection. Re-export older Qwen3.8
+bundles labeled `qwen35`; no compatibility routing is provided. Relabeling only
+`metadata.json` would mismatch the embedded archive identity.
 
 Re-export with the current exporter by default. Packages with embedded weights,
 the old attention interface, an external attention dependency or legacy

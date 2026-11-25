@@ -1,7 +1,10 @@
 # Qwen3.5 text-only AOTI / C++
 
-The same pipeline handles Qwen3.5-0.8B and 4B: Python prepares and compiles the
-text model; the shared C++ runtime loads the bundle and generates tokens.
+This module owns the dense Qwen3.5 text architecture and the Qwen3.5-0.8B / 4B
+export entry point. The [Qwen3.8 frontend](../qwen38/README.md) reuses its adapters,
+state handling and export pipeline with its own loader and defaults. Python
+prepares and compiles the text model; the shared C++ runtime loads the bundle
+and generates tokens.
 Vision and MTP are outside the supported scope. Defaults select 0.8B.
 
 Use the [environment guide](../../environments/README.md) for setup/builds and
@@ -39,7 +42,9 @@ For 4B, keep the prepared checkpoint and compiled bundle separate:
 
 Preparation verifies source shards and extracts only language-model tensors into
 `text.safetensors`, with `model_manifest.json`. Reuse prepared directories after
-that one-time step. Both checkpoints require tied embeddings and default RoPE.
+that one-time step. The Qwen3.5 loader accepts unquantized checkpoints with tied
+embeddings and default RoPE. The [Qwen3.8 loader](../qwen38/README.md) owns FP8
+checkpoint rules and preserves its untied BF16 output head.
 Dependency pins live in the per-device requirements files.
 See [preparation](../../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 for verification, offline mode and tokenization.
@@ -68,7 +73,8 @@ eager-numerics selector.
 
 Both entries use the same explicit `ModelStep` interface:
 `step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
-One bundle supports dynamic B=1..8. Activations and main weights are BF16;
+One bundle supports dynamic B=1..8. Activations and main BF16 weights are BF16,
+with BF16 or FP8 projection storage according to the selected frontend;
 checkpoint-native FP32 parameters (`linear_attn.A_log`, `linear_attn.norm.weight`),
 RoPE frequencies and recurrent state use FP32. `C` is the compiled context capacity.
 
@@ -76,6 +82,7 @@ RoPE frequencies and recurrent state use FP32. `C` is the compiled context capac
 | --- | ---: | ---: | ---: | ---: | --- |
 | 0.8B | 24 | 18 | 6 | 48 | `[8,2,C,256]` |
 | 4B | 32 | 24 | 8 | 64 | `[8,4,C,256]` |
+| 27B-FP8 | 64 | 48 | 16 | 128 | `[8,4,C,256]` |
 
 IDs and positions are CUDA int64 `[B,T]`; both length vectors are CPU int32
 `[B]`. Each row appends `query_lengths[row]` real tokens, ending at
@@ -114,6 +121,9 @@ packages their kernels without a separate CUDA-driver launcher or Python runtime
 The threshold is provisional: an isolated-kernel crossover does not establish
 an optimal full-model threshold on every device.
 
+Shared Gated DeltaNet kernels live in `compiler/common/kernels/gated_delta_net/`.
+`compiler/common/adapters/gated_delta_net.py` connects them to the shared Qwen
+HF module layout and explicit cache interface used by Qwen3.5 and Qwen3.8.
 The operator is
 `fused(qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=None)`
 returns `core, next_conv, next_recurrent`.
@@ -125,24 +135,24 @@ convolution or recurrent state. Dispatch uses the padded width T, so shorter
 rows in a long batch also use the chunked path. Both state outputs are fresh;
 inputs remain unchanged. The full-model adapters supply these per-row lengths.
 
-Both geometries use 16 key heads, key/value dimension 128 and width-four bias-free
-SiLU convolution. Value-head count is 16 for 0.8B and 32 for 4B:
+All geometries use 16 key heads, key/value dimension 128 and width-four bias-free
+SiLU convolution. Value-head count is 16 for 0.8B, 32 for 4B and 48 for 27B-FP8:
 
-| Tensor | 0.8B | 4B |
-| --- | --- | --- |
-| QKV | `[B,T,6144]` | `[B,T,8192]` |
-| A/B gates | `[B,T,16]` | `[B,T,32]` |
-| Convolution state | `[B,6144,4]` | `[B,8192,4]` |
-| Convolution weights | `[6144,4]` | `[8192,4]` |
-| Decay parameters | `[16]` | `[32]` |
-| Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` |
-| Core output | `[B,T,16,128]` | `[B,T,32,128]` |
+| Tensor | 0.8B | 4B | 27B-FP8 |
+| --- | --- | --- | --- |
+| QKV | `[B,T,6144]` | `[B,T,8192]` | `[B,T,10240]` |
+| A/B gates | `[B,T,16]` | `[B,T,32]` | `[B,T,48]` |
+| Convolution state | `[B,6144,4]` | `[B,8192,4]` | `[B,10240,4]` |
+| Convolution weights | `[6144,4]` | `[8192,4]` | `[10240,4]` |
+| Decay parameters | `[16]` | `[32]` | `[48]` |
+| Recurrent state | `[B,16,128,128]` | `[B,32,128,128]` | `[B,48,128,128]` |
+| Core output | `[B,T,16,128]` | `[B,T,32,128]` | `[B,T,48,128]` |
 
 Inputs/parameters support matching BF16 or FP32, with decay parameters (`A_log`,
 `dt_bias`) also accepted in FP32 and recurrent state always FP32. Gates and
 recurrent state belong to value heads; grouped value heads reuse Q/K in HF
 `repeat_interleave` order. One writer per Q/K group updates convolution history,
-avoiding duplicate writes for 4B's grouped heads.
+avoiding duplicate writes for grouped value heads.
 
 Fused recurrence combines convolution/history, SiLU, gate preparation, Q/K
 normalization, state update and output reduction. Each program owns one value
@@ -220,12 +230,18 @@ these checks with CUDA visible and the native attention library built:
 CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest compiler.common.tests.test_projection_gemv
 "$Q35_PY" -m unittest compiler.common.tests.test_attention \
   compiler.common.tests.test_projection_gemv_cuda compiler.qwen35.tests.test_export
-"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_kernels \
-  compiler.qwen35.tests.test_batch compiler.qwen35.tests.test_chunked
-"$Q35_PY" -m unittest compiler.qwen35.tests.test_kernels_aoti
+"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta \
+  compiler.common.tests.gated_delta_net.test_recurrent \
+  compiler.common.tests.gated_delta_net.test_batch \
+  compiler.common.tests.gated_delta_net.test_chunked
+"$Q35_PY" -m unittest compiler.common.tests.gated_delta_net.test_aoti
 ```
 
-Synthetic kernel tests cover both geometries, BF16/FP32, carried/reset state,
+Kernel tests and tensor-level HF references live in
+`compiler/common/tests/gated_delta_net/`. Adapter installation and geometry
+contracts live in `compiler/common/tests/test_gated_delta_net_adapter.py`;
+HF/HybridCache integration stays in `compiler/qwen35/tests/test_delta.py`.
+Synthetic kernel tests cover all three geometries, BF16/FP32, carried/reset state,
 gate extremes, partitioning, dispatch boundaries, layouts and streams. Existing
 kernel limits are 1% BF16 and 0.01% FP32, with a 1e-7 FP32 absolute-roundoff
 allowance. Comparisons use matching input dtypes: BF16 kernel against HF BF16,
@@ -235,7 +251,7 @@ Output and carried-state bounds remain required independently of full-model resu
 
 `test_export` checks the production graph and passes with a small random mixed
 model; it needs no checkpoint or full-model AOTI compilation.
-`test_kernels_aoti` compiles BF16/FP32 prefill/decode for both geometries and
+`test_aoti` compiles BF16/FP32 prefill/decode for all three geometries and
 requires exact direct-kernel/Python AOTI core/state parity, including canonical
 singleton strides and nondefault streams. Its batched 0.8B tests compile one
 prefill/decode pair per dtype for B=1..8, check the 97/98 dispatch boundary,

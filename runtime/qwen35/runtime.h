@@ -14,7 +14,8 @@ struct Spec : xinfer::SpecBase {
   explicit Spec(const fs::path &packages) : Spec(xinfer::SpecBase(packages)) {}
 
   explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
-    require(model_type == xinfer::ModelType::Qwen35, "Unsupported model type");
+    require(model_type == xinfer::ModelType::Qwen35 || model_type == xinfer::ModelType::Qwen38,
+            "Unsupported model type");
 
     require(!state.empty() && state.size() % 2 == 0, "Invalid state count");
     for (size_t i = 0; i < state.size(); i += 2) {

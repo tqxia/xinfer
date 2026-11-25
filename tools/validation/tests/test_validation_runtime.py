@@ -59,7 +59,7 @@ class AOTIRuntimeLoading(unittest.TestCase):
         return entry
 
     def test_both_model_abis_retain_one_owner_for_both_entries(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 meta = self.metadata(model_type)
                 with (

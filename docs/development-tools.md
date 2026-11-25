@@ -1,7 +1,7 @@
 # Development tools
 
 Run commands from the repository root with the matching model interpreter.
-Select `Q3_PY`, `Q35_PY` and the native build through the
+Select `Q3_PY`, `Q35_PY`, `Q38_PY` and the native build through the
 [environment guide](../environments/README.md). Build the attention library before
 export or standalone attention tests. Full-model tools require complete exported
 bundles; use fresh output paths. The [model guides](../README.md#getting-started)
@@ -51,12 +51,12 @@ binaries or GPU. Most use temporary fixtures and mocks; `test_weights` compiles
 tiny CPU AOTI packages and requires a working C++ toolchain.
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest discover
+CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest discover
 ```
 
-Both model environments pin the same Transformers `5.20.2` stack, so
+All three model environments pin the same Transformers `5.20.2` stack, so
 `unittest discover` from the repository root runs every `test_*.py` module under
-`compiler/`, `environments/` and `tools/` in either `Q3_PY` or `Q35_PY`. With
+`compiler/`, `environments/` and `tools/` in `Q3_PY`, `Q35_PY` or `Q38_PY`. With
 `CUDA_VISIBLE_DEVICES=''`, CUDA-only tests inside discovered modules skip cleanly
 while their CPU contract tests still execute. GPU operator and kernel-AOTI tests
 are listed in the model guides; full-model accuracy checks remain separate
@@ -69,7 +69,7 @@ contracts; they use random model weights and do not compile AOTI packages.
 ## Checkpoint preparation and tokenization
 
 `python -m tools.prepare` owns checkpoint download, manifest generation,
-verification and offline tokenization for both model families. Its family modules
+verification and offline tokenization. Its model frontends
 own pinned revisions and required download files; compiler configuration retains
 model paths and execution settings. Run download with
 the selected model's Python environment before enabling `HF_HUB_OFFLINE` or
@@ -80,13 +80,17 @@ the selected model's Python environment before enabling `HF_HUB_OFFLINE` or
 "$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
 "$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
 "$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
+"$Q38_PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
 ```
 
 These use fixed revisions and default to `work/models/qwen3-0.6b`,
-`work/models/qwen3-1.7b`, `work/qwen35/0.8b/text` and `work/qwen35/4b/text`. `--output` selects another
+`work/models/qwen3-1.7b`, `work/qwen35/0.8b/text`, `work/qwen35/4b/text` and
+`work/qwen38/27b-fp8/text`. `--output` selects another
 prepared directory; `--cache-dir` selects a Hub cache. Qwen3 downloads the
-required HF files and writes their manifest. Qwen3.5 additionally extracts and
-renames language-model tensors into `text.safetensors`. Preparation runs on CPU
+required HF files and writes their manifest. Qwen3.5 and Qwen3.8 share text
+extraction and verification in `tools/prepare/text_checkpoint.py`, retaining their own
+configuration checks and required files. Extraction renames language-model
+tensors into `text.safetensors`. Preparation runs on CPU
 without CUDA or model inference. An existing output path is refused, and the
 prepared directory is published only after successful completion.
 
@@ -95,7 +99,7 @@ copied or reused, and their manifest contents and compiled packages remain
 unchanged. Checkpoint integrity verification happens during download/preparation
 or through explicit `tools.prepare verify`; model loading, export and reference
 generation do not repeat it. Verification and token commands infer the model
-family from that manifest and use only local files:
+frontend from that manifest and use only local files:
 
 ```bash
 "$Q3_PY" -m tools.prepare verify --model-dir work/models/qwen3-0.6b
@@ -193,7 +197,10 @@ For the dynamic batch matrix, use the matching model's `validate_batch` entry:
   --native build/qwen35/xinfer_validate --output artifacts/qwen35/0.8b/batch-validation
 ```
 
-Qwen3 uses `tools.validation.qwen3.validate_batch`. Both reuse shared fixtures,
+Qwen3 uses `tools.validation.qwen3.validate_batch`; Qwen3.8 uses
+`tools.validation.qwen38.validate_batch` and `tools.validation.qwen38.validate_runtime`.
+Qwen3.8 reuses the Qwen3.5 validation pipeline with its own compiler loader,
+export step and FP8 reference protocol. The tools reuse shared fixtures,
 comparison policy and C++ parity handling. Reports cover every B=1..8 and batch
 transitions, with independent per-request BF16 HF references and all allocated
 state rows included in native parity. Padding, row isolation, inactive/resumed
@@ -261,7 +268,14 @@ Token/greedy mismatch records are also indexed in `top1_differences` and
 Structural violations abort validation and are recorded as errors. These checks
 are outside the tensor-comparison count.
 
-Full-model validation retains the unmodified BF16 HF reference and does not load
+For Qwen3.8-27B-FP8, the HF reference retains the checkpoint's FP8 weights and
+dynamic activation quantization, using version 4 of the kernels-community backend.
+Layer interfaces and logits remain BF16. The same `shared_bf16` policy and 5%
+limits apply, and scalar reports identify FP8 storage in `reference_protocol`.
+These comparisons measure execution fidelity, not quantization loss against
+unquantized weights. Other checkpoints keep their existing BF16 HF reference.
+
+Full-model validation retains the unmodified HF reference and does not load
 a separate FP32 HF control model. Focused kernel/block tests run separately
 and keep their own output and carried-state tolerances. DeltaNet comparisons
 use matching input dtypes: BF16 kernels against HF's BF16 tensor operations,
@@ -284,7 +298,16 @@ report was produced with assertions disabled.
 
 ## Benchmark HF and native AOTI
 
-`python -m tools.benchmark` selects the model from package metadata. Both families
+Numerical validation and benchmark tools select their frontend, HF loader and
+native build directory directly from the package's `model_type` (`qwen3`,
+`qwen35` or `qwen38`). Benchmark workers receive that same type from the
+controller. Qwen3.8 uses `qwen38` while sharing the Qwen3.5 runtime implementation.
+Checkpoint model IDs identify and verify weights and select default checkpoint
+paths; they do not override package dispatch. Model-ID routing for download and
+verification stays within `tools/prepare/`. See
+[package metadata](package-metadata.md) for the required package identities.
+
+`python -m tools.benchmark` selects the frontend from package metadata. All frontends
 support `run`, `compare` and `check-idle`. The harness prepares its own fixed
 capital-of-France prompt/continuation tokens and does not consume validation
 reports. Use the matching model environment:

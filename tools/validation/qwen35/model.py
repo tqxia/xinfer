@@ -9,8 +9,9 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
-from compiler.qwen35.config import TEXT_DIR, configure
-from tools.prepare.qwen35 import REVISIONS
+from compiler.qwen35.config import configure
+from tools.prepare.qwen35 import default_model_dir as prepared_model_dir
+from compiler.qwen35.export import export_step
 from compiler.qwen35.model import load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
@@ -23,9 +24,7 @@ from tools.validation.common.context import capture_long_state, long_context_cas
 
 def default_model_dir(metadata):
     """Select the prepared checkpoint matching the package's pinned model ID."""
-    model_id = metadata["checkpoint"]["model"]
-    require(model_id in REVISIONS, "Unsupported Qwen3.5 checkpoint")
-    return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
+    return prepared_model_dir(metadata["checkpoint"]["model"])
 
 
 class HFStage:
@@ -117,9 +116,12 @@ class HFStage:
 class Suite:
     model_type = "qwen35"
 
-    def __init__(self, model_dir, metadata):
+    def __init__(self, model_dir, metadata, *, model_loader=None, step_exporter=None):
         self.model_dir = Path(model_dir)
+        self.model_loader = load_model if model_loader is None else model_loader
+        self.step_exporter = export_step if step_exporter is None else step_exporter
         self.metadata = metadata
+        require(metadata["model_type"] == self.model_type, "Unsupported model type")
         self.specs = metadata["state"]
         self.vocab_size = metadata["vocab_size"]
         self.capacity = metadata["cache_length"]
@@ -232,8 +234,8 @@ class Suite:
         return cases
 
     def stages(self):
-        """Record HF before applying the adapters and package graph passes."""
-        model, functions = load_model(self.model_dir), None
+        """Record HF before applying the adapters and package-selected graph passes."""
+        model, functions = self.model_loader(self.model_dir), None
         try:
             require(
                 state_specs(model.config, self.capacity, batch_size=self.specs[0]["shape"][0])
@@ -248,11 +250,10 @@ class Suite:
                 "hf_dynamic", HFStage(model, self.specs, self.capacity, dynamic=True, **bounds)
             )
             from compiler.common.adapters.gated_delta_net import install_delta
-            from compiler.qwen35.export import export_step
 
             install_delta(model)
             functions = {
-                kind: export_step(model, kind, self.capacity)[0].module()
+                kind: self.step_exporter(model, kind, self.capacity)[0].module()
                 for kind in ("prefill", "decode")
             }
             yield Stage(
@@ -268,8 +269,8 @@ class Suite:
 
     @contextmanager
     def reference(self):
-        """Reload unmodified BF16 HF for matched greedy-trajectory replay."""
-        model = load_model(self.model_dir)
+        """Reload unmodified HF for matched greedy-trajectory replay."""
+        model = self.model_loader(self.model_dir)
         runtime = HFStage(
             model,
             self.specs,

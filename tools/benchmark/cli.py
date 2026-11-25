@@ -79,7 +79,7 @@ def build_parser():
     idle.add_argument("--gpu", help=gpu_help)
     idle.add_argument("--output", type=Path, required=True)
     worker = commands.add_parser("worker", help="Internal HF worker; normally use run")
-    worker.add_argument("--model-type", choices=("qwen3", "qwen35"), required=True)
+    worker.add_argument("--model-type", choices=("qwen3", "qwen35", "qwen38"), required=True)
     worker.add_argument("--model-dir", type=Path, required=True)
     worker.add_argument("--workload", type=Path, required=True)
     worker.add_argument("--output", type=Path, required=True)

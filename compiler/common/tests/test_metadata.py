@@ -64,10 +64,14 @@ def bundle_metadata(model_type="qwen3", *, cache_length=1024):
 
 class PackageMetadata(unittest.TestCase):
     def test_one_format_handles_both_output_state_abis(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 metadata = bundle_metadata(model_type)
                 validate_metadata(metadata, model_type)
+                for other in ("qwen3", "qwen35", "qwen38"):
+                    if other != model_type:
+                        with self.assertRaisesRegex(ValueError, "Unsupported model type"):
+                            validate_metadata(metadata, other)
                 self.assertTrue(
                     all(
                         set(item) == {"layer", "kind", "shape", "dtype", "update"}
@@ -77,7 +81,7 @@ class PackageMetadata(unittest.TestCase):
                 self.assertEqual(metadata["eos_token_ids"], [151645])
 
     def test_both_models_reserve_eight_rows_and_reject_other_allocations(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             metadata = bundle_metadata(model_type)
             validate_metadata(metadata)
             for batch_size in (1, 2, 4, 7, 9):
@@ -90,7 +94,7 @@ class PackageMetadata(unittest.TestCase):
                     validate_metadata(invalid)
 
     def test_capacity_is_separate_from_compiled_call_bounds_and_prompt_policy(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             for capacity in (512, 1024, 16384):
                 with self.subTest(model=model_type, capacity=capacity):
                     metadata = bundle_metadata(model_type, cache_length=capacity)

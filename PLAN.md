@@ -7,6 +7,10 @@ This file lists unfinished work, not completed refactors or experiment logs.
 
 ## Numerical acceptance and scaling
 
+- Resolve the Qwen3.8-27B-FP8 logit failures across normalization, attention,
+  DeltaNet and packing before numerical acceptance. Retain the pinned FP8 HF
+  reference, current bounds and separate native parity result; attribute the
+  remaining production AOTI differences and expand the focused validation matrix.
 - Investigate the Qwen3 focused 98-token logit failure and Qwen3.5-4B required
   logit errors. Preserve matched inputs, current tolerances and independent HF
   references; native parity alone does not close these issues.

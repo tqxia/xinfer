@@ -109,7 +109,7 @@ class StageComparisons(unittest.TestCase):
 
     def test_state_errors_are_diagnostic_for_both_models_but_native_parity_is_required(self):
         recurrent = dict(CONV, kind="recurrent", shape=[1, 1, 2, 2])
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             for spec in (KEY, CONV, recurrent):
                 with self.subTest(model_type=model_type, kind=spec["kind"]):
                     reference = self.trace(states={CASE_KEY: (torch.ones(spec["shape"]),)})
@@ -142,7 +142,7 @@ class StageComparisons(unittest.TestCase):
     def test_top1_drift_is_diagnostic_for_both_models_and_retains_margin_details(self):
         reference = self.trace(logits={CASE_KEY: torch.tensor([[1.0, 0.99]])})
         actual = self.trace(logits={CASE_KEY: torch.tensor([[0.99, 1.0]])})
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 diagnostic = self.compare(actual, reference, model_type=model_type)
                 self.assertEqual(diagnostic["failures"], [])
@@ -186,7 +186,7 @@ class StageComparisons(unittest.TestCase):
     def test_greedy_divergence_is_diagnostic_but_native_tokens_are_required(self):
         reference = self.trace(generated={"chat": self.generated([0, 1])})
         actual = self.trace(generated={"chat": self.generated([0, 0])})
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 diagnostic = self.compare(actual, reference, model_type=model_type)
                 self.assertEqual(diagnostic["failures"], [])
@@ -387,7 +387,7 @@ class ValidationPipeline(unittest.TestCase):
         return report
 
     def test_both_models_report_the_same_policy_without_fp32_controls(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 report = self.run_chain(model_type)
                 self.assertTrue(report["passed"])
@@ -417,7 +417,7 @@ class ValidationPipeline(unittest.TestCase):
                 )
 
     def test_diagnostic_state_drift_does_not_fail_either_model(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 report = self.run_chain(model_type, state_drift=1)
                 self.assertTrue(report["passed"])
@@ -429,7 +429,7 @@ class ValidationPipeline(unittest.TestCase):
                 self.assertEqual(report["failures"], [])
 
     def test_hf_logit_failure_and_native_state_failure_still_reject_both_models(self):
-        for model_type in ("qwen3", "qwen35"):
+        for model_type in ("qwen3", "qwen35", "qwen38"):
             for options, tensor, native_parity in (
                 (dict(state_drift=1, logit_scale=1.06), "logits", True),
                 (dict(state_drift=1, native_drift=0.001), "layer_0.conv", False),

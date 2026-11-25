@@ -6,14 +6,15 @@ import json
 from pathlib import Path
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
-from tools.prepare.qwen3 import REVISIONS as QWEN3_REVISIONS
-from tools.prepare.qwen35 import REVISIONS as QWEN35_REVISIONS
+from tools.prepare import qwen3, qwen35, qwen38
 from tools.prepare.common import encode_prompt, load_tokenizer, write_ids
 from compiler.common.context import model_context_limit
 
 
-MODELS = {model: "qwen3" for model in QWEN3_REVISIONS} | {
-    model: "qwen35" for model in QWEN35_REVISIONS
+MODELS = {
+    model_id: module.__name__.rsplit(".", 1)[1]
+    for module in (qwen3, qwen35, qwen38)
+    for model_id in module.REVISIONS
 }
 
 
@@ -23,7 +24,7 @@ def model_hooks(model):
 
 
 def checkpoint_model(directory):
-    manifest = read_json(directory / MODEL_MANIFEST_NAME)
+    manifest = read_json(Path(directory) / MODEL_MANIFEST_NAME)
     require(isinstance(manifest, dict), "Prepared checkpoint manifest must be an object")
     model = manifest.get("model")
     require(isinstance(model, str) and model in MODELS, f"Unsupported checkpoint: {model}")

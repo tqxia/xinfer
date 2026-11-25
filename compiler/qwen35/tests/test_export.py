@@ -53,6 +53,14 @@ class ExportContextLength(unittest.TestCase):
                     options.update(combo_kernels=True, benchmark_combo_kernel=True)
                 self.assertEqual(compile_pair.call_args.kwargs["inductor_configs"], options)
                 self.assertEqual(compile_pair.call_args.args[0], root / "bundle")
+                self.assertIs(
+                    compile_pair.call_args.kwargs["metadata"].func, export.bundle_metadata
+                )
+                self.assertEqual(compile_pair.call_args.kwargs["metadata"].args[-1], "qwen35")
+                self.assertEqual(compile_pair.call_args.kwargs["identity"]["model"], "qwen3.5")
+                self.assertIs(
+                    compile_pair.call_args.args[1].keywords["step_exporter"], export.export_step
+                )
 
     def test_workflow_errors_are_not_converted_to_cli_usage_errors(self):
         with (

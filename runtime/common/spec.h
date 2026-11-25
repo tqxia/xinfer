@@ -24,10 +24,18 @@ inline constexpr int64_t kMaxPrefillTokens = 512;
 // Keep cumulative int32 KV lengths across all compiled batch slots below INT32_MAX.
 inline constexpr int64_t kMaxCacheLength = std::numeric_limits<int32_t>::max() / kMaxBatchSize;
 
-enum class ModelType { Qwen3, Qwen35 };
+enum class ModelType { Qwen3, Qwen35, Qwen38 };
 
 inline const char *model_name(ModelType model) {
-  return model == ModelType::Qwen3 ? "qwen3" : "qwen35";
+  switch (model) {
+  case ModelType::Qwen3:
+    return "qwen3";
+  case ModelType::Qwen35:
+    return "qwen35";
+  case ModelType::Qwen38:
+    return "qwen38";
+  }
+  throw std::runtime_error("Unsupported model type");
 }
 
 inline ModelType parse_model_type(const std::string &type) {
@@ -35,6 +43,8 @@ inline ModelType parse_model_type(const std::string &type) {
     return ModelType::Qwen3;
   if (type == "qwen35")
     return ModelType::Qwen35;
+  if (type == "qwen38")
+    return ModelType::Qwen38;
   throw std::runtime_error("Unsupported model type");
 }
 
@@ -44,6 +54,8 @@ inline ModelType model_from_identity(const Json &identity) {
     return ModelType::Qwen3;
   if (model == "qwen3.5")
     return ModelType::Qwen35;
+  if (model == "qwen3.8")
+    return ModelType::Qwen38;
   throw std::runtime_error("Unsupported model identity: " + model);
 }
 
@@ -92,7 +104,8 @@ inline bool metadata_keys(const Json &value, const std::unordered_set<std::strin
 inline void validate_metadata(const Json &metadata) {
   require(metadata.is_object(), "Unsupported package metadata: expected an object");
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
-              (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
+              (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35" ||
+               metadata.at("model_type") == "qwen38"),
           "Unsupported model type");
 
   const auto &fields = metadata_fields();
@@ -187,7 +200,7 @@ struct StateSpec {
   std::vector<int64_t> shape, stride;
   at::ScalarType dtype;
   bool inplace;
-  // Qwen3 returns logits only; Qwen3.5 also returns every state.
+  // Qwen3 returns logits only; Qwen3.5 and Qwen3.8 also return every state.
   std::optional<size_t> output_index;
 };
 
@@ -234,8 +247,9 @@ struct SpecBase {
                        std::move(stride),
                        item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
                        item.at("update") == "inplace",
-                       model_type == ModelType::Qwen35 ? std::optional<size_t>(state.size() + 1)
-                                                       : std::nullopt});
+                       (model_type == ModelType::Qwen35 || model_type == ModelType::Qwen38)
+                           ? std::optional<size_t>(state.size() + 1)
+                           : std::nullopt});
     }
   }
 

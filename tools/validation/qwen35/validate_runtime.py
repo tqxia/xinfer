@@ -246,20 +246,24 @@ def reject_invalid(args, env, metadata):
     return passed
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", type=Path, default=TEXT_DIR)
-    parser.add_argument("--packages", type=Path, default=ARTIFACT_DIR / "text")
+def build_parser(
+    *, model_dir=TEXT_DIR, artifact_dir=ARTIFACT_DIR, build_model="qwen35", description=__doc__
+):
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--model-dir", type=Path, default=model_dir)
+    parser.add_argument("--packages", type=Path, default=artifact_dir / "text")
     parser.add_argument(
-        "--binary", type=Path, default=default_build_dir("qwen35") / "xinfer_validate"
+        "--binary", type=Path, default=default_build_dir(build_model) / "xinfer_validate"
     )
-    parser.add_argument("--cli", type=Path, default=default_build_dir("qwen35") / "xinfer_aoti")
-    parser.add_argument("--output", type=Path, default=ARTIFACT_DIR / "runtime-validation")
+    parser.add_argument("--cli", type=Path, default=default_build_dir(build_model) / "xinfer_aoti")
+    parser.add_argument("--output", type=Path, default=artifact_dir / "runtime-validation")
     return parser
 
 
-def preflight(args):
-    metadata = read_package_metadata(args.packages, model_type="qwen35")
+def preflight(args, *, expected_model_type=None):
+    metadata = read_package_metadata(args.packages)
+    allowed = (expected_model_type,) if expected_model_type else ("qwen35", "qwen38")
+    require(metadata["model_type"] in allowed, "Unsupported model type")
     validate_model_metadata(metadata)
     validate_shared_weights(args.packages, metadata)
     configure()
@@ -327,7 +331,11 @@ def capture_runtime_state(case, step):
 
 
 def run_python_reference(args, metadata, teacher, chats, capital, eos):
-    runtime = load_aoti_runtime(args.packages, model_type="qwen35", specs=metadata["state"])
+    runtime = load_aoti_runtime(
+        args.packages,
+        model_type=metadata["model_type"],
+        specs=metadata["state"],
+    )
     print("Python AOTI reference", flush=True)
     try:
         expected = run_stage(
@@ -358,7 +366,7 @@ def check_native_parity(args, metadata, teacher, chats, keys, capital, expected)
     actual, execution = run_native(
         args.binary, args.packages, args.output, teacher, chats, metadata, state_keys=keys
     )
-    report = new_report("qwen35", metadata)
+    report = new_report(metadata["model_type"], metadata)
     compare_traces(
         report,
         "cpp_aoti",
@@ -448,13 +456,13 @@ def write_report(output, report):
 
 
 @torch.inference_mode()
-def validate_runtime(args):
+def validate_runtime(args, *, expected_model_type=None):
     """Check native parity, CLI deployment and rejection contracts in order."""
     require(
         not args.output.exists() and not args.output.is_symlink(),
         "Use a fresh validation output directory",
     )
-    metadata, tokenizer = preflight(args)
+    metadata, tokenizer = preflight(args, expected_model_type=expected_model_type)
     args.output.mkdir(parents=True, exist_ok=False)
     teacher, chats, capital, eos = runtime_cases(tokenizer, metadata)
     keys = {
@@ -473,9 +481,9 @@ def validate_runtime(args):
     return report
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
-    validate_runtime(args)
+def main(argv=None, *, expected_model_type=None, **defaults):
+    args = build_parser(**defaults).parse_args(argv)
+    validate_runtime(args, expected_model_type=expected_model_type)
 
 
 if __name__ == "__main__":

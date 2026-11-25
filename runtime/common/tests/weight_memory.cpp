@@ -21,6 +21,8 @@ Json memory() {
 template <class Spec, class Runtime>
 void measure(const std::filesystem::path &packages, Json &report) {
   const Spec spec(packages);
+  xinfer::require(xinfer::model_name(spec.model_type) == report.at("model"),
+                  "Package model type mismatch");
 
   // Initialize the context and GEMM before attributing allocations to a model.
   const auto options = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
@@ -51,7 +53,8 @@ void measure(const std::filesystem::path &packages, Json &report) {
 
 int main(int argc, char **argv) {
   try {
-    xinfer::require(argc == 4, "Usage: qwen_weight_memory qwen3|qwen35 PACKAGE_DIR REPORT_JSON");
+    xinfer::require(argc == 4,
+                    "Usage: qwen_weight_memory qwen3|qwen35|qwen38 PACKAGE_DIR REPORT_JSON");
     c10::InferenceMode inference;
     xinfer::configure_runtime();
 
@@ -64,7 +67,7 @@ int main(int argc, char **argv) {
 
     if (model == "qwen3")
       measure<qwen::Spec, qwen::Runtime>(argv[2], report);
-    else if (model == "qwen35")
+    else if (model == "qwen35" || model == "qwen38")
       measure<qwen35::Spec, qwen35::Runtime>(argv[2], report);
     else
       throw std::runtime_error("Unknown model: " + model);

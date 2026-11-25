@@ -300,8 +300,9 @@ void check_gpu_preflight(const std::filesystem::path &packages, const qwen::Spec
 
 int main(int argc, char **argv) {
   try {
-    require(argc == 4 || (argc == 5 && std::string(argv[4]) == "--files-only"),
-            "Usage: qwen_runtime_contract qwen3|qwen35 PACKAGE_DIR OUTPUT_JSON [--files-only]");
+    require(
+        argc == 4 || (argc == 5 && std::string(argv[4]) == "--files-only"),
+        "Usage: qwen_runtime_contract qwen3|qwen35|qwen38 PACKAGE_DIR OUTPUT_JSON [--files-only]");
     const bool files_only = argc == 5;
     c10::InferenceMode inference;
 
@@ -321,8 +322,9 @@ int main(int argc, char **argv) {
         report["gpu_guard_before_weights"] = true;
         check_ownership<qwen::Spec, qwen::Runtime>(argv[2], spec, report);
       }
-    } else if (model == "qwen35") {
+    } else if (model == "qwen35" || model == "qwen38") {
       const qwen35::Spec spec(argv[2]);
+      require(xinfer::model_name(spec.model_type) == model, "Package model type mismatch");
       if (files_only) {
         check_file_preflight<qwen35::Spec, qwen35::Runtime>(argv[2], spec, argv[3], report);
       } else {

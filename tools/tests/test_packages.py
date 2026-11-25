@@ -154,11 +154,23 @@ class SharedWeightBundleContract(unittest.TestCase):
 
     def test_complete_bundles_return_the_verified_manifest(self):
         self.assertEqual(validate_shared_weights(self.bundle, self.metadata), self.manifest)
-        for model, model_type in (("qwen3", "qwen3"), ("qwen3.5", "qwen35")):
+        for model, model_type in (
+            ("qwen3", "qwen3"),
+            ("qwen3.5", "qwen35"),
+            ("qwen3.8", "qwen38"),
+        ):
             with self.subTest(model=model):
                 self.write_archive(model)
                 meta = self.model_metadata(model_type)
                 self.assertEqual(validate_shared_weights(self.bundle, meta), self.manifest)
+
+    def test_qwen35_and_qwen38_metadata_cannot_relabel_the_archive(self):
+        for archive_model, metadata_model in (("qwen3.5", "qwen38"), ("qwen3.8", "qwen35")):
+            with self.subTest(archive=archive_model, metadata=metadata_model):
+                self.write_archive(archive_model)
+                meta = self.model_metadata(metadata_model)
+                with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
+                    validate_shared_weights(self.bundle, meta)
 
     def test_model_file_facts_fail_before_archive_access(self):
         for kind in ("prefill", "decode"):

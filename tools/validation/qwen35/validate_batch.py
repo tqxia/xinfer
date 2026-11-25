@@ -1,16 +1,15 @@
 """Validate dynamic Qwen3.5 batches through BF16 HF, packed eager, AOTI and C++."""
 
 import argparse
+from importlib import import_module
 from pathlib import Path
 
 import torch
 
-from compiler.common.artifacts import read_json, require
+from compiler.common.artifacts import default_build_dir, read_json, require
 from compiler.common.metadata import read_package_metadata
 from compiler.common.adapters.gated_delta_net import install_delta
-from compiler.qwen35.export import export_step
 from compiler.qwen35.config import configure
-from compiler.qwen35.model import load_model
 from tools.packages import validate_model_metadata, validate_shared_weights
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
@@ -84,6 +83,9 @@ def validate_python(args, meta, *, selected_groups=None):
     for name, (_, cases) in groups.items():
         if name != "transitions":
             cases.extend(delta_cases(cases[0]["batch_steps"][0]))
+    model_type = meta["model_type"]
+    load_model = import_module(f"compiler.{model_type}.model").load_model
+    export_step = import_module(f"compiler.{model_type}.export").export_step
 
     def load_reference():
         hf = load_model(args.model_dir)
@@ -111,7 +113,7 @@ def validate_python(args, meta, *, selected_groups=None):
         )
 
     def load_aoti():
-        return load_aoti_runtime(args.packages, model_type="qwen35", specs=meta["state"])
+        return load_aoti_runtime(args.packages, model_type=model_type, specs=meta["state"])
 
     return validate_python_stages(
         args,
@@ -124,15 +126,18 @@ def validate_python(args, meta, *, selected_groups=None):
     )
 
 
-def validate(args):
+def validate(args, *, expected_model_type=None):
     require(__debug__, "Validation requires assertions enabled")
     require(
         not args.output.exists() and not args.output.is_symlink(),
         "Use a fresh validation output directory",
     )
-    meta = read_package_metadata(args.packages, "qwen35")
+    meta = read_package_metadata(args.packages)
+    allowed = (expected_model_type,) if expected_model_type else ("qwen35", "qwen38")
+    require(meta["model_type"] in allowed, "Unsupported model type")
     validate_model_metadata(meta)
     validate_shared_weights(args.packages, meta)
+    args.native = args.native or default_build_dir(meta["model_type"]) / "xinfer_validate"
     require(
         meta["checkpoint"] == read_json(args.model_dir / "model_manifest.json"),
         "Checkpoint manifest differs",
@@ -142,14 +147,14 @@ def validate(args):
     return run_batch_waves(args, meta, validate_python, validate_native)
 
 
-def main():
-    parser = argparse.ArgumentParser(__doc__)
+def main(argv=None, *, description=__doc__, expected_model_type=None):
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--packages", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--native", type=Path, default=Path("build/qwen35/xinfer_validate"))
-    args = parser.parse_args()
-    results = validate(args)
+    parser.add_argument("--native", type=Path)
+    args = parser.parse_args(argv)
+    results = validate(args, expected_model_type=expected_model_type)
     raise SystemExit(any(item["required_failures"] for item in results.values()))
 
 

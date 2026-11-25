@@ -17,7 +17,8 @@ template <class Function> decltype(auto) with_model(const fs::path &packages, Fu
       return std::make_unique<qwen::Runtime>(packages, spec, allocated_batch_size);
     });
   }
-  case ModelType::Qwen35: {
+  case ModelType::Qwen35:
+  case ModelType::Qwen38: {
     const qwen35::Spec spec(metadata);
     return function(spec, [&](std::optional<int64_t> allocated_batch_size = std::nullopt) {
       return std::make_unique<qwen35::Runtime>(packages, spec, allocated_batch_size);

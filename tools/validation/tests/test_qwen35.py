@@ -10,7 +10,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.qwen35 import export
 from compiler.common.adapters import gated_delta_net as delta
-from tools.validation.qwen35 import model
+from compiler.qwen38 import export as fp8_export
+from tools.validation.qwen35 import model, validate_batch
 
 
 class HFCacheProtocol(unittest.TestCase):
@@ -210,6 +211,9 @@ class HFCacheProtocol(unittest.TestCase):
 
 
 class ValidationStages(unittest.TestCase):
+    model_id = "Qwen/Qwen3.5-0.8B"
+    frontend = export
+
     def setUp(self):
         self.suite = model.Suite.__new__(model.Suite)
         self.suite.model_dir = Path("unused-checkpoint")
@@ -217,11 +221,13 @@ class ValidationStages(unittest.TestCase):
         self.suite.capacity = 1024
         self.suite.max_prefill = 512
         self.suite.vocab_size = 16
+        self.suite.metadata = {"checkpoint": {"model": self.model_id}}
         self.original = SimpleNamespace(config=object())
         self.events = []
         self.loader = self.enterContext(
             patch.object(model, "load_model", return_value=self.original)
         )
+        self.suite.model_loader = self.loader
         self.enterContext(patch.object(model, "state_specs", return_value=self.suite.specs))
         self.hf = self.enterContext(
             patch.object(model, "HFStage", side_effect=[sentinel.hf, sentinel.hf_dynamic])
@@ -231,7 +237,10 @@ class ValidationStages(unittest.TestCase):
                 delta, "install_delta", side_effect=lambda _: self.events.append("adapter")
             )
         )
-        self.export_step = self.enterContext(patch.object(export, "export_step"))
+        self.export_step = self.enterContext(patch.object(self.frontend, "export_step"))
+        self.suite.step_exporter = self.export_step
+        other = export if self.frontend is fp8_export else fp8_export
+        self.other_export_step = self.enterContext(patch.object(other, "export_step"))
         self.runtime = self.enterContext(
             patch.object(model, "ExplicitRuntime", return_value=sentinel.eager)
         )
@@ -246,6 +255,7 @@ class ValidationStages(unittest.TestCase):
             self.assertIs(stage.runtime, runtime)
             self.install.assert_not_called()
             self.export_step.assert_not_called()
+            self.other_export_step.assert_not_called()
         return stages
 
     def check_eager(self, stages, functions):
@@ -264,6 +274,7 @@ class ValidationStages(unittest.TestCase):
         with self.assertRaises(StopIteration):
             next(stages)
         self.loader.assert_called_once_with(self.suite.model_dir)
+        self.other_export_step.assert_not_called()
 
     def test_packed_packages_apply_adapters_before_exporting_both_eager_entries(self):
         functions = {"prefill": Mock(), "decode": Mock()}
@@ -300,7 +311,120 @@ class ValidationStages(unittest.TestCase):
             self.assertIs(actual, runtime)
         self.loader.assert_called_once_with(self.suite.model_dir)
         self.install.assert_not_called()
+        self.export_step.assert_not_called()
+        self.other_export_step.assert_not_called()
         runtime.close.assert_called_once_with()
+
+
+class BatchFrontend(unittest.TestCase):
+    def test_exports_adapted_model_by_package_type_and_stages_sequentially(self):
+        args = SimpleNamespace(packages=Path("bundle"), model_dir=Path("checkpoint"))
+        for model_type, frontend in (("qwen35", export), ("qwen38", fp8_export)):
+            other = export if frontend is fp8_export else fp8_export
+            meta = dict(
+                checkpoint=dict(model="not-a-routing-key"),
+                model_type=model_type,
+                cache_length=1024,
+                state=[dict(shape=[8, 1])],
+                vocab_size=128,
+            )
+            hf, adapted = object(), object()
+
+            def run_stages(
+                actual_args,
+                groups,
+                actual_meta,
+                *,
+                load_reference,
+                collect_reference,
+                load_eager,
+                load_aoti,
+            ):
+                self.assertIs(actual_args, args)
+                self.assertIs(actual_meta, meta)
+                self.assertIs(collect_reference, validate_batch.collect_hf)
+                self.assertEqual(list(groups), ["transitions"])
+                load_reference()()
+                install.assert_not_called()
+                step.assert_not_called()
+                aoti.assert_not_called()
+                load_eager()
+                aoti.assert_not_called()
+                load_aoti()
+                return list(groups)
+
+            with (
+                self.subTest(model=model_type),
+                patch.object(validate_batch, "configure"),
+                patch.object(validate_batch, "load_packaged_attention_ops"),
+                patch.object(validate_batch, "load_tokenizer"),
+                patch.object(
+                    validate_batch,
+                    "case_groups",
+                    return_value={
+                        "b1": ([], [dict(batch_steps=[[[1]]])]),
+                        "transitions": ([], []),
+                    },
+                ),
+                patch(f"compiler.{model_type}.model.load_model", side_effect=[hf, adapted]) as load,
+                patch.object(validate_batch, "install_delta") as install,
+                patch.object(frontend, "export_step") as step,
+                patch.object(other, "export_step") as unused,
+                patch.object(validate_batch, "HFStage") as reference,
+                patch.object(validate_batch, "ExplicitRuntime") as eager,
+                patch.object(validate_batch, "load_aoti_runtime") as aoti,
+                patch.object(validate_batch, "validate_python_stages", side_effect=run_stages),
+            ):
+                self.assertEqual(
+                    validate_batch.validate_python(args, meta, selected_groups=["transitions"]),
+                    ["transitions"],
+                )
+                self.assertEqual(load.call_args_list, [call(args.model_dir), call(args.model_dir)])
+                install.assert_called_once_with(adapted)
+                self.assertEqual(
+                    step.call_args_list,
+                    [call(adapted, "prefill", 1024), call(adapted, "decode", 1024)],
+                )
+                unused.assert_not_called()
+                aoti.assert_called_once_with(
+                    args.packages, model_type=meta["model_type"], specs=meta["state"]
+                )
+                reference.assert_called_once_with(hf, [dict(shape=[1, 1])], 1024)
+                self.assertEqual(
+                    eager.call_args.args[0],
+                    dict.fromkeys(("prefill", "decode"), step.return_value[0].module.return_value),
+                )
+                self.assertIs(eager.call_args.kwargs["owner"], adapted)
+
+    def test_collect_hf_closes_runtimes_on_success_and_error(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                closed = []
+
+                def make_runtime():
+                    runtime = SimpleNamespace(
+                        vocab_size=4,
+                        position=1,
+                        specs=[dict(update="inplace")],
+                        state=[torch.zeros(1, 1, 2, 2, dtype=torch.bfloat16)],
+                    )
+                    runtime.reset = lambda: None
+                    runtime.step = (
+                        (lambda tokens: torch.tensor([[float("nan")] * 4], dtype=torch.bfloat16))
+                        if fail
+                        else (lambda tokens: torch.ones((1, 4), dtype=torch.bfloat16))
+                    )
+                    runtime.close = lambda r=runtime: closed.append(r)
+                    return runtime
+
+                if fail:
+                    with self.assertRaisesRegex(ValueError, "Nonfinite HF logits"):
+                        validate_batch.collect_hf(make_runtime, [[[1], [2]]])
+                else:
+                    logits, state = validate_batch.collect_hf(make_runtime, [[[1], [2]]])
+                    self.assertEqual(len(logits), 1)
+                    self.assertEqual(len(state), 2)
+                self.assertEqual(len(closed), 2)
 
 
 if __name__ == "__main__":
