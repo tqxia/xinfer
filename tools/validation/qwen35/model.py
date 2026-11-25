@@ -247,7 +247,7 @@ class Suite:
             yield Stage(
                 "hf_dynamic", HFStage(model, self.specs, self.capacity, dynamic=True, **bounds)
             )
-            from compiler.qwen35.adapters.delta import install_delta
+            from compiler.common.adapters.gated_delta_net import install_delta
             from compiler.qwen35.export import export_step
 
             install_delta(model)

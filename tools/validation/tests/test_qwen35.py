@@ -9,7 +9,7 @@ import torch
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from compiler.qwen35 import export
-from compiler.qwen35.adapters import delta
+from compiler.common.adapters import gated_delta_net as delta
 from tools.validation.qwen35 import model
 
 

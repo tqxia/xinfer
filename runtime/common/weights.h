@@ -214,6 +214,8 @@ private:
 };
 
 inline at::ScalarType shared_weights_dtype(const std::string &name) {
+  if (name == "float8_e4m3fn")
+    return at::kFloat8_e4m3fn;
   if (name == "bfloat16")
     return at::kBFloat16;
   if (name == "float16")
@@ -239,6 +241,8 @@ inline at::ScalarType shared_weights_dtype(const std::string &name) {
 
 inline const char *safetensors_dtype_name(at::ScalarType dtype) {
   switch (dtype) {
+  case at::kFloat8_e4m3fn:
+    return "F8_E4M3";
   case at::kBFloat16:
     return "BF16";
   case at::kHalf:

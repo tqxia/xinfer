@@ -14,7 +14,7 @@ from compiler.common.artifacts import MODEL_MANIFEST_NAME
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35 import model
 from compiler.qwen35.config import configure
-from compiler.qwen35.adapters.delta import install_delta
+from compiler.common.adapters.gated_delta_net import install_delta
 
 
 class ModelLoading(unittest.TestCase):

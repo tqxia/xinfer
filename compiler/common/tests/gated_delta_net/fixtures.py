@@ -10,8 +10,8 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.common.tests.tensors import bits_equal, cpu_copy, row_errors
-from compiler.qwen35.kernels.chunked import CHUNK_SIZE
-from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused, long, short
+from compiler.common.kernels.gated_delta_net.chunked import CHUNK_SIZE
+from compiler.common.kernels.gated_delta_net.recurrent import SHORT_THRESHOLD, fused, long, short
 
 LENGTHS = (1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
 PARTITIONS = (1, 2, 3, 4, 5, 31, 32, 33, 64, 65, 272)
@@ -25,52 +25,15 @@ ABS_LIMITS = {"bf16": 0.0, "fp32": 1e-7}
 
 
 def geometry(value_heads):
-    """The two supported DeltaNet profiles share key heads, dimensions and taps."""
-    if value_heads not in (16, 32):
-        raise ValueError("Value heads must be 16 (0.8B) or 32 (4B)")
+    """The supported DeltaNet profiles share key heads, dimensions and taps."""
+    if value_heads not in (16, 32, 48):
+        raise ValueError("Value heads must be 16 (0.8B), 32 (4B) or 48 (27B)")
     return dict(
         key_heads=KEY_HEADS,
         value_heads=value_heads,
         head_dim=HEAD_DIM,
         conv_width=CONV_WIDTH,
     )
-
-
-class TensorState:
-    """The small part of HF's cache protocol used by this one block.
-
-    Zero tensors represent a fresh request. Clone convolution storage because
-    HF's decode convolution mutates it; the exported interface is functional.
-    """
-
-    def __init__(self, conv, recurrent):
-        self.layers = [self]
-        self.record_past = False
-        self.conv_states = [conv.clone()]
-        self.recurrent_states = [recurrent]
-
-    def has_previous_state(self, layer_idx, state_idx=0):
-        return True
-
-    def update_conv_state(self, value, layer_idx, conv_kernel_size):
-        combined = torch.cat((self.conv_states[0], value), dim=-1)
-        self.conv_states[0] = combined[..., -conv_kernel_size:].contiguous()
-        return combined
-
-    def update_recurrent_state(self, value, layer_idx):
-        self.recurrent_states[0] = value
-        return value
-
-
-class BlockStep(torch.nn.Module):
-    def __init__(self, block):
-        super().__init__()
-        self.block = block
-
-    def forward(self, hidden, conv, recurrent):
-        cache = TensorState(conv, recurrent)
-        output = self.block(hidden, cache_params=cache)
-        return output, cache.conv_states[0], cache.recurrent_states[0]
 
 
 class Fused(torch.nn.Module):

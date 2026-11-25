@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import torch
 
-from compiler.qwen35.kernels import chunked
+from compiler.common.kernels.gated_delta_net import chunked
 
 
 class TransformTileContract(unittest.TestCase):
@@ -96,7 +96,7 @@ class TransformTiles(unittest.TestCase):
 
     @torch.inference_mode()
     def test_block_solve_matches_triangular_inverse_and_clamps_lengths(self):
-        from compiler.qwen35.kernels.recurrent import fused
+        from compiler.common.kernels.gated_delta_net.recurrent import fused
 
         torch.manual_seed(42)
         c, heads, dim = chunked.CHUNK_SIZE, 2, 128

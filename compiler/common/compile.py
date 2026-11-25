@@ -12,6 +12,7 @@ import torch
 from compiler.common.artifacts import require, sha256
 from compiler.common.metadata import ENTRY_KINDS, METADATA_FILE, finalize_metadata
 from compiler.common.weights import SharedWeightPool
+from compiler.patches.torch_2_13.aoti_constant_handles import owned_constant_handles
 
 
 SHARED_WEIGHT_OPTIONS = {
@@ -162,7 +163,7 @@ def _compile_entry(
         flush=True,
     )
     compile_start = time.perf_counter()
-    with _capture_constants() as (captured_runtime, captured_name):
+    with _capture_constants() as (captured_runtime, captured_name), owned_constant_handles():
         compile_package(
             exported,
             compiled_path,

@@ -5,10 +5,9 @@ import unittest
 import torch
 
 from compiler.common.tests.tensors import bits_equal, cpu_copy
-from compiler.qwen35.config import configure
-from compiler.qwen35.kernels.chunked import CHUNK_SIZE
-from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused
-from compiler.qwen35.tests.delta import (
+from compiler.common.kernels.gated_delta_net.chunked import CHUNK_SIZE
+from compiler.common.kernels.gated_delta_net.recurrent import SHORT_THRESHOLD, fused
+from compiler.common.tests.gated_delta_net.fixtures import (
     PARTITIONS,
     Fused,
     compare,
@@ -21,13 +20,75 @@ from compiler.qwen35.tests.delta import (
 )
 
 
+def inputs(value_heads, device="meta"):
+    channels = (32 + value_heads) * 128
+    return (
+        torch.empty(1, 1, channels, device=device),
+        torch.empty(1, 1, value_heads, device=device),
+        torch.empty(1, 1, value_heads, device=device),
+        torch.empty(1, channels, 4, device=device),
+        torch.empty(1, value_heads, 128, 128, device=device),
+        torch.empty(channels, 4, device=device),
+        torch.empty(value_heads, device=device),
+        torch.empty(value_heads, device=device),
+    )
+
+
+class RecurrentContract(unittest.TestCase):
+    def test_kernel_rejects_inconsistent_shapes_before_cuda(self):
+        for value_heads in (16, 32, 48):
+            sample = inputs(value_heads)
+            invalid = {
+                "key_heads": (0, sample[0][..., : (16 + value_heads) * 128]),
+                "channels": (0, sample[0][..., :-1]),
+                "gates": (1, sample[1][..., :-1]),
+                "conv": (3, sample[3][..., :3]),
+                "state": (4, sample[4][:, :-1]),
+                "decay": (6, sample[6][:-1]),
+            }
+            for name, (index, value) in invalid.items():
+                broken = list(sample)
+                broken[index] = value
+                with self.subTest(value_heads=value_heads, field=name):
+                    with self.assertRaisesRegex(ValueError, "Expected"):
+                        fused(*broken)
+            with self.subTest(value_heads=value_heads, field="device"):
+                with self.assertRaisesRegex(ValueError, "Expected CUDA"):
+                    fused(*sample)
+        with self.assertRaisesRegex(ValueError, "Hk=16"):
+            fused(*inputs(24))
+
+    def test_kernel_validates_decay_parameter_dtypes_before_cuda(self):
+        fp32 = inputs(16)
+        for index, name in ((6, "A_log"), (7, "dt_bias")):
+            broken = list(fp32)
+            broken[index] = broken[index].bfloat16()
+            with self.subTest(qkv="fp32", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
+                    fused(*broken)
+        bf16 = tuple(tensor if idx == 4 else tensor.bfloat16() for idx, tensor in enumerate(fp32))
+        for index, name in ((6, "A_log"), (7, "dt_bias")):
+            broken = list(bf16)
+            broken[index] = broken[index].half()
+            with self.subTest(qkv="bf16_half", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
+                    fused(*broken)
+            mixed = list(bf16)
+            mixed[index] = mixed[index].float()
+            with self.subTest(qkv="bf16_fp32_decay", field=name):
+                with self.assertRaisesRegex(ValueError, "Expected CUDA"):
+                    fused(*mixed)
+
+
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
 class RecurrentKernels:
     value_heads = 16
 
     @classmethod
     def setUpClass(cls):
-        configure()
+        torch.set_num_threads(1)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
         torch.manual_seed(35)
         cls.cases = dispatch_cases(make_cases(cls.value_heads))
         with torch.inference_mode():
@@ -214,6 +275,10 @@ class RecurrentKernels08B(RecurrentKernels, unittest.TestCase):
 
 class RecurrentKernels4B(RecurrentKernels, unittest.TestCase):
     value_heads = 32
+
+
+class RecurrentKernels27B(RecurrentKernels, unittest.TestCase):
+    value_heads = 48
 
 
 if __name__ == "__main__":

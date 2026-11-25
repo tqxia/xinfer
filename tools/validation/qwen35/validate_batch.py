@@ -8,7 +8,7 @@ import torch
 
 from compiler.common.artifacts import read_json, require
 from compiler.common.metadata import read_package_metadata
-from compiler.qwen35.adapters.delta import install_delta
+from compiler.common.adapters.gated_delta_net import install_delta
 from compiler.qwen35.export import export_step
 from compiler.qwen35.config import configure
 from compiler.qwen35.model import load_model

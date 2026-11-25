@@ -1,139 +1,51 @@
-"""DeltaNet adapter contracts and grouped-head integration with the HF module."""
+"""Shared DeltaNet adapter integration with the Qwen HF module and HybridCache."""
 
 import unittest
-from unittest.mock import patch
 
 import torch
-from transformers.models.qwen3_5.modeling_qwen3_5 import (
-    Qwen3_5GatedDeltaNet,
-    Qwen3_5TextConfig,
-)
 
 from compiler.common.tests.tensors import bits_equal, row_errors
-from compiler.qwen35.adapters.delta import DeltaCore, DeltaNet, install_delta
+from compiler.common.adapters.gated_delta_net import DeltaCore, DeltaNet
+from compiler.common.tests.test_gated_delta_net_adapter import make_block
 from compiler.qwen35.config import configure
-from compiler.qwen35.kernels.recurrent import fused
 from compiler.qwen35.model import HybridCache
-from compiler.qwen35.tests.delta import BlockStep, reference
 
 
-def make_block(value_heads, device="meta"):
-    config = Qwen3_5TextConfig(
-        hidden_size=1024 if value_heads == 16 else 2560,
-        num_hidden_layers=1,
-        layer_types=["linear_attention"],
-        linear_num_key_heads=16,
-        linear_num_value_heads=value_heads,
-        linear_key_head_dim=128,
-        linear_value_head_dim=128,
-        linear_conv_kernel_dim=4,
-    )
-    with torch.device(device):
-        block = Qwen3_5GatedDeltaNet(config, layer_idx=0)
-    return block.eval().requires_grad_(False), config
+class TensorState:
+    """The small part of HF's cache protocol used by this one block.
+
+    Zero tensors represent a fresh request. Clone convolution storage because
+    HF's decode convolution mutates it; the exported interface is functional.
+    """
+
+    def __init__(self, conv, recurrent):
+        self.layers = [self]
+        self.record_past = False
+        self.conv_states = [conv.clone()]
+        self.recurrent_states = [recurrent]
+
+    def has_previous_state(self, layer_idx, state_idx=0):
+        return True
+
+    def update_conv_state(self, value, layer_idx, conv_kernel_size):
+        combined = torch.cat((self.conv_states[0], value), dim=-1)
+        self.conv_states[0] = combined[..., -conv_kernel_size:].contiguous()
+        return combined
+
+    def update_recurrent_state(self, value, layer_idx):
+        self.recurrent_states[0] = value
+        return value
 
 
-def inputs(value_heads, device="meta"):
-    channels = (32 + value_heads) * 128
-    return (
-        torch.empty(1, 1, channels, device=device),
-        torch.empty(1, 1, value_heads, device=device),
-        torch.empty(1, 1, value_heads, device=device),
-        torch.empty(1, channels, 4, device=device),
-        torch.empty(1, value_heads, 128, 128, device=device),
-        torch.empty(channels, 4, device=device),
-        torch.empty(value_heads, device=device),
-        torch.empty(value_heads, device=device),
-    )
+class BlockStep(torch.nn.Module):
+    def __init__(self, block):
+        super().__init__()
+        self.block = block
 
-
-class DeltaAdapterContract(unittest.TestCase):
-    def test_installation_reuses_parameters_and_is_idempotent(self):
-        for value_heads in (16, 32):
-            with self.subTest(value_heads=value_heads):
-                block, config = make_block(value_heads)
-                core = DeltaCore(block)
-                self.assertIs(core.block, block)
-                self.assertEqual(
-                    {id(parameter) for parameter in core.parameters()},
-                    {id(parameter) for parameter in block.parameters()},
-                )
-                model = torch.nn.Module()
-                model.config = config
-                model.model = torch.nn.Module()
-                layer = torch.nn.Module()
-                layer.linear_attn = block
-                model.model.layers = torch.nn.ModuleList([layer])
-                parameters = {id(parameter) for parameter in model.parameters()}
-                install_delta(model)
-                adapter = layer.linear_attn
-                self.assertIsInstance(adapter, DeltaNet)
-                self.assertIs(adapter.block, block)
-                self.assertEqual({id(parameter) for parameter in model.parameters()}, parameters)
-                install_delta(model)
-                self.assertIs(layer.linear_attn, adapter)
-
-    def test_adapter_rejects_unsupported_geometry_and_convolution(self):
-        block, _ = make_block(16)
-        invalid = (
-            ("num_k_heads", 8),
-            ("num_v_heads", 24),
-            ("head_k_dim", 64),
-            ("head_v_dim", 64),
-            ("conv_kernel_size", 3),
-            ("activation", "relu"),
-        )
-        for name, value in invalid:
-            with self.subTest(field=name), patch.object(block, name, value):
-                with self.assertRaisesRegex(ValueError, "Fused DeltaNet requires"):
-                    DeltaCore(block)
-        with patch.object(block.conv1d, "bias", torch.nn.Parameter(torch.empty(1, device="meta"))):
-            with self.assertRaisesRegex(ValueError, "bias-free"):
-                DeltaCore(block)
-
-    def test_kernel_rejects_inconsistent_shapes_before_cuda(self):
-        for value_heads in (16, 32):
-            sample = inputs(value_heads)
-            invalid = {
-                "key_heads": (0, sample[0][..., : (16 + value_heads) * 128]),
-                "channels": (0, sample[0][..., :-1]),
-                "gates": (1, sample[1][..., :-1]),
-                "conv": (3, sample[3][..., :3]),
-                "state": (4, sample[4][:, :-1]),
-                "decay": (6, sample[6][:-1]),
-            }
-            for name, (index, value) in invalid.items():
-                broken = list(sample)
-                broken[index] = value
-                with self.subTest(value_heads=value_heads, field=name):
-                    with self.assertRaisesRegex(ValueError, "Expected"):
-                        fused(*broken)
-            with self.subTest(value_heads=value_heads, field="device"):
-                with self.assertRaisesRegex(ValueError, "Expected CUDA"):
-                    fused(*sample)
-        with self.assertRaisesRegex(ValueError, "Hk=16"):
-            fused(*inputs(24))
-
-    def test_kernel_validates_decay_parameter_dtypes_before_cuda(self):
-        fp32 = inputs(16)
-        for index, name in ((6, "A_log"), (7, "dt_bias")):
-            broken = list(fp32)
-            broken[index] = broken[index].bfloat16()
-            with self.subTest(qkv="fp32", field=name):
-                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
-                    fused(*broken)
-        bf16 = tuple(tensor if idx == 4 else tensor.bfloat16() for idx, tensor in enumerate(fp32))
-        for index, name in ((6, "A_log"), (7, "dt_bias")):
-            broken = list(bf16)
-            broken[index] = broken[index].half()
-            with self.subTest(qkv="bf16_half", field=name):
-                with self.assertRaisesRegex(ValueError, "Expected matching BF16 or FP32"):
-                    fused(*broken)
-            mixed = list(bf16)
-            mixed[index] = mixed[index].float()
-            with self.subTest(qkv="bf16_fp32_decay", field=name):
-                with self.assertRaisesRegex(ValueError, "Expected CUDA"):
-                    fused(*mixed)
+    def forward(self, hidden, conv, recurrent):
+        cache = TensorState(conv, recurrent)
+        output = self.block(hidden, cache_params=cache)
+        return output, cache.conv_states[0], cache.recurrent_states[0]
 
 
 @unittest.skipUnless(torch.cuda.is_available(), "CUDA is required")
@@ -149,7 +61,7 @@ class DeltaAdapterNumerics(unittest.TestCase):
 
     @torch.inference_mode()
     def test_hf_module_interface_and_functional_state(self):
-        for value_heads in (16, 32):
+        for value_heads in (16, 32, 48):
             torch.manual_seed(35 + value_heads)
             block, config = make_block(value_heads, device="cuda")
             block.to(dtype=torch.bfloat16)
@@ -210,29 +122,6 @@ class DeltaAdapterNumerics(unittest.TestCase):
                         adapter(hidden, cache_params=cache, attention_mask=torch.empty(0))
                     conv, state = next_conv, next_state
                     position += tokens
-
-    @torch.inference_mode()
-    def test_distinct_value_heads_use_grouped_qk(self):
-        torch.manual_seed(67)
-        value_heads, channels = 32, 8192
-        for tokens in (1, 98):
-            with self.subTest(tokens=tokens):
-                qkv = torch.randn(1, tokens, channels, device="cuda")
-                # Distinct gates and states prevent the repeated key heads from
-                # concealing an incorrect value-head mapping or shared state.
-                b = torch.linspace(-2, 2, value_heads, device="cuda").expand(1, tokens, -1).clone()
-                a = torch.linspace(-1, 1, value_heads, device="cuda").expand(1, tokens, -1).clone()
-                conv = torch.randn(1, channels, 4, device="cuda") * 0.1
-                state = torch.randn(1, value_heads, 128, 128, device="cuda") * 0.1
-                weight = torch.randn(channels, 4, device="cuda") * 0.2
-                A_log = torch.linspace(-3, -1, value_heads, device="cuda")
-                dt_bias = torch.linspace(-0.2, 0.2, value_heads, device="cuda")
-                sample = (qkv, b, a, conv, state, weight, A_log, dt_bias)
-                actual = fused(*sample)
-                expected = reference(*sample, chunked=tokens > 1)
-                self.check_numerical(actual[0], expected[0], 128, 0.0001)
-                self.assertTrue(bits_equal(actual[1], expected[1]))
-                self.check_numerical(actual[2], expected[2], 128 * 128, 0.0001)
 
     @torch.inference_mode()
     def test_checkpoint_native_fp32_decay_and_norm(self):

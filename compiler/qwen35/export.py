@@ -13,6 +13,7 @@ from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.passes.projection_gemv import replace_projection_gemv
 from compiler.qwen35.config import ARTIFACT_DIR, MAX_BATCH_SIZE, MAX_PREFILL, TEXT_DIR, configure
 from compiler.common.compile import compile_shared
+from compiler.patches.torch_2_13.export_cleanup import cleanup_export_globals
 from compiler.common.kernels.flash_attention.attention import (
     attention_library,
     attention_c_shims,
@@ -25,7 +26,7 @@ from compiler.common.export import (
 )
 from compiler.common.metadata import make_metadata
 from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
-from compiler.qwen35.adapters.delta import install_delta
+from compiler.common.adapters.gated_delta_net import install_delta
 
 
 def export_step(model, kind, capacity=None):
@@ -48,7 +49,7 @@ def export_step(model, kind, capacity=None):
         token_shape[1] = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
     shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
     # Retain the singleton batch in AOTI guards, including the torch.cond branches.
-    with symbolic_config.patch(backed_size_oblivious=True):
+    with symbolic_config.patch(backed_size_oblivious=True), cleanup_export_globals():
         exported = torch.export.export(ModelStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
     packing = pack_linears(exported)

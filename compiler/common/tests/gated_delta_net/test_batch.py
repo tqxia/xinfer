@@ -5,9 +5,8 @@ import unittest
 import torch
 
 from compiler.common.tests.tensors import bits_equal, row_errors
-from compiler.qwen35.config import configure
-from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused, long, short
-from compiler.qwen35.tests.delta import ABS_LIMITS, LIMITS, reference
+from compiler.common.kernels.gated_delta_net.recurrent import SHORT_THRESHOLD, fused, long, short
+from compiler.common.tests.gated_delta_net.fixtures import ABS_LIMITS, LIMITS, reference
 
 
 def batch_inputs(batch, tokens, dtype, *, value_heads=16, counts=None, nonzero=True):
@@ -86,7 +85,9 @@ def assert_numerics(test, actual, expected, dtype):
 class BatchedDeltaNet(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        configure()
+        torch.set_num_threads(1)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
 
     @torch.inference_mode()
     def test_same_dtype_hf_reference(self):
@@ -170,6 +171,34 @@ class BatchedDeltaNet(unittest.TestCase):
                 inputs[7] = torch.linspace(-0.2, 0.2, 16, device="cuda", dtype=torch.float32)
                 actual = fused(*inputs)
                 assert_numerics(self, actual, independent_reference(inputs), torch.bfloat16)
+
+    @torch.inference_mode()
+    def test_distinct_value_heads_use_grouped_qk(self):
+        torch.manual_seed(67)
+        value_heads, channels = 32, 8192
+        for tokens in (1, 98):
+            with self.subTest(tokens=tokens):
+                qkv = torch.randn(1, tokens, channels, device="cuda")
+                # Distinct gates and states prevent the repeated key heads from
+                # concealing an incorrect value-head mapping or shared state.
+                b = torch.linspace(-2, 2, value_heads, device="cuda").expand(1, tokens, -1).clone()
+                a = torch.linspace(-1, 1, value_heads, device="cuda").expand(1, tokens, -1).clone()
+                conv = torch.randn(1, channels, 4, device="cuda") * 0.1
+                state = torch.randn(1, value_heads, 128, 128, device="cuda") * 0.1
+                weight = torch.randn(channels, 4, device="cuda") * 0.2
+                A_log = torch.linspace(-3, -1, value_heads, device="cuda")
+                dt_bias = torch.linspace(-0.2, 0.2, value_heads, device="cuda")
+                sample = (qkv, b, a, conv, state, weight, A_log, dt_bias)
+                actual = fused(*sample)
+                expected = reference(*sample, chunked=tokens > 1)
+                for index, width in ((0, 128), (2, 128 * 128)):
+                    error = row_errors(
+                        actual[index].float().reshape(-1, width),
+                        expected[index].float().reshape(-1, width),
+                    )
+                    self.assertLessEqual(error["relative_l2"], 0.0001)
+                    self.assertLessEqual(error["peak_relative"], 0.0001)
+                self.assertTrue(bits_equal(actual[1], expected[1]))
 
 
 if __name__ == "__main__":

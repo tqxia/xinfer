@@ -12,7 +12,9 @@ Pick the simplest path that matches the measured bottleneck:
   memory-bound fusions and custom reductions/GEMVs. Packaged automatically by
   AOTI with no extra shared library. See
   `compiler/common/kernels/gemv/projection_gemv.py`,
-  `compiler/common/kernels/kv/kv_cache.py`, and `compiler/qwen35/kernels/`.
+  `compiler/common/kernels/kv/kv_cache.py`,
+  `compiler/common/kernels/gated_delta_net/`, and
+  `compiler/common/kernels/gemm/finegrained_fp8.py`.
 - **Native CUDA C++ / targeted PTX** — use when instruction-level scheduling,
   custom synchronization, or C++ dispatch beats Triton. Build into `lib*.so`
   and link via `native_libraries` + `custom_op_shims` in

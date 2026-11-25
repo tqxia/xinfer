@@ -10,10 +10,9 @@ import torch
 from torch.fx.experimental import _config as symbolic_config
 
 from compiler.common.tests.tensors import bits_equal, cpu_copy
-from compiler.qwen35.tests.test_batch import batch_inputs
-from compiler.qwen35.config import configure
-from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD, fused
-from compiler.qwen35.tests.delta import (
+from compiler.common.tests.gated_delta_net.test_batch import batch_inputs
+from compiler.common.kernels.gated_delta_net.recurrent import SHORT_THRESHOLD, fused
+from compiler.common.tests.gated_delta_net.fixtures import (
     Fused,
     dispatch_cases,
     inputs_for,
@@ -62,7 +61,9 @@ class AOTIKernels:
         cls.cases = []
         # Release package loaders before deleting their temporary archives.
         cls.addClassCleanup(cls.clear_runtime)
-        configure()
+        torch.set_num_threads(1)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
         torch.manual_seed(35)
         original = make_cases(cls.value_heads)
         cls.cases = compiled_cases(original)
@@ -185,6 +186,10 @@ class AOTIKernels4B(AOTIKernels, unittest.TestCase):
     value_heads = 32
 
 
+class AOTIKernels27B(AOTIKernels, unittest.TestCase):
+    value_heads = 48
+
+
 def export_batched(dtype, mode, *, decay_dtype=None):
     sample = list(batch_inputs(2, 32 if mode == "prefill" else 1, dtype))
     if decay_dtype is not None:
@@ -206,7 +211,9 @@ def export_batched(dtype, mode, *, decay_dtype=None):
 class BatchedAOTI(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        configure()
+        torch.set_num_threads(1)
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
         guards = patch.dict(os.environ, {"AOTI_RUNTIME_CHECK_INPUTS": "1"})
         guards.start()
         cls.addClassCleanup(guards.stop)

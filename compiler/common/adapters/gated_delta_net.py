@@ -1,8 +1,8 @@
-"""Qwen3.5 DeltaNet adapter with a Triton recurrent core."""
+"""Shared Qwen Gated DeltaNet adapter for projections and explicit cache state."""
 
 import torch
 
-from compiler.qwen35.kernels.recurrent import fused
+from compiler.common.kernels.gated_delta_net.recurrent import fused
 
 
 class DeltaCore(torch.nn.Module):
@@ -17,11 +17,11 @@ class DeltaCore(torch.nn.Module):
         self.block = block
         if (
             block.num_k_heads != 16
-            or block.num_v_heads not in (16, 32)
+            or block.num_v_heads not in (16, 32, 48)
             or block.head_k_dim != 128
             or block.head_v_dim != 128
         ):
-            raise ValueError("Fused DeltaNet requires Hk=16, Hv=16 or 32 and K=V=128")
+            raise ValueError("Fused DeltaNet requires Hk=16, Hv=16, 32 or 48 and K=V=128")
         if (
             block.conv_kernel_size != 4
             or block.conv1d.bias is not None

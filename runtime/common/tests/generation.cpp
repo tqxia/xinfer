@@ -456,23 +456,32 @@ int main() {
         meta["entries"][kind]["sha256"] = xinfer::sha256_file(pkg);
       }
 
-      // Pack U8 (1 byte) before I64 (16 bytes at odd offset 1) + BF16 (12 bytes) + empty F32.
-      const std::vector<uint8_t> payload(29, 0x2a);
+      require(xinfer::shared_weights_dtype("float8_e4m3fn") == at::kFloat8_e4m3fn &&
+                  std::string(xinfer::safetensors_dtype_name(at::kFloat8_e4m3fn)) == "F8_E4M3",
+              "Unexpected float8_e4m3fn safetensors dtype mapping");
+
+      // Pack U8 (1) + I64 (16 at odd offset 1) + BF16 (12) + F8_E4M3 (6) + empty F32.
+      const std::vector<uint8_t> payload(35, 0x2a);
       const Json base_manifest = {
           {"identity", {{"kind", "cpu_test"}}},
           {"identity_sha256", identity},
           {"entries",
            {{"prefill",
              {{"package_sha256", meta["entries"]["prefill"]["sha256"]},
-              {"constants", {{"c_u8", "v_u8"}, {"c_i64", "v_i64"}, {"c_bf16", "v_bf16"}}}}},
+              {"constants",
+               {{"c_u8", "v_u8"}, {"c_i64", "v_i64"}, {"c_bf16", "v_bf16"}, {"c_fp8", "v_fp8"}}}}},
             {"decode",
              {{"package_sha256", meta["entries"]["decode"]["sha256"]},
-              {"constants", {{"c_bf16_alias", "v_bf16_slice"}, {"c_empty", "v_empty"}}}}}}},
+              {"constants",
+               {{"c_bf16_alias", "v_bf16_slice"},
+                {"c_fp8_alias", "v_fp8_slice"},
+                {"c_empty", "v_empty"}}}}}}},
           {"sources", Json::object()},
           {"storages",
            {{"w_u8", {{"dtype", "uint8"}, {"device", "cpu"}, {"bytes", 1}}},
             {"w_i64", {{"dtype", "int64"}, {"device", "cpu"}, {"bytes", 16}}},
             {"w_bf16", {{"dtype", "bfloat16"}, {"device", "cpu"}, {"bytes", 12}}},
+            {"w_fp8", {{"dtype", "float8_e4m3fn"}, {"device", "cpu"}, {"bytes", 6}}},
             {"w_empty", {{"dtype", "float32"}, {"device", "cpu"}, {"bytes", 0}}}}},
           {"tensors",
            {{"v_u8",
@@ -503,6 +512,20 @@ int main() {
               {"shape", {2, 2}},
               {"stride", {2, 1}},
               {"offset", 1}}},
+            {"v_fp8",
+             {{"storage", "w_fp8"},
+              {"dtype", "float8_e4m3fn"},
+              {"device", "cpu"},
+              {"shape", {2, 3}},
+              {"stride", {3, 1}},
+              {"offset", 0}}},
+            {"v_fp8_slice",
+             {{"storage", "w_fp8"},
+              {"dtype", "float8_e4m3fn"},
+              {"device", "cpu"},
+              {"shape", {2, 2}},
+              {"stride", {2, 1}},
+              {"offset", 1}}},
             {"v_empty",
              {{"storage", "w_empty"},
               {"dtype", "float32"},
@@ -516,7 +539,8 @@ int main() {
           {"w_u8", {{"dtype", "U8"}, {"shape", {1}}, {"data_offsets", {0, 1}}}},
           {"w_i64", {{"dtype", "I64"}, {"shape", {2}}, {"data_offsets", {1, 17}}}},
           {"w_bf16", {{"dtype", "BF16"}, {"shape", {6}}, {"data_offsets", {17, 29}}}},
-          {"w_empty", {{"dtype", "F32"}, {"shape", {0}}, {"data_offsets", {29, 29}}}},
+          {"w_fp8", {{"dtype", "F8_E4M3"}, {"shape", {6}}, {"data_offsets", {29, 35}}}},
+          {"w_empty", {{"dtype", "F32"}, {"shape", {0}}, {"data_offsets", {35, 35}}}},
       };
 
       const auto archive = weights_bundle.directory / xinfer::kSharedWeightsFile;
@@ -603,7 +627,7 @@ int main() {
       // Extra tensor in safetensors header must be rejected on load.
       {
         Json header = base_header;
-        header["w_extra"] = {{"dtype", "U8"}, {"shape", {0}}, {"data_offsets", {29, 29}}};
+        header["w_extra"] = {{"dtype", "U8"}, {"shape", {0}}, {"data_offsets", {35, 35}}};
         write_safetensors(archive, header, payload);
         const auto bad_contract = update_contract();
         expect_error(
@@ -617,7 +641,7 @@ int main() {
       // Out-of-bounds data_offsets must be rejected on load.
       {
         Json header = base_header;
-        header["w_bf16"]["data_offsets"] = {18, 30};
+        header["w_fp8"]["data_offsets"] = {30, 36};
         write_safetensors(archive, header, payload);
         const auto bad_contract = update_contract();
         expect_error(
@@ -628,10 +652,12 @@ int main() {
             "Shared weights archive tensor metadata mismatch");
       }
 
-      // Header dtype differing from manifest dtype must be rejected on load.
-      {
+      // Header dtype differing from manifest dtype (including FP8 tags) must be rejected on load.
+      for (const auto &[tensor_name, wrong_dtype] :
+           std::vector<std::pair<std::string, std::string>>{
+               {"w_bf16", "F16"}, {"w_fp8", "U8"}, {"w_fp8", "F8_E5M2"}}) {
         Json header = base_header;
-        header["w_bf16"]["dtype"] = "F16";
+        header[tensor_name]["dtype"] = wrong_dtype;
         write_safetensors(archive, header, payload);
         const auto bad_contract = update_contract();
         expect_error(
@@ -641,6 +667,9 @@ int main() {
             },
             "Shared weights archive tensor metadata mismatch");
       }
+
+      expect_error([&] { (void)xinfer::shared_weights_dtype("float8_e5m2"); },
+                   "Shared weights dtype is unsupported");
 
       // Out-of-bounds view into storage must be rejected before allocation.
       {
