@@ -1,7 +1,6 @@
 """Validate dynamic Qwen3.5 batches through BF16 HF, packed eager, AOTI and C++."""
 
 import argparse
-import gc
 from pathlib import Path
 
 import torch
@@ -12,9 +11,15 @@ from compiler.common.adapters.gated_delta_net import install_delta
 from compiler.qwen35.export import export_step
 from compiler.qwen35.config import configure
 from compiler.qwen35.model import load_model
+from tools.packages import validate_model_metadata, validate_shared_weights
 from tools.prepare.common import load_tokenizer
 from tools.validation.common.attention import load_packaged_attention_ops
-from tools.validation.common.batch import case_groups, validate_native, validate_python_stages
+from tools.validation.common.batch import (
+    case_groups,
+    run_batch_waves,
+    validate_native,
+    validate_python_stages,
+)
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
 from tools.validation.qwen35.model import HFStage
 
@@ -70,10 +75,12 @@ def collect_hf(factory, steps):
 
 
 @torch.inference_mode()
-def validate_python(args, meta):
+def validate_python(args, meta, *, selected_groups=None):
     configure()
     load_packaged_attention_ops(args.packages)
     groups = case_groups(load_tokenizer(args.model_dir), meta["cache_length"])
+    if selected_groups is not None:
+        groups = {name: groups[name] for name in selected_groups if name in groups}
     for name, (_, cases) in groups.items():
         if name != "transitions":
             cases.extend(delta_cases(cases[0]["batch_steps"][0]))
@@ -95,7 +102,12 @@ def validate_python(args, meta):
             for kind in ("prefill", "decode")
         }
         return ExplicitRuntime(
-            functions, meta["state"], meta["vocab_size"], meta["cache_length"], require_write=True
+            functions,
+            meta["state"],
+            meta["vocab_size"],
+            meta["cache_length"],
+            owner=adapted,
+            require_write=True,
         )
 
     def load_aoti():
@@ -114,18 +126,20 @@ def validate_python(args, meta):
 
 def validate(args):
     require(__debug__, "Validation requires assertions enabled")
-    require(not args.output.exists(), "Use a fresh validation output directory")
+    require(
+        not args.output.exists() and not args.output.is_symlink(),
+        "Use a fresh validation output directory",
+    )
     meta = read_package_metadata(args.packages, "qwen35")
+    validate_model_metadata(meta)
+    validate_shared_weights(args.packages, meta)
     require(
         meta["checkpoint"] == read_json(args.model_dir / "model_manifest.json"),
         "Checkpoint manifest differs",
     )
     (args.output / "expected").mkdir(parents=True)
     torch.set_num_threads(1)
-    groups = validate_python(args, meta)
-    gc.collect()
-    torch.cuda.empty_cache()
-    return validate_native(args, groups)
+    return run_batch_waves(args, meta, validate_python, validate_native)
 
 
 def main():

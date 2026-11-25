@@ -2,6 +2,7 @@
 
 import gc
 import json
+import math
 import shutil
 import subprocess
 
@@ -12,7 +13,6 @@ from tools.prepare.common import encode_prompt
 from tools.validation.common.runner import capture_state
 from tools.validation.common.validation import (
     bits_equal,
-    disk_snapshot,
     tensor_metrics,
     record_failure,
     write_trace,
@@ -190,10 +190,37 @@ def compare_stage(report, name, stage, actual, reference, *, logits):
         record_failure(report["failures"], metric, required=logits, **context)
 
 
-def _release_stage(runtime):
+class _SavedTensors:
+    """Streaming disk-backed tensor sequence avoiding open mmaps and alignment pitfalls."""
+
+    def __init__(self, path, tensors):
+        self.path = path
+        self.specs = [(tuple(tensor.shape), tensor.dtype) for tensor in tensors]
+        write_trace(path, tensors)
+
+    def __len__(self):
+        return len(self.specs)
+
+    def __iter__(self):
+        with self.path.open("rb") as stream:
+            for shape, dtype in self.specs:
+                tensor = torch.empty(shape, dtype=dtype)
+                if tensor.numel():
+                    view = memoryview(tensor.reshape(-1).view(torch.uint8).numpy()).cast("B")
+                    require(stream.readinto(view) == len(view), f"Truncated snapshot: {self.path}")
+                yield tensor
+            require(not stream.read(1), f"Extra snapshot bytes: {self.path}")
+
+    def unlink(self):
+        self.path.unlink(missing_ok=True)
+
+
+def _close_stage(runtime):
     if hasattr(runtime, "close"):
         runtime.close()
-    del runtime
+
+
+def _release_cuda():
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -225,7 +252,7 @@ def validate_python_stages(
         reports[group] = dict(
             batch_size=len(texts),
             prompts=texts,
-            prompt_tokens=[len(row) for row in cases[0]["batch_steps"][0]],
+            prompt_tokens=[len(row) for row in cases[0]["batch_steps"][0]] if cases else [],
             numerical_policy=dict(name="shared_bf16", version=1),
             comparisons=[],
             failures=[],
@@ -245,12 +272,14 @@ def validate_python_stages(
                     hf_logits, hf_state = collect_reference(reference, case["batch_steps"])
                     logits_path, state_path = _snapshot_paths(staging, "hf", group, name)
                     hf_traces[group, name] = (
-                        disk_snapshot(logits_path, hf_logits),
-                        disk_snapshot(state_path, hf_state),
+                        _SavedTensors(logits_path, hf_logits),
+                        _SavedTensors(state_path, hf_state),
                     )
+                    del hf_logits, hf_state
         finally:
-            _release_stage(reference)
-            del reference
+            _close_stage(reference)
+            reference = None
+            _release_cuda()
 
         eager = load_eager()
         try:
@@ -261,12 +290,14 @@ def validate_python_stages(
                     eager_logits, eager_state = collect_explicit(eager, case)
                     logits_path, state_path = _snapshot_paths(staging, "eager", group, name)
                     eager_traces[group, name] = (
-                        disk_snapshot(logits_path, eager_logits),
-                        disk_snapshot(state_path, eager_state),
+                        _SavedTensors(logits_path, eager_logits),
+                        _SavedTensors(state_path, eager_state),
                     )
+                    del eager_logits, eager_state
         finally:
-            _release_stage(eager)
-            del eager
+            _close_stage(eager)
+            eager = None
+            _release_cuda()
 
         aoti = load_aoti()
         try:
@@ -282,22 +313,28 @@ def validate_python_stages(
                     actual_logits, actual_state = collect_explicit(aoti, case)
                     hf_logits, hf_state = hf_traces.pop((group, name))
                     eager_logits, eager_state = eager_traces.pop((group, name))
-                    stages = [
-                        ("eager/hf", (eager_logits, eager_state), (hf_logits, hf_state)),
-                        ("aoti/eager", (actual_logits, actual_state), (eager_logits, eager_state)),
-                        ("aoti/hf", (actual_logits, actual_state), (hf_logits, hf_state)),
-                    ]
-                    for stage, actual, reference_data in stages:
-                        compare_stage(
-                            report, name, stage, actual[0], reference_data[0], logits=True
-                        )
-                        compare_stage(
-                            report, name, stage, actual[1], reference_data[1], logits=False
-                        )
-                    del hf_logits, hf_state, eager_logits, eager_state
-                    for stage_name in ("hf", "eager"):
-                        for path in _snapshot_paths(staging, stage_name, group, name):
-                            path.unlink(missing_ok=True)
+                    try:
+                        stages = [
+                            ("eager/hf", (eager_logits, eager_state), (hf_logits, hf_state)),
+                            (
+                                "aoti/eager",
+                                (actual_logits, actual_state),
+                                (eager_logits, eager_state),
+                            ),
+                            ("aoti/hf", (actual_logits, actual_state), (hf_logits, hf_state)),
+                        ]
+                        for stage, actual, reference_data in stages:
+                            compare_stage(
+                                report, name, stage, actual[0], reference_data[0], logits=True
+                            )
+                            compare_stage(
+                                report, name, stage, actual[1], reference_data[1], logits=False
+                            )
+                    finally:
+                        hf_logits.unlink()
+                        hf_state.unlink()
+                        eager_logits.unlink()
+                        eager_state.unlink()
                     if name == "prompts":
                         base_logits = actual_logits
                         base_row_state = [tensor.clone() for tensor in actual_state]
@@ -352,9 +389,12 @@ def validate_python_stages(
                         )
                     )
                     write_json(output / "report.json", report)
+                    del actual_logits, actual_state
+                del base_logits, base_row_state
         finally:
-            _release_stage(aoti)
-            del aoti
+            _close_stage(aoti)
+            aoti = None
+            _release_cuda()
     finally:
         hf_traces.clear()
         eager_traces.clear()
@@ -362,14 +402,57 @@ def validate_python_stages(
     return list(groups)
 
 
-def validate_native(args, groups):
+# Default per-stage temporary snapshot budget (40 GiB => <= 80 GiB for HF + eager)
+# before partitioning large models across Python->native group waves.
+WAVE_STAGE_BUDGET_BYTES = 40 * 1024**3
+_GROUP_ROW_ESTIMATES = (
+    ("b1", 12),
+    ("b2", 42),
+    ("b3", 66),
+    ("b4", 88),
+    ("b5", 110),
+    ("b6", 132),
+    ("b7", 154),
+    ("b8", 176),
+    ("transitions", 16),
+)
+
+
+def row_state_bytes(specs):
+    """Upper bound on one active row's state bytes from package state descriptors."""
+    return sum(
+        math.prod(spec["shape"][1:]) * (4 if spec["dtype"] == "float32" else 2) for spec in specs
+    )
+
+
+def group_waves(specs, *, max_stage_bytes=WAVE_STAGE_BUDGET_BYTES):
+    """Partition batch groups into waves so disk-backed stage snapshots stay bounded."""
+    per_row = row_state_bytes(specs)
+    waves, current, current_bytes = [], [], 0
+    for name, rows in _GROUP_ROW_ESTIMATES:
+        estimated = rows * per_row
+        if current and current_bytes + estimated > max_stage_bytes:
+            waves.append(current)
+            current, current_bytes = [], 0
+        current.append(name)
+        current_bytes += estimated
+    if current:
+        waves.append(current)
+    return waves
+
+
+def validate_native(
+    args, groups, *, cases_name="cases.json", native_name="native", write_summary=True
+):
     cases = []
     for group in groups:
         manifest = read_json(args.output / group / "cases.json")
         cases.extend(dict(case, name=f"{group}_{case['name']}") for case in manifest["cases"])
     expected_dir = args.output / "expected"
+    cases_path = args.output / cases_name
+    native_dir = args.output / native_name
     write_json(
-        args.output / "cases.json",
+        cases_path,
         dict(
             trace_format=2,
             cases=cases,
@@ -380,13 +463,13 @@ def validate_native(args, groups):
         [
             str(args.native.resolve()),
             str(args.packages.resolve()),
-            str((args.output / "cases.json").resolve()),
-            str((args.output / "native").resolve()),
+            str(cases_path.resolve()),
+            str(native_dir.resolve()),
         ],
         env=native_environment(),
         check=True,
     )
-    native = read_json(args.output / "native/native.json")
+    native = read_json(native_dir / "native.json")
     require(
         native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"],
         "Invalid native execution environment",
@@ -414,6 +497,60 @@ def validate_native(args, groups):
     for case in cases:
         for step in case.get("state_steps", ()):
             (expected_dir / f"{case['name']}.{step}.states").unlink(missing_ok=True)
+    if write_summary:
+        write_json(args.output / "summary.json", results)
+        print(json.dumps(results))
+    return results
+
+
+def run_batch_waves(
+    args,
+    meta,
+    validate_python_fn,
+    validate_native_fn,
+    *,
+    max_stage_bytes=WAVE_STAGE_BUDGET_BYTES,
+):
+    """Run Python and native validation in one pass or disk-bounded group waves."""
+    waves = group_waves(meta["state"], max_stage_bytes=max_stage_bytes)
+    if len(waves) == 1:
+        groups = validate_python_fn(args, meta)
+        _release_cuda()
+        return validate_native_fn(args, groups)
+
+    results, all_cases, native_cases, native_meta = {}, [], [], None
+    for index, wave in enumerate(waves):
+        print(f"Batch wave {index + 1}/{len(waves)}: {wave}", flush=True)
+        groups = validate_python_fn(args, meta, selected_groups=wave)
+        _release_cuda()
+        cases_name = f"cases-wave-{index}.json"
+        native_name = f"native-wave-{index}"
+        results.update(
+            validate_native_fn(
+                args,
+                groups,
+                cases_name=cases_name,
+                native_name=native_name,
+                write_summary=False,
+            )
+        )
+        all_cases.extend(read_json(args.output / cases_name)["cases"])
+        wave_native = read_json(args.output / native_name / "native.json")
+        if native_meta is None:
+            native_meta = {k: v for k, v in wave_native.items() if k != "cases"}
+        native_cases.extend(wave_native["cases"])
+
+    write_json(
+        args.output / "cases.json",
+        dict(
+            trace_format=2,
+            cases=all_cases,
+            expected_directory=str((args.output / "expected").resolve()),
+        ),
+    )
+    native_dir = args.output / "native"
+    native_dir.mkdir(exist_ok=True)
+    write_json(native_dir / "native.json", dict(**(native_meta or {}), cases=native_cases))
     write_json(args.output / "summary.json", results)
     print(json.dumps(results))
     return results

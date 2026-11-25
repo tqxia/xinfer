@@ -12,7 +12,7 @@ import torch
 from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR, configure
-from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
+from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, require, sha256
 from compiler.common.metadata import METADATA_FILE, read_package_metadata
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.packages import validate_shared_weights
@@ -295,7 +295,7 @@ def runtime_cases(tokenizer, metadata):
     cases.extend(long_context_cases(seed, capacity, maximum))
     if capacity >= 8196:
         cases.append(dict(name="long_prompt_8193_generate", prompt=stream[:8193], limit=3))
-    for prompt in chat_prompts("qwen35"):
+    for prompt in chat_prompts():
         cases.append(
             dict(
                 name=prompt["name"],
@@ -450,8 +450,12 @@ def write_report(output, report):
 @torch.inference_mode()
 def validate_runtime(args):
     """Check native parity, CLI deployment and rejection contracts in order."""
-    args.output.mkdir(parents=True, exist_ok=False)
+    require(
+        not args.output.exists() and not args.output.is_symlink(),
+        "Use a fresh validation output directory",
+    )
     metadata, tokenizer = preflight(args)
+    args.output.mkdir(parents=True, exist_ok=False)
     teacher, chats, capital, eos = runtime_cases(tokenizer, metadata)
     keys = {
         (case["name"], step)

@@ -156,7 +156,7 @@ class Suite:
 
     def fixtures(self, hf_runtime):
         references = {}
-        for definition in chat_prompts(self.model_type):
+        for definition in chat_prompts():
             name = definition["name"]
             prompt = encode_prompt(self.tokenizer, definition["text"])
             require(len(prompt) + 64 <= self.capacity, f"Context budget exceeded for {name}")

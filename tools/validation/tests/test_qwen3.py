@@ -84,7 +84,7 @@ class LiveHFReferences(unittest.TestCase):
         )
         bundle = metadata()
         bundle.update(torch_version=torch.__version__, vocab_size=64, eos_token_ids=[1])
-        self.prompts = chat_prompts("qwen3")
+        self.prompts = chat_prompts()
         self.prompt_ids = {
             item["text"]: [10 + index, 20 + index] for index, item in enumerate(self.prompts)
         }

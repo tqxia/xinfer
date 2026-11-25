@@ -112,7 +112,7 @@ def check_generation(packages, out, env, tokenizer, run, report, native_traces):
     prompt_directory = out / "prompts"
     prompt_directory.mkdir()
     prompt_paths = {}
-    for case in sorted(chat_prompts("qwen3"), key=lambda item: item["name"]):
+    for case in sorted(chat_prompts(), key=lambda item: item["name"]):
         name = case["name"]
         prompt = encode_prompt(tokenizer, case["text"])
         prompt_path = prompt_directory / f"{name}.ids"

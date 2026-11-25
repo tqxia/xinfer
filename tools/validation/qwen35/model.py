@@ -196,7 +196,7 @@ class Suite:
                 text=prompt["text"],
                 limit=64,
             )
-            for prompt in chat_prompts(self.model_type)
+            for prompt in chat_prompts()
         ]
         for chat in chats:
             generated = greedy(hf_runtime, chat["prompt"], chat["limit"], self.eos)

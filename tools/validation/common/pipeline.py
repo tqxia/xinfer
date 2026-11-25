@@ -95,6 +95,7 @@ def _describe_validation(suite, policy, native, report):
     report["reference_protocol"] = dict(
         dtype="bfloat16", cache="HF StaticCache", teacher_inputs="matched tokens and partitions"
     )
+    report["reference_protocol"].update(getattr(suite, "reference_protocol", {}))
     report["state_snapshot_policy"] = dict(
         kv="populated prefix; unused future fill checked independently on capture"
         if suite.capacity > 1024
@@ -194,7 +195,7 @@ def _run_python_aoti(suite, packages, cases, chats, specs, report, output):
         )
         lengths = (
             (2, 22, 64, 65, 96, 97, 98, 511, 512)
-            if suite.model_type == "qwen35"
+            if suite.model_type in ("qwen35", "qwen38")
             else (1, 2, 7, 128, 511, 512)
         )
         seed_case = next(
@@ -230,7 +231,7 @@ def _compare_native(
         exact=True,
         state_keys=suite.native_state_keys(cases),
         greedy_state_names={case["name"] for case in chats}
-        if suite.model_type == "qwen35"
+        if suite.model_type in ("qwen35", "qwen38")
         else set(),
     )
     report["native_bitwise"] = len(report["failures"]) == failure_start
