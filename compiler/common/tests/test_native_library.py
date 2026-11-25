@@ -38,7 +38,7 @@ class NativeLibrarySelection(unittest.TestCase):
             attention.load_attention_ops(self.library)
         self.assertEqual(
             [call.args[0] for call in self.torch.library.register_fake.call_args_list],
-            ["xinfer::flash_attention", "xinfer::batched_flash_attention"],
+            ["xinfer::batched_flash_attention"],
         )
 
     def test_unconfigured_loader_ignores_a_stale_default_build(self):
@@ -121,7 +121,7 @@ class NativeLibrarySelection(unittest.TestCase):
             attention.load_attention_ops()
             attention.load_attention_ops(self.library)
         self.torch.ops.load_library.assert_called_once_with(str(self.library))
-        self.assertEqual(self.torch.library.register_fake.call_count, 2)
+        self.assertEqual(self.torch.library.register_fake.call_count, 1)
 
     def test_conflicting_library_is_rejected(self):
         with patch.dict("sys.modules", {"torch": self.torch}):

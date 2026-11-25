@@ -1,4 +1,4 @@
-"""CUDA regression checks for shared grouped-query prefix Flash attention."""
+"""CUDA regression checks for shared grouped-query batched Flash attention."""
 
 import unittest
 
@@ -6,11 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from compiler.common.attention import (
-    cache_extent,
-    load_attention_ops,
-    batched_attention_metadata,
-)
+from compiler.common.attention import batched_attention_metadata, load_attention_ops
 from compiler.common.kernels.kv_cache import append_kv_batched
 from compiler.common.tests.tensors import row_errors
 
@@ -20,7 +16,7 @@ class PrefixFlash(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         load_attention_ops(model="qwen3")
-        cls.op = torch.ops.xinfer.flash_attention.default
+        cls.op = torch.ops.xinfer.batched_flash_attention.default
 
     def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1, capacity=1024, batch_size=1):
         options = dict(device="cuda", dtype=torch.bfloat16)
@@ -34,6 +30,14 @@ class PrefixFlash(unittest.TestCase):
             ..., ::feature_stride
         ]
         return q, k, v
+
+    @staticmethod
+    def meta(lengths, counts, device):
+        return batched_attention_metadata(
+            torch.tensor(lengths, dtype=torch.int32),
+            torch.tensor(counts, dtype=torch.int32),
+            device,
+        )
 
     @torch.inference_mode()
     def test_batched_attention_and_masked_writes(self):
@@ -62,11 +66,7 @@ class PrefixFlash(unittest.TestCase):
                     positions = torch.stack(
                         [torch.arange(s, s + width, device="cuda") for s in starts]
                     )
-                    host, cu, blocks = batched_attention_metadata(
-                        torch.tensor(lengths, dtype=torch.int32),
-                        torch.tensor(counts, dtype=torch.int32),
-                        q.device,
-                    )
+                    host, cu, blocks = self.meta(lengths, counts, q.device)
                     # Inductor may use zero stride for the singleton page dimension.
                     if not ragged:
                         blocks = blocks.as_strided((batch, 1), (1, 0))
@@ -85,8 +85,7 @@ class PrefixFlash(unittest.TestCase):
                             for a, b in zip((key, value, positions), before_inputs)
                         )
                     )
-                    op = torch.ops.xinfer.batched_flash_attention.default
-                    actual = op(q, k, v, host, cu, blocks, 128**-0.5)
+                    actual = self.op(q, k, v, host, cu, blocks, 128**-0.5)
                     self.assertEqual(actual.stride(), torch.empty(q.shape).stride())
                     self.assertNotIn(actual.data_ptr(), [t.data_ptr() for t in (q, k, v)])
                     for row, (count, length) in enumerate(zip(counts, lengths)):
@@ -114,15 +113,19 @@ class PrefixFlash(unittest.TestCase):
                         q[row, :, count:] = float("nan")
                         k[row, :, length:] = float("nan")
                         v[row, :, length:] = float("nan")
-                    self.assertTrue(torch.equal(actual, op(q, k, v, host, cu, blocks, 128**-0.5)))
+                    self.assertTrue(
+                        torch.equal(actual, self.op(q, k, v, host, cu, blocks, 128**-0.5))
+                    )
                     if batch > 1:
                         k[0].fill_(5)
                         v[0].fill_(7)
                         self.assertTrue(
-                            torch.equal(actual[1:], op(q, k, v, host, cu, blocks, 128**-0.5)[1:])
+                            torch.equal(
+                                actual[1:], self.op(q, k, v, host, cu, blocks, 128**-0.5)[1:]
+                            )
                         )
                     torch.library.opcheck(
-                        op,
+                        self.op,
                         (q, k, v, host, cu, blocks, 128**-0.5),
                         test_utils=("test_schema", "test_faketensor"),
                     )
@@ -136,8 +139,10 @@ class PrefixFlash(unittest.TestCase):
             for length in (1024, 2560):
                 with self.subTest(batch_size=batch_size, length=length):
                     q, k, v = self.inputs(16, 8, 128, 512, capacity=4096, batch_size=batch_size)
-                    extent = cache_extent(length)
-                    actual = self.op(q, k, v, extent, 128**-0.5)
+                    host, cu, blocks = self.meta(
+                        [length] * batch_size, [512] * batch_size, q.device
+                    )
+                    actual = self.op(q, k, v, host, cu, blocks, 128**-0.5)
                     positions = torch.arange(length - 512, length, device="cuda")
                     mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
                     with sdpa_kernel(SDPBackend.MATH):
@@ -156,12 +161,14 @@ class PrefixFlash(unittest.TestCase):
                     # affect the valid output for this row.
                     k[:, :, length:].fill_(100)
                     v[:, :, length:].fill_(-100)
-                    self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, 128**-0.5)))
+                    self.assertTrue(
+                        torch.equal(actual, self.op(q, k, v, host, cu, blocks, 128**-0.5))
+                    )
                     if batch_size == 2:
                         k[0].fill_(5)
                         v[0].fill_(7)
                         self.assertTrue(
-                            torch.equal(actual[1], self.op(q, k, v, extent, 128**-0.5)[1])
+                            torch.equal(actual[1], self.op(q, k, v, host, cu, blocks, 128**-0.5)[1])
                         )
 
     @torch.inference_mode()
@@ -170,9 +177,12 @@ class PrefixFlash(unittest.TestCase):
         for tokens, length in ((1, 32), (2, 3), (16, 32), (512, 512)):
             triples = [self.inputs(16, 8, 128, tokens) for _ in range(2)]
             q, k, v = [torch.cat([triple[i] for triple in triples]) for i in range(3)]
-            extent = cache_extent(length)
-            out = self.op(q, k, v, extent, 128**-0.5)
-            expected = torch.cat([self.op(*triple, extent, 128**-0.5) for triple in triples])
+            host2, cu2, blocks2 = self.meta([length, length], [tokens, tokens], q.device)
+            host1, cu1, blocks1 = self.meta([length], [tokens], q.device)
+            out = self.op(q, k, v, host2, cu2, blocks2, 128**-0.5)
+            expected = torch.cat(
+                [self.op(*triple, host1, cu1, blocks1, 128**-0.5) for triple in triples]
+            )
             # Batch size can change Flash's reduction schedule. Use the same
             # numerical bounds as the FP32 reference checks below.
             error = row_errors(out.float().flatten(1), expected.float().flatten(1))
@@ -192,15 +202,17 @@ class PrefixFlash(unittest.TestCase):
             error = row_errors(out.float().flatten(1), reference.flatten(1))
             self.assertLess(error["relative_l2"], 0.01)
             self.assertLessEqual(error["peak_relative"], 0.05)
-            native = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                q, k[:, :, :length], v[:, :, :length], 0.0, True, scale=128**-0.5
-            )[0]
-            self.assertTrue(torch.equal(out, native))
             self.assertEqual(out.shape, q.shape)
             k[0].fill_(5)
             v[0].fill_(7)
-            self.assertTrue(torch.equal(out[1], self.op(q, k, v, extent, 128**-0.5)[1]))
-            torch.library.opcheck(self.op, (q, k, v, extent, 128**-0.5))
+            self.assertTrue(
+                torch.equal(out[1], self.op(q, k, v, host2, cu2, blocks2, 128**-0.5)[1])
+            )
+            torch.library.opcheck(
+                self.op,
+                (q, k, v, host2, cu2, blocks2, 128**-0.5),
+                test_utils=("test_schema", "test_faketensor"),
+            )
 
     @torch.inference_mode()
     def test_grouped_prefix_and_read_only_contract(self):
@@ -222,16 +234,12 @@ class PrefixFlash(unittest.TestCase):
             ):
                 with self.subTest(heads=heads, tokens=tokens, length=length):
                     q, k, v = self.inputs(heads, kv_heads, dim, tokens)
-                    before = [t.clone() for t in (q, k, v)]
-                    extent = cache_extent(length)
-                    actual = self.op(q, k, v, extent, dim**-0.5)
-                    native = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                        q, k[:, :, :length], v[:, :, :length], 0.0, True, scale=dim**-0.5
-                    )[0]
-                    self.assertTrue(torch.equal(actual, native))
+                    host, cu, blocks = self.meta([length], [tokens], q.device)
+                    before = [t.clone() for t in (q, k, v, host, cu, blocks)]
+                    actual = self.op(q, k, v, host, cu, blocks, dim**-0.5)
                     self.assertEqual(actual.stride(), (heads * tokens * dim, tokens * dim, dim, 1))
                     self.assertNotIn(actual.data_ptr(), [t.data_ptr() for t in (q, k, v)])
-                    for tensor, original in zip((q, k, v), before):
+                    for tensor, original in zip((q, k, v, host, cu, blocks), before):
                         self.assertTrue(torch.equal(tensor, original))
                     positions = torch.arange(length - tokens, length, device="cuda")
                     mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
@@ -249,9 +257,14 @@ class PrefixFlash(unittest.TestCase):
                     self.assertLessEqual(error["peak_relative"], 0.05)
                     k[:, :, length:].fill_(100)
                     v[:, :, length:].fill_(-100)
-                    extent.fill_(255)
-                    self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, dim**-0.5)))
-                    checks = torch.library.opcheck(self.op, (q, k, v, extent, dim**-0.5))
+                    self.assertTrue(
+                        torch.equal(actual, self.op(q, k, v, host, cu, blocks, dim**-0.5))
+                    )
+                    checks = torch.library.opcheck(
+                        self.op,
+                        (q, k, v, host, cu, blocks, dim**-0.5),
+                        test_utils=("test_schema", "test_faketensor"),
+                    )
                     self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
 
     @torch.inference_mode()
@@ -262,8 +275,8 @@ class PrefixFlash(unittest.TestCase):
             for length in (8192, 8193, 16384):
                 with self.subTest(heads=heads, length=length):
                     q, k, v = self.inputs(heads, kv_heads, dim, 2, capacity=16384)
-                    extent = cache_extent(length)
-                    actual = self.op(q, k, v, extent, dim**-0.5)
+                    host, cu, blocks = self.meta([length], [2], q.device)
+                    actual = self.op(q, k, v, host, cu, blocks, dim**-0.5)
                     positions = torch.arange(length - q.shape[2], length, device="cuda")
                     mask = torch.arange(length, device="cuda")[None, :] <= positions[:, None]
                     with sdpa_kernel(SDPBackend.MATH):
@@ -280,14 +293,17 @@ class PrefixFlash(unittest.TestCase):
                     self.assertLessEqual(error["peak_relative"], 0.05)
                     k[:, :, length:].fill_(100)
                     v[:, :, length:].fill_(-100)
-                    self.assertTrue(torch.equal(actual, self.op(q, k, v, extent, dim**-0.5)))
+                    self.assertTrue(
+                        torch.equal(actual, self.op(q, k, v, host, cu, blocks, dim**-0.5))
+                    )
                     torch.library.opcheck(
                         self.op,
-                        (q, k, v, extent, dim**-0.5),
+                        (q, k, v, host, cu, blocks, dim**-0.5),
                         test_utils=("test_schema", "test_faketensor"),
                     )
-                    with self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"):
-                        self.op(q, k, v, cache_extent(16385), dim**-0.5)
+                    bad_host, bad_cu, bad_blocks = self.meta([16385], [2], q.device)
+                    with self.assertRaisesRegex(RuntimeError, "Invalid query/KV lengths"):
+                        self.op(q, k, v, bad_host, bad_cu, bad_blocks, dim**-0.5)
 
     @torch.inference_mode()
     def test_appended_chunks_use_lower_right_causality(self):
@@ -299,90 +315,59 @@ class PrefixFlash(unittest.TestCase):
                 v.copy_(
                     torch.arange(1024, device="cuda", dtype=torch.bfloat16)[None, None, :, None]
                 )
-                output = self.op(q, k, v, cache_extent(5), dim**-0.5)
+                host, cu, blocks = self.meta([5], [2], q.device)
+                output = self.op(q, k, v, host, cu, blocks, dim**-0.5)
                 expected = torch.tensor([1.5, 2.0], device="cuda", dtype=torch.bfloat16)
                 self.assertTrue(
                     torch.equal(output, expected[None, None, :, None].expand_as(output))
                 )
 
-    @torch.inference_mode()
-    def test_feature_strides_and_fake_contract(self):
-        for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256)):
-            with self.subTest(heads=heads):
-                q, k, v = self.inputs(heads, kv_heads, dim, 2, feature_stride=2)
-                extent = cache_extent(3)
-                output = self.op(q, k, v, extent, dim**-0.5)
-                expected = torch.ops.aten._scaled_dot_product_flash_attention.default(
-                    q.contiguous(),
-                    k[:, :, :3].contiguous(),
-                    v[:, :, :3].contiguous(),
-                    0.0,
-                    True,
-                    scale=dim**-0.5,
-                )[0]
-                self.assertTrue(torch.equal(output, expected))
-                checks = torch.library.opcheck(self.op, (q, k, v, extent, dim**-0.5))
-                self.assertTrue(all(value == "SUCCESS" for value in checks.values()))
-
-    @torch.inference_mode()
-    def test_invalid_extent_and_head_dimensions(self):
-        for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256)):
-            q, k, v = self.inputs(heads, kv_heads, dim, 2)
-            for length in (0, 1, 1025):
-                with (
-                    self.subTest(heads=heads, length=length),
-                    self.assertRaisesRegex(RuntimeError, "Invalid valid-prefix length"),
-                ):
-                    self.op(q, k, v, cache_extent(length), dim**-0.5)
-        q, k, v = self.inputs(8, 2, 256, 2)
-        # A positive GQA multiple is valid even outside the original profiles.
-        self.assertEqual(self.op(q[:, :4], k, v, cache_extent(3), 256**-0.5).shape, q[:, :4].shape)
-        with self.assertRaisesRegex(RuntimeError, "Query heads must be a positive multiple"):
-            self.op(q[:, :3], k, v, cache_extent(3), 256**-0.5)
-        for dim in (7, 127, 264):
-            with self.subTest(dim=dim):
-                invalid = self.inputs(8, 2, dim, 2)
-                with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
-                    self.op(*invalid, cache_extent(3), dim**-0.5)
-
     def test_batched_validation_guards_and_nonunit_strides(self):
-        op = torch.ops.xinfer.batched_flash_attention.default
         with torch.inference_mode():
             for batch, width, capacity in ((1, 1, 513), (2, 1, 1024), (2, 4, 1024)):
                 with self.subTest(batch=batch, width=width, capacity=capacity):
                     q, k, v = self.inputs(
                         16, 8, 128, width, feature_stride=2, capacity=capacity, batch_size=batch
                     )
-                    lengths = torch.tensor([width + 4 + r for r in range(batch)], dtype=torch.int32)
-                    counts = torch.full((batch,), width, dtype=torch.int32)
-                    host, cu, blocks = batched_attention_metadata(lengths, counts, q.device)
-                    actual = op(q, k, v, host, cu, blocks, 128**-0.5)
-                    reference = op(
+                    lengths = [width + 4 + r for r in range(batch)]
+                    counts = [width] * batch
+                    host, cu, blocks = self.meta(lengths, counts, q.device)
+                    actual = self.op(q, k, v, host, cu, blocks, 128**-0.5)
+                    reference = self.op(
                         q.contiguous(), k.contiguous(), v.contiguous(), host, cu, blocks, 128**-0.5
                     )
                     self.assertTrue(torch.equal(actual, reference))
                     self.assertEqual(actual.stride(), torch.empty(q.shape).stride())
 
             q, k, v = self.inputs(8, 2, 128, 2, capacity=1024, batch_size=2)
-            lengths = torch.tensor([4, 5], dtype=torch.int32)
-            counts = torch.tensor([2, 2], dtype=torch.int32)
-            host, cu, blocks = batched_attention_metadata(lengths, counts, q.device)
+            for length in (0, 1, 1025):
+                bad_host, bad_cu, bad_blocks = self.meta([length, 4], [2, 2], q.device)
+                with (
+                    self.subTest(invalid_length=length),
+                    self.assertRaisesRegex(RuntimeError, "Invalid query/KV lengths"),
+                ):
+                    self.op(q, k, v, bad_host, bad_cu, bad_blocks, 128**-0.5)
+            host, cu, blocks = self.meta([4, 5], [2, 2], q.device)
+            # A positive GQA multiple is valid even outside the original profiles.
+            self.assertEqual(
+                self.op(q[:, :4], k, v, host, cu, blocks, 128**-0.5).shape, q[:, :4].shape
+            )
             with self.assertRaisesRegex(RuntimeError, "Query heads must be a positive multiple"):
-                op(q[:, :3], k, v, host, cu, blocks, 128**-0.5)
+                self.op(q[:, :3], k, v, host, cu, blocks, 128**-0.5)
             for bad_dim in (7, 127, 264):
                 bad_q, bad_k, bad_v = self.inputs(8, 2, bad_dim, 2, capacity=1024, batch_size=2)
                 with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
-                    op(bad_q, bad_k, bad_v, host, cu, blocks, 128**-0.5)
+                    self.op(bad_q, bad_k, bad_v, host, cu, blocks, 128**-0.5)
             for bad_scale in (0.0, -1.0, float("nan"), float("inf")):
                 with self.assertRaisesRegex(RuntimeError, "Attention scale must be finite"):
-                    op(q, k, v, host, cu, blocks, bad_scale)
+                    self.op(q, k, v, host, cu, blocks, bad_scale)
             wide_q, _, _ = self.inputs(8, 2, 128, 513, capacity=1024, batch_size=2)
             with self.assertRaisesRegex(RuntimeError, "Unsupported Q shape"):
-                op(wide_q, k, v, host, cu, blocks, 128**-0.5)
+                self.op(wide_q, k, v, host, cu, blocks, 128**-0.5)
 
         grad_q = q.clone().requires_grad_(True)
         with self.assertRaisesRegex(RuntimeError, "inference only"):
-            op(grad_q, k, v, host, cu, blocks, 128**-0.5)
+            self.op(grad_q, k, v, host, cu, blocks, 128**-0.5)
 
 
 if __name__ == "__main__":

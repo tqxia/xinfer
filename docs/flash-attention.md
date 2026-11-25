@@ -25,8 +25,7 @@ and [Qwen3.5](../compiler/qwen35/README.md#model-interface-and-state) guides.
 The Python fake implementation supplies export shape checks;
 [package metadata](package-metadata.md#dynamic-batch-interfaces) defines the
 per-row calling convention. Both exports enable `backed_size_oblivious` to
-retain singleton batches. The base `xinfer::flash_attention` prefix operator
-also remains available for focused component tests.
+retain singleton batches.
 
 Adapters reject arbitrary masks, training, attention-weight outputs and unsupported cache/layer
 types. Load HF weights before installing adapters: wrapping reuses parameter

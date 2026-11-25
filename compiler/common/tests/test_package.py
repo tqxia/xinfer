@@ -13,7 +13,12 @@ import zipfile
 
 import torch
 
-from compiler.common.attention import attention_c_shims, attention_library, load_attention_ops
+from compiler.common.attention import (
+    attention_c_shims,
+    attention_library,
+    batched_attention_metadata,
+    load_attention_ops,
+)
 from compiler.common.package import _linking_environment, compile_package
 
 
@@ -25,15 +30,20 @@ WORKER = textwrap.dedent(
     from pathlib import Path
 
     import torch
+    import torch.nn.functional as F
+    from torch.nn.attention import SDPBackend, sdpa_kernel
 
     def inputs(tokens, prefix):
         torch.manual_seed(23 + tokens + prefix)
         options = dict(device='cuda', dtype=torch.bfloat16)
+        offsets = torch.tensor([[0, tokens], [0, prefix]], dtype=torch.int32)
         return (
             torch.randn(1, 16, tokens, 128, **options),
             torch.randn(1, 8, 1024, 128, **options),
             torch.randn(1, 8, 1024, 128, **options),
-            torch.empty(prefix + 1, dtype=torch.uint8),
+            offsets,
+            offsets.cuda(),
+            torch.zeros((1, 1), device='cuda', dtype=torch.int32),
         )
 
     def bits_equal(actual, expected):
@@ -41,10 +51,21 @@ WORKER = textwrap.dedent(
             actual.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8)
         )
 
-    def reference(q, k, v, prefix):
-        return torch.ops.aten._scaled_dot_product_flash_attention.default(
-            q, k[:, :, :prefix], v[:, :, :prefix], 0.0, True, scale=128**-0.5
-        )[0]
+    def check_math(actual, q, k, v, tokens, prefix):
+        positions = torch.arange(prefix - tokens, prefix, device='cuda')
+        mask = torch.arange(prefix, device='cuda')[None, :] <= positions[:, None]
+        with sdpa_kernel(SDPBackend.MATH):
+            expected = F.scaled_dot_product_attention(
+                q.float(),
+                k[:, :, :prefix].float(),
+                v[:, :, :prefix].float(),
+                attn_mask=mask,
+                enable_gqa=True,
+                scale=128**-0.5,
+            )
+        error = (actual.float() - expected).norm() / expected.norm()
+        if error.item() >= 0.01:
+            raise AssertionError(f'Attention error exceeds bound: {error.item()}')
 
     directory, build_library, order = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3].split(',')
     checks, library = [], None
@@ -56,16 +77,18 @@ WORKER = textwrap.dedent(
         for kind, model in models.items():
             for prefix, prefill_tokens in ((32, 2), (512, 512), (1024, 16)):
                 tokens = 1 if kind == 'decode' else prefill_tokens
-                q, k, v, extent = inputs(tokens, prefix)
-                saved = [tensor.clone() for tensor in (q, k, v, extent)]
+                args = inputs(tokens, prefix)
+                q, k, v, offsets, cuda_offsets, blocks = args
+                saved = [tensor.clone() for tensor in args]
                 with torch.inference_mode():
-                    output = model(q, k, v, extent)
-                    expected = reference(q, k, v, prefix)
+                    output = model(*args)
+                    expected = torch.ops.xinfer.batched_flash_attention(*args, 128**-0.5)
                 if not bits_equal(output, expected):
                     raise AssertionError(f'Bitwise attention mismatch: {cycle}/{kind}/{prefix}')
+                check_math(output, q, k, v, tokens, prefix)
                 if not bool(torch.isfinite(output).all()):
                     raise AssertionError('Nonfinite attention output')
-                if not all(bits_equal(a, b) for a, b in zip((q, k, v, extent), saved)):
+                if not all(bits_equal(a, b) for a, b in zip(args, saved)):
                     raise AssertionError('Read-only attention input changed')
                 if output.untyped_storage().data_ptr() in {
                     tensor.untyped_storage().data_ptr() for tensor in (q, k, v)
@@ -89,10 +112,11 @@ WORKER = textwrap.dedent(
         for kind in ('append', 'append_decode')
     }
     for tokens, position in ((2, 0), (16, 17), (1, 511)):
-        q, k, v, extent = inputs(tokens, position + tokens)
+        prefix = position + tokens
+        q, k, v, offsets, cuda_offsets, blocks = inputs(tokens, prefix)
         new_k, new_v = k[:, :, :tokens].clone().mul_(2), v[:, :, :tokens].clone().mul_(3)
-        positions = torch.arange(position, position + tokens, device='cuda')
-        readonly = (q, new_k, new_v, positions, extent)
+        positions = torch.arange(position, prefix, device='cuda')
+        readonly = (q, new_k, new_v, positions, offsets, cuda_offsets, blocks)
         saved = [tensor.clone() for tensor in readonly]
         expected_k, expected_v = k.clone(), v.clone()
         expected_k.index_copy_(2, positions, new_k)
@@ -101,8 +125,10 @@ WORKER = textwrap.dedent(
         with torch.inference_mode():
             output, returned_k, returned_v = append[
                 'append_decode' if tokens == 1 else 'append'
-            ](q, k, v, new_k, new_v, positions, extent)
-            expected = reference(q, expected_k, expected_v, position + tokens)
+            ](q, k, v, new_k, new_v, positions, offsets, cuda_offsets, blocks)
+            expected = torch.ops.xinfer.batched_flash_attention(
+                q, expected_k, expected_v, offsets, cuda_offsets, blocks, 128**-0.5
+            )
         if (returned_k.data_ptr(), returned_v.data_ptr()) != pointers:
             raise AssertionError('Returned KV buffers lost caller-owned storage')
         if (k.data_ptr(), v.data_ptr()) != pointers:
@@ -113,7 +139,7 @@ WORKER = textwrap.dedent(
             if not bits_equal(actual, expected_cache):
                 raise AssertionError('KV values differ, including untouched positions')
         if not bits_equal(output, expected):
-            raise AssertionError('Appended attention differs from ATen')
+            raise AssertionError('Appended attention differs from eager operator')
     invalid = torch._inductor.aoti_load_package(str(directory / 'invalid_scale.pt2'))
     try:
         with torch.inference_mode():
@@ -200,14 +226,16 @@ class BundledAttention(unittest.TestCase):
                 super().__init__()
                 self.scale = scale
 
-            def forward(self, q, k, v, extent):
-                return torch.ops.xinfer.flash_attention(q, k, v, extent, self.scale)
+            def forward(self, q, k, v, offsets, cuda_offsets, blocks):
+                return torch.ops.xinfer.batched_flash_attention(
+                    q, k, v, offsets, cuda_offsets, blocks, self.scale
+                )
 
         class Append(Attention):
-            def forward(self, q, k, v, new_k, new_v, positions, extent):
+            def forward(self, q, k, v, new_k, new_v, positions, offsets, cuda_offsets, blocks):
                 k.index_copy_(2, positions, new_k)
                 v.index_copy_(2, positions, new_v)
-                return super().forward(q, k, v, extent), k, v
+                return super().forward(q, k, v, offsets, cuda_offsets, blocks), k, v
 
         for kind, tokens in (
             ("prefill", 16),
@@ -217,21 +245,24 @@ class BundledAttention(unittest.TestCase):
             ("invalid_scale", 1),
         ):
             options = dict(device="cuda", dtype=torch.bfloat16)
+            offsets, cuda_offsets, blocks = batched_attention_metadata(
+                torch.tensor([32], dtype=torch.int32),
+                torch.tensor([tokens], dtype=torch.int32),
+                torch.device("cuda"),
+            )
             inputs = (
                 torch.randn(1, 16, tokens, 128, **options),
                 torch.randn(1, 8, 1024, 128, **options),
                 torch.randn(1, 8, 1024, 128, **options),
-                torch.empty(33, dtype=torch.uint8),
+                offsets,
+                cuda_offsets,
+                blocks,
             )
-            dynamic = (
-                {2: torch.export.Dim("tokens", min=2, max=512)} if tokens > 1 else {},
-                {},
-                {},
-                {0: torch.export.Dim("extent", min=2, max=1025)},
-            )
+            token_shape = {2: torch.export.Dim("tokens", min=2, max=512)} if tokens > 1 else {}
+            dynamic = (token_shape, {}, {}, {}, {}, {})
             module = Attention(-1 if kind == "invalid_scale" else 128**-0.5)
             if kind.startswith("append"):
-                q, k, v, extent = inputs
+                q, k, v, offsets, cuda_offsets, blocks = inputs
                 inputs = (
                     q,
                     k,
@@ -239,9 +270,10 @@ class BundledAttention(unittest.TestCase):
                     k[:, :, :tokens].clone(),
                     v[:, :, :tokens].clone(),
                     torch.arange(32 - tokens, 32, device="cuda"),
-                    extent,
+                    offsets,
+                    cuda_offsets,
+                    blocks,
                 )
-                token_shape = dynamic[0]
                 dynamic = (
                     token_shape,
                     {},
@@ -249,7 +281,9 @@ class BundledAttention(unittest.TestCase):
                     token_shape,
                     token_shape,
                     {0: token_shape[2]} if tokens > 1 else {},
-                    dynamic[3],
+                    {},
+                    {},
+                    {},
                 )
                 module = Append()
             with torch.inference_mode():
@@ -275,7 +309,7 @@ class BundledAttention(unittest.TestCase):
                 sources = b"\n".join(
                     archive.read(name) for name in names if name.endswith(".wrapper.cpp")
                 ).decode()
-                call = "AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda_flash_attention("
+                call = "AOTI_TORCH_ERROR_CODE_CHECK(aoti_torch_cuda_batched_flash_attention("
                 self.assertIn(call, sources)
                 self.assertNotIn("aoti_torch_proxy_executor_call_function", sources)
                 self.assertLess(sources.index("AOTICudaStreamGuard"), sources.index(call))

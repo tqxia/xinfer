@@ -11,7 +11,7 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextRotaryEmbedding,
 )
 
-from compiler.common.attention import cache_extent, load_attention_ops
+from compiler.common.attention import batched_attention_metadata, load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
 from compiler.qwen35.config import configure
@@ -254,7 +254,12 @@ class PrefixFlashGeometry(unittest.TestCase):
             torch.randn(1, kv_heads, TEST_CAPACITY, dim, device="cuda", dtype=torch.bfloat16)
             for _ in range(2)
         )
-        return q, k, v, cache_extent(length), max(dim, 1) ** -0.5
+        offsets, cuda_offsets, blocks = batched_attention_metadata(
+            torch.tensor([length], dtype=torch.int32),
+            torch.tensor([tokens], dtype=torch.int32),
+            q.device,
+        )
+        return q, k, v, offsets, cuda_offsets, blocks, max(dim, 1) ** -0.5
 
     @torch.inference_mode()
     def test_input_derived_gqa_geometry_and_fake_contract(self):
@@ -262,8 +267,8 @@ class PrefixFlashGeometry(unittest.TestCase):
         for heads, kv_heads, dim in ((16, 8, 128), (8, 2, 256), (16, 4, 256), (6, 2, 64)):
             with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
                 inputs = self.inputs(heads, kv_heads, dim)
-                q, k, v, extent, scale = inputs
-                length = extent.numel() - 1
+                q, k, v, offsets, _, _, scale = inputs
+                length = int(offsets[1, 1].item())
                 key = k[:, :, :length].repeat_interleave(heads // kv_heads, dim=1).float()
                 value = v[:, :, :length].repeat_interleave(heads // kv_heads, dim=1).float()
                 scores = (q.float() @ key.transpose(-2, -1)) * scale
@@ -273,13 +278,13 @@ class PrefixFlashGeometry(unittest.TestCase):
                     > torch.arange(length - q.shape[2], length, device="cuda")[:, None]
                 )
                 expected = scores.masked_fill(future, -torch.inf).softmax(-1) @ value
-                actual = torch.ops.xinfer.flash_attention(*inputs)
+                actual = torch.ops.xinfer.batched_flash_attention(*inputs)
                 self.assertEqual(actual.shape, q.shape)
                 self.assertTrue(actual.is_contiguous())
                 relative_error = (actual.float() - expected).norm() / expected.norm()
                 self.assertLessEqual(relative_error.item(), 0.01)
                 torch.library.opcheck(
-                    torch.ops.xinfer.flash_attention.default,
+                    torch.ops.xinfer.batched_flash_attention.default,
                     inputs,
                     test_utils=("test_schema", "test_faketensor"),
                 )
@@ -289,12 +294,12 @@ class PrefixFlashGeometry(unittest.TestCase):
         for heads, kv_heads, dim in ((0, 2, 128), (8, 0, 128), (3, 2, 128)):
             with self.subTest(heads=heads, kv_heads=kv_heads, dim=dim):
                 with self.assertRaisesRegex(RuntimeError, "Query heads"):
-                    torch.ops.xinfer.flash_attention(*self.inputs(heads, kv_heads, dim))
+                    torch.ops.xinfer.batched_flash_attention(*self.inputs(heads, kv_heads, dim))
         for dim in (0, 7, 127, 264):
             with self.subTest(dim=dim):
                 inputs = self.inputs(8, 2, dim)
                 with self.assertRaisesRegex(RuntimeError, "Flash head dimension"):
-                    torch.ops.xinfer.flash_attention(*inputs[:-1], 1.0)
+                    torch.ops.xinfer.batched_flash_attention(*inputs[:-1], 1.0)
 
 
 if __name__ == "__main__":
