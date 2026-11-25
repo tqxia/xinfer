@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 
 from compiler.common.artifacts import json_sha256, sha256
+from compiler.common.metadata import METADATA_FILE
 from compiler.common.package import compile_package
 from compiler.common.weights import (
     SHARED_WEIGHT_OPTIONS,
@@ -52,12 +53,7 @@ def inputs(rows):
 def export_entry(model, kind, directory):
     exported = torch.export.export(model, (inputs(1 if kind == "decode" else 3),))
     (directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
-    return exported, lambda compiled: dict(
-        entry_point=kind,
-        marker="preserved metadata",
-        package_bytes=compiled.stat().st_size,
-        package_sha256=sha256(compiled),
-    )
+    return exported, None
 
 
 def compile_bundle(model, directory, identity):
@@ -67,11 +63,12 @@ def compile_bundle(model, directory, identity):
             lambda kind, stage: export_entry(model, kind, stage),
             identity=identity,
             inductor_configs={"emulate_precision_casts": True},
+            metadata=dict(marker="preserved metadata"),
         )
 
 
-def metadata(directory, kind="decode"):
-    return json.loads((directory / (kind + ".json")).read_text())
+def metadata(directory):
+    return json.loads((directory / METADATA_FILE).read_text())
 
 
 def mapping(directory):
@@ -122,26 +119,27 @@ class SharedWeightBundle(unittest.TestCase):
         if identity is not None:
             contract["identity"] = payload["identity_sha256"]
         if update_checksums:
-            for kind in ("prefill", "decode"):
-                package = metadata(directory, kind)
-                package["shared_weights"] = contract
-                (directory / (kind + ".json")).write_text(json.dumps(package))
+            package = metadata(directory)
+            package["shared_weights"] = contract
+            (directory / METADATA_FILE).write_text(json.dumps(package))
         return contract
 
     def test_one_export_publishes_complete_pair_with_one_archive(self):
         self.assertEqual(self.archive_writes, 1)
         self.assertEqual(set(mapping(self.bundle)["entries"]), {"prefill", "decode"})
-        prefill, decode = (metadata(self.bundle, kind) for kind in ("prefill", "decode"))
-        self.assertEqual(prefill["shared_weights"], decode["shared_weights"])
-        self.assertEqual(self.contract, decode["shared_weights"])
+        bundle_meta = metadata(self.bundle)
+        self.assertEqual(self.contract, bundle_meta["shared_weights"])
         self.assertEqual(self.contract["bytes"], (self.bundle / SHARED_WEIGHTS_FILE).stat().st_size)
         self.assertEqual(self.contract["sha256"], sha256(self.bundle / SHARED_WEIGHTS_FILE))
+        self.assertEqual(bundle_meta["marker"], "preserved metadata")
         self.assertFalse((self.bundle / "weights.pt").exists())
         self.assertFalse((self.bundle / "weights.json").exists())
-        for kind, package in (("prefill", prefill), ("decode", decode)):
-            self.assertEqual(package["entry_point"], kind)
-            self.assertEqual(package["marker"], "preserved metadata")
-            self.assertEqual(package["package_sha256"], sha256(self.bundle / (kind + ".pt2")))
+        self.assertFalse((self.bundle / "prefill.json").exists())
+        self.assertFalse((self.bundle / "decode.json").exists())
+        for kind in ("prefill", "decode"):
+            self.assertEqual(
+                bundle_meta["entries"][kind]["sha256"], sha256(self.bundle / (kind + ".pt2"))
+            )
             self.assertTrue((self.bundle / (kind + ".graph.txt")).is_file())
         read_shared_weight_manifest(self.bundle, self.contract)
         directory = self.copy_bundle()
@@ -215,10 +213,7 @@ class SharedWeightBundle(unittest.TestCase):
             return real_compile(*args, **kwargs)
 
         def prepare(kind, stage):
-            exported, factory = export_entry(self.model, kind, stage)
-            return exported, lambda path: dict(
-                factory(path), inductor_configs={"always_keep_tensor_constants": False}
-            )
+            return export_entry(self.model, kind, stage)
 
         with (
             torch.inference_mode(),
@@ -242,12 +237,12 @@ class SharedWeightBundle(unittest.TestCase):
         self.assertEqual(compile_native.call_count, 2)
         first, second = (call.kwargs["inductor_configs"] for call in compile_graph.call_args_list)
         self.assertIsNot(first, second)
-        for kind, call in zip(("prefill", "decode"), compile_graph.call_args_list):
+        self.assertNotIn("inductor_configs", metadata(directory))
+        for call in compile_graph.call_args_list:
             self.assertIs(call.kwargs["custom_op_shims"], shims)
-            recorded = metadata(directory, kind)["inductor_configs"]
-            self.assertEqual(recorded, call.kwargs["inductor_configs"])
-            for key, value in {**requested, **SHARED_WEIGHT_OPTIONS}.items():
-                self.assertEqual(recorded[key], value)
+            self.assertEqual(
+                call.kwargs["inductor_configs"], {**requested, **SHARED_WEIGHT_OPTIONS}
+            )
 
     def test_populated_and_invalid_destinations_are_rejected_before_export(self):
         temporary = tempfile.TemporaryDirectory(dir=self.root)
@@ -306,13 +301,10 @@ class SharedWeightBundle(unittest.TestCase):
 
                     def prepare(kind, stage):
                         kinds.append(kind)
-                        exported, factory = export_entry(self.model, kind, stage)
-                        if failure == "metadata" and kind == "decode":
+                        return export_entry(self.model, kind, stage)
 
-                            def factory(_):
-                                raise RuntimeError("decode metadata failed")
-
-                        return exported, factory
+                    def fail_metadata():
+                        raise RuntimeError("decode metadata failed")
 
                     def compile_graph(exported, **options):
                         if failure == "compile" and Path(options["package_path"]).stem == "decode":
@@ -328,7 +320,11 @@ class SharedWeightBundle(unittest.TestCase):
                     ):
                         with self.assertRaisesRegex(RuntimeError, f"decode {failure} failed"):
                             compile_shared(
-                                directory, prepare, identity=self.identity, inductor_configs={}
+                                directory,
+                                prepare,
+                                identity=self.identity,
+                                inductor_configs={},
+                                metadata=fail_metadata if failure == "metadata" else None,
                             )
                     self.assertEqual(kinds, ["prefill", "decode"])
                     save_archive.assert_not_called()
@@ -386,8 +382,9 @@ class SharedWeightBundle(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "archive metadata is invalid"):
                 read_shared_weight_manifest(directory, metadata(directory)["shared_weights"])
 
-    def test_archive_contract_rejects_noncanonical_path_and_retired_format(self):
+    def test_archive_contract_rejects_retired_file_and_format_keys(self):
         for altered in (
+            dict(self.contract, file="weights.safetensors"),
             dict(self.contract, file="../weights.safetensors"),
             dict(self.contract, file="weights.pt"),
             dict(self.contract, format=2, file="weights.pt"),

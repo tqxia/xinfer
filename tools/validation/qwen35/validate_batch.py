@@ -115,9 +115,9 @@ def validate_python(args, meta):
 def validate(args):
     require(__debug__, "Validation requires assertions enabled")
     require(not args.output.exists(), "Use a fresh validation output directory")
-    meta = read_package_metadata(args.packages, "qwen35")["decode"]
+    meta = read_package_metadata(args.packages, "qwen35")
     require(
-        meta["checkpoint"]["manifest"] == read_json(args.model_dir / "model_manifest.json"),
+        meta["checkpoint"] == read_json(args.model_dir / "model_manifest.json"),
         "Checkpoint manifest differs",
     )
     (args.output / "expected").mkdir(parents=True)

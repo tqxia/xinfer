@@ -19,6 +19,7 @@ from compiler.common.artifacts import (
     sha256,
 )
 from compiler.common.metadata import (
+    METADATA_FILE,
     read_package_metadata,
     validate_metadata,
 )
@@ -47,10 +48,8 @@ def preflight(binary, packages, out):
     assert "not found" not in linked
     assert "libpython" not in linked and "libtorch_python" not in linked
     metadata = read_package_metadata(packages, model_type="qwen3")
-    for entry in metadata.values():
-        validate_model_metadata(entry)
-    spec = metadata["decode"]
-    validate_shared_weights(packages, metadata["prefill"], spec)
+    validate_model_metadata(metadata)
+    validate_shared_weights(packages, metadata)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     return metadata
@@ -76,19 +75,18 @@ def failure_detail(result, name):
 
 @torch.inference_mode()
 def compare_native_trace(prompt, generated, trace_path, budget, *, metadata, prefill, decode):
-    spec = metadata["decode"]
     assert 1 <= len(generated) <= budget
-    assert not any(token in spec["eos_token_ids"] for token in generated[:-1])
-    assert len(generated) == budget or generated[-1] in spec["eos_token_ids"]
-    rows = np.fromfile(trace_path, dtype="<f4").reshape(len(generated), spec["vocab_size"])
+    assert not any(token in metadata["eos_token_ids"] for token in generated[:-1])
+    assert len(generated) == budget or generated[-1] in metadata["eos_token_ids"]
+    rows = np.fromfile(trace_path, dtype="<f4").reshape(len(generated), metadata["vocab_size"])
     assert np.isfinite(rows).all()
     runtime = ExplicitRuntime(
         dict(prefill=prefill, decode=decode),
-        spec["state"],
-        spec["vocab_size"],
-        spec["cache_length"],
+        metadata["state"],
+        metadata["vocab_size"],
+        metadata["cache_length"],
         logits_only=True,
-        max_prefill=metadata["prefill"]["token_range"][1],
+        max_prefill=metadata["max_prefill_tokens"],
     )
     runtime.reset()
     tokens = prompt
@@ -101,9 +99,9 @@ def compare_native_trace(prompt, generated, trace_path, budget, *, metadata, pre
         tokens = [token]
 
 
-def prepare_tokenizer(model_dir, spec):
+def prepare_tokenizer(model_dir, metadata):
     require(
-        read_json(model_dir / MODEL_MANIFEST_NAME) == spec["checkpoint"]["manifest"],
+        read_json(model_dir / MODEL_MANIFEST_NAME) == metadata["checkpoint"],
         "Checkpoint manifest differs",
     )
     tokenizer = load_tokenizer(model_dir)
@@ -204,16 +202,23 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
     mixed = out / "invalid-packages"
     mixed.mkdir()
     package_cases = (
-        ("mixed_numerical_settings", "Package metadata differs: triton_enable_fp_fusion"),
         ("legacy_eager_numerics", "Unsupported package metadata: eager_numerics"),
-        ("mixed_state_layout", "Package metadata differs: state"),
         ("odd_state_count", "Unsupported package metadata: state"),
         ("mismatched_kv_shapes", "K/V shapes differ"),
-        ("mixed_export_settings", "Package metadata differs: export_options"),
+        ("invalid_max_prefill_tokens", "Unsupported package metadata: max_prefill_tokens"),
     )
     package_cases += tuple(
         ("legacy_field_" + field, "Unsupported package metadata: " + field)
         for field in (
+            "entry_point",
+            "token_range",
+            "export_options",
+            "tf32",
+            "triton_enable_fp_fusion",
+            "inductor_configs",
+            "package_bytes",
+            "package_sha256",
+            "model_specific",
             "batch_size",
             "dtype",
             "input_mutation",
@@ -224,30 +229,25 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
         )
     )
     for name, message in package_cases:
-        for kind in ("prefill", "decode"):
-            metadata = json.loads((packages / (kind + ".json")).read_text())
-            if name == "mixed_numerical_settings" and kind == "prefill":
-                metadata["triton_enable_fp_fusion"] = not metadata["triton_enable_fp_fusion"]
-            elif name == "legacy_eager_numerics":
-                metadata["eager_numerics"] = True
-            elif name.startswith("legacy_field_"):
-                metadata[name.removeprefix("legacy_field_")] = False
-            elif name == "mixed_state_layout" and kind == "prefill":
-                metadata["state"][0]["shape"][-1] += 1
-            elif name == "odd_state_count":
-                metadata["state"].pop()
-            elif name == "mismatched_kv_shapes":
-                metadata["state"][0]["shape"][1] = 4
-            elif name == "mixed_export_settings" and kind == "prefill":
-                metadata["export_options"]["backed_size_oblivious"] = False
-            (mixed / (kind + ".json")).write_text(json.dumps(metadata))
-            if name.startswith("legacy_"):
-                try:
-                    validate_metadata(metadata, model_type="qwen3")
-                except ValueError as error:
-                    assert message in str(error), (name, str(error))
-                else:
-                    raise AssertionError(f"Python accepted invalid package: {name}")
+        metadata = json.loads((packages / METADATA_FILE).read_text())
+        if name == "legacy_eager_numerics":
+            metadata["eager_numerics"] = True
+        elif name.startswith("legacy_field_"):
+            metadata[name.removeprefix("legacy_field_")] = False
+        elif name == "odd_state_count":
+            metadata["state"].pop()
+        elif name == "mismatched_kv_shapes":
+            metadata["state"][0]["shape"][1] = 4
+        elif name == "invalid_max_prefill_tokens":
+            metadata["max_prefill_tokens"] = 513
+        (mixed / METADATA_FILE).write_text(json.dumps(metadata))
+        if name.startswith("legacy_") or name == "invalid_max_prefill_tokens":
+            try:
+                validate_metadata(metadata, model_type="qwen3")
+            except ValueError as error:
+                assert message in str(error), (name, str(error))
+            else:
+                raise AssertionError(f"Python accepted invalid package: {name}")
         result = run(
             [mixed, capital_prompt, out / "mixed.ids"],
             name,
@@ -261,8 +261,8 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
 def package_fixture(packages, out, name, metadata, with_weights=False):
     directory = out / name
     directory.mkdir()
-    for kind, item in metadata.items():
-        (directory / f"{kind}.json").write_text(json.dumps(item))
+    (directory / METADATA_FILE).write_text(json.dumps(metadata))
+    for kind in ("prefill", "decode"):
         (directory / f"{kind}.pt2").symlink_to((packages / f"{kind}.pt2").resolve())
     if with_weights:
         (directory / "weights.safetensors").symlink_to((packages / "weights.safetensors").resolve())
@@ -270,31 +270,25 @@ def package_fixture(packages, out, name, metadata, with_weights=False):
 
 
 def metadata_with_sizes(packages):
-    return {
-        kind: dict(
-            json.loads((packages / f"{kind}.json").read_text()),
-            package_bytes=(packages / f"{kind}.pt2").stat().st_size,
-        )
-        for kind in ("prefill", "decode")
-    }
+    metadata = json.loads((packages / METADATA_FILE).read_text())
+    for kind in ("prefill", "decode"):
+        metadata["entries"][kind]["bytes"] = (packages / f"{kind}.pt2").stat().st_size
+    return metadata
 
 
 def reject_dispatch(packages, out, capital_prompt, env, run, report):
     # Dispatch failures must not require CUDA or an archive.
-    for name, tags, message in (
-        ("mixed_model_types", ("qwen3", "qwen35"), "Package model types differ"),
-        ("missing_prefill_model_type", (None, "qwen3"), "Package model types differ"),
-        ("missing_decode_model_type", ("qwen3", None), "Package model types differ"),
-        ("unknown_model_type", ("unknown", "unknown"), "Unsupported model type"),
+    for name, tag, message in (
+        ("missing_model_type", None, "Unsupported model type"),
+        ("unknown_model_type", "unknown", "Unsupported model type"),
     ):
         directory = out / name
         directory.mkdir()
-        for kind, tag in zip(("prefill", "decode"), tags):
-            metadata = json.loads((packages / f"{kind}.json").read_text())
-            metadata.pop("model_type", None)
-            if tag is not None:
-                metadata["model_type"] = tag
-            (directory / f"{kind}.json").write_text(json.dumps(metadata))
+        metadata = json.loads((packages / METADATA_FILE).read_text())
+        metadata.pop("model_type", None)
+        if tag is not None:
+            metadata["model_type"] = tag
+        (directory / METADATA_FILE).write_text(json.dumps(metadata))
         output = directory / "generated.ids"
         result = run(
             [directory, capital_prompt, output],
@@ -317,15 +311,13 @@ def reject_package_files(packages, out, capital_prompt, env, run, report):
     ):
         metadata = metadata_with_sizes(packages)
         if missing:
-            del metadata[kind]["package_bytes"]
+            del metadata["entries"][kind]["bytes"]
         else:
-            metadata[kind]["package_bytes"] += 1
+            metadata["entries"][kind]["bytes"] += 1
         directory = package_fixture(packages, out, name, metadata)
         output = directory / "generated.ids"
         message = (
-            "Unsupported package metadata: package_bytes"
-            if missing
-            else "Package file size mismatch"
+            "Unsupported package metadata: entries" if missing else "Package file size mismatch"
         )
         result = run(
             [directory, capital_prompt, output],
@@ -346,12 +338,12 @@ def reject_package_files(packages, out, capital_prompt, env, run, report):
     ):
         metadata = metadata_with_sizes(packages)
         if missing:
-            del metadata[kind]["package_sha256"]
+            del metadata["entries"][kind]["sha256"]
         else:
-            metadata[kind]["package_sha256"] = "0" * 64
+            metadata["entries"][kind]["sha256"] = "0" * 64
         directory = package_fixture(packages, out, name, metadata)
         output = directory / "generated.ids"
-        message = "Unsupported package metadata: package_sha256" if missing else "checksum mismatch"
+        message = "Unsupported package metadata: entries" if missing else "checksum mismatch"
         result = run(
             [directory, capital_prompt, output],
             name,
@@ -382,8 +374,7 @@ def check_package_loading(packages, out, capital_prompt, run, report, native_tra
 
     # The complete, checksum-valid bundle must reject an incompatible actual GPU.
     metadata = metadata_with_sizes(packages)
-    for item in metadata.values():
-        item["cuda_compute_capability"] = [99, 0]
+    metadata["cuda_compute_capability"] = [99, 0]
     directory = package_fixture(packages, out, "gpu_architecture", metadata, with_weights=True)
     output = directory / "generated.ids"
     result = run([directory, prompt_path, output, "--max-output-tokens", "1"], "gpu_architecture")
@@ -400,16 +391,6 @@ def reject_weights(packages, out, capital_prompt, env, run, report):
             "missing_shared_weights_contract",
             "Shared weights metadata is required",
             "Unsupported package metadata: shared_weights",
-        ),
-        (
-            "mixed_shared_weights_contract",
-            "Shared weights contracts differ",
-            "Package metadata differs: shared_weights",
-        ),
-        (
-            "mixed_weight_archive_checksum",
-            "Shared weights contracts differ",
-            "Package metadata differs: shared_weights",
         ),
         (
             "wrong_weight_archive_checksum",
@@ -435,36 +416,26 @@ def reject_weights(packages, out, capital_prompt, env, run, report):
     for name, python_message, native_message in weight_cases:
         damaged = out / name
         damaged.mkdir()
-        metadata = {
-            kind: json.loads((packages / (kind + ".json")).read_text())
-            for kind in ("prefill", "decode")
-        }
+        metadata = json.loads((packages / METADATA_FILE).read_text())
         if name == "missing_shared_weights_contract":
-            for item in metadata.values():
-                del item["shared_weights"]
-        elif name == "mixed_shared_weights_contract":
-            metadata["prefill"]["shared_weights"]["identity"] = "0" * 64
-        elif name == "mixed_weight_archive_checksum":
-            metadata["prefill"]["shared_weights"]["sha256"] = "0" * 64
+            del metadata["shared_weights"]
         elif name == "wrong_weight_archive_checksum":
-            for item in metadata.values():
-                item["shared_weights"]["sha256"] = "0" * 64
+            metadata["shared_weights"]["sha256"] = "0" * 64
         if name == "corrupt_weight_archive":
             (damaged / "weights.safetensors").write_bytes(b"corrupted weight archive")
         elif name == "missing_embedded_weight_metadata":
             archive = damaged / "weights.safetensors"
             save_file({}, str(archive))
-            for item in metadata.values():
-                item["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
+            metadata["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
         elif name != "missing_weight_archive":
             (damaged / "weights.safetensors").symlink_to(
                 (packages / "weights.safetensors").resolve()
             )
-        for kind, item in metadata.items():
-            (damaged / (kind + ".json")).write_text(json.dumps(item))
+        (damaged / METADATA_FILE).write_text(json.dumps(metadata))
+        for kind in ("prefill", "decode"):
             (damaged / (kind + ".pt2")).symlink_to((packages / (kind + ".pt2")).resolve())
         try:
-            validate_shared_weights(damaged, metadata["prefill"], metadata["decode"])
+            validate_shared_weights(damaged, metadata)
         except (ValueError, FileNotFoundError) as error:
             assert python_message in str(error), (name, str(error))
         else:
@@ -537,21 +508,20 @@ def validate_runtime(*, native, packages, model_dir, output):
     env = native_environment()
     report = dict(fixtures=[], rejections=[], boundaries=[], native_processes=[])
     metadata = preflight(binary, packages, out)
-    spec = metadata["decode"]
     native_traces = []
     run = partial(run_native, binary, out, report, environment=env)
-    tokenizer = prepare_tokenizer(model_dir, spec)
+    tokenizer = prepare_tokenizer(model_dir, metadata)
     capital_prompt = check_generation(packages, out, env, tokenizer, run, report, native_traces)
-    reject_inputs(packages, out, spec, capital_prompt, env, run, report)
+    reject_inputs(packages, out, metadata, capital_prompt, env, run, report)
     reject_metadata(packages, out, capital_prompt, env, run, report)
     reject_dispatch(packages, out, capital_prompt, env, run, report)
     reject_package_files(packages, out, capital_prompt, env, run, report)
     check_package_loading(packages, out, capital_prompt, run, report, native_traces)
     reject_weights(packages, out, capital_prompt, env, run, report)
-    check_boundaries(packages, out, spec, capital_prompt, run, report, native_traces)
+    check_boundaries(packages, out, metadata, capital_prompt, run, report, native_traces)
 
     # Finish native workers before retaining the Python process's GPU weight pool.
-    weights = SharedWeights(packages, spec["shared_weights"])
+    weights = SharedWeights(packages, metadata["shared_weights"])
     prefill, decode = weights.load("prefill"), weights.load("decode")
     compare_native_traces(native_traces, metadata, prefill, decode)
     write_report(out, report)

@@ -1,7 +1,7 @@
 # Package metadata
 
-Both model families deploy `prefill.pt2`, `decode.pt2`, `weights.safetensors`,
-`prefill.json` and `decode.json` together. Metadata and model interfaces follow
+Both model families deploy **four files** together: `prefill.pt2`, `decode.pt2`,
+`weights.safetensors` and `metadata.json`. Metadata and model interfaces follow
 the current implementation without separate version fields.
 
 `compiler/common/metadata.py` writes and validates the common format.
@@ -15,25 +15,24 @@ model-specific geometry and `runtime/common/state.h` implements state ownership.
 
 | Fields | Meaning |
 | --- | --- |
-| `model_type`, `entry_point`, `token_range` | Model selection and per-call bounds |
+| `model_type` | Model family (`qwen3` or `qwen35`) used to select runtime behavior |
 | `torch_version`, `cxx11_abi`, `cuda_compute_capability` | Runtime compatibility |
-| `checkpoint`, `vocab_size`, `eos_token_ids` | Checkpoint identity/manifest, vocabulary and explicit EOS list |
-| `cache_length`, `state` | Allocated context capacity and ordered state descriptors |
-| `export_options`, `tf32`, `triton_enable_fp_fusion`, `inductor_configs` | Export and numerical contract |
-| `package_bytes`, `package_sha256`, `shared_weights` | Package and archive integrity |
-| `model_specific` | DeltaNet numerical policy and minimal packing settings; empty for Qwen3 |
+| `cache_length`, `max_prefill_tokens` | Allocated context capacity and compiled per-call prefill ceiling (512) |
+| `vocab_size`, `eos_token_ids` | Vocabulary upper bound and explicit EOS stop list |
+| `checkpoint` | Prepared `model_manifest.json` object (`model`, `revision` and checkpoint files) |
+| `state` | Ordered contiguous state descriptors (`layer`, `kind`, `shape`, `dtype`, `update`) |
+| `entries` | Per-entry (`prefill`, `decode`) `.pt2` byte sizes and SHA-256 checksums |
+| `shared_weights` | Shared `weights.safetensors` logical identity, byte size and SHA-256 checksum |
 
-Both entries must agree on stable fields, including `model_specific`.
-`entry_point`, `token_range`, package size and package hash may differ.
-Missing/unknown fields, legacy aliases and mixed pairs are rejected.
-`COMPARISON_EXCLUDED_FIELDS` in the Python metadata module defines benchmark
-comparison exceptions; shared weights are compared by logical identity and
-source mappings separately from their archive checksum.
+Missing/unknown fields and retired aliases are rejected.
+`COMPARISON_EXCLUDED_FIELDS` in `compiler/common/metadata.py` excludes `entries`
+and `shared_weights` from benchmark comparison; shared weights are compared by
+logical identity and source mappings separately from their archive checksum.
 
-`inductor_configs` retains the required flags `emulate_precision_casts=True`,
-`aot_inductor.package_constants_in_so=False` and
-`always_keep_tensor_constants=True`. Other resolved compiler options, dependency
-versions, graph diagnostics and timings belong in JSON export-log events.
+Fixed export/compiler invariants (`backed_size_oblivious=True`, TF32 disabled,
+`emulate_precision_casts=True`, weightless AOTI compilation), resolved compiler
+options, DeltaNet kernel/packing policy, dependency versions, graph diagnostics
+and timings belong in JSON export-log events rather than `metadata.json`.
 Detailed packing reports are saved as separate export diagnostics.
 There are no package `provenance`, `diagnostics` or source-code-hash fields.
 Retain the export log when investigating a build.
@@ -42,22 +41,24 @@ Retain the export log when investigating a build.
 
 `--max-context-length` chooses `cache_length` before GPU allocation. The default
 is the selected text config's `max_position_embeddings`; valid values are 512
-through that ceiling. Supported models use default RoPE; no scaling factor is
-inferred. KV descriptors contain exactly that many slots.
+through that ceiling (capped by `INT32_MAX // 8` across the 8 compiled batch
+slots). Supported models use default RoPE; no scaling factor is inferred. KV
+descriptors contain exactly `cache_length` slots.
 
-`token_range` describes one compiled invocation: decode `[1,1]`, prefill
-`[2,512]`. The runner chunks a complete prompt and uses decode for a singleton
-remainder. The prompt plus requested `--max-output-tokens` budget must fit the
-capacity before execution begins; the budget is rejected rather than clamped.
-There is no separate prompt cap. Changing capacity requires re-export of both
-entries; editing metadata cannot enlarge compiled buffers or symbolic bounds.
+Decode accepts 1 token per call; prefill accepts 2–`max_prefill_tokens` (512)
+tokens per call. The runner chunks a complete prompt and uses decode for a
+singleton remainder. The prompt plus requested `--max-output-tokens` budget must
+fit `cache_length` before execution begins; the budget is rejected rather than
+clamped. There is no separate prompt cap. Changing capacity requires re-export
+of both entries; editing `metadata.json` cannot enlarge compiled buffers or
+symbolic bounds.
 
 Each ordered state descriptor contains `layer`, `kind`, `shape`, `dtype` and
 `update`. KV uses `inplace`; convolution/recurrent state uses `replace`.
 Readers derive names, contiguous strides, model geometry and output positions
-from these descriptors and the model's calling convention. They are not duplicated
-under `model_specific`. Reset retains KV allocations and fills them with the
-requested value; replacement state is initialized to zero.
+from these descriptors and the model's calling convention. Reset retains KV
+allocations and fills them with the requested value; replacement state is
+initialized to zero.
 
 ## Dynamic batch interfaces
 
@@ -105,8 +106,8 @@ without HF's redundant cross-grid slice writes, which otherwise introduce a
 Scalar generation and benchmark commands execute B=1 from the same bundle.
 `xinfer_validate` accepts explicit `batch_steps`. Per-row request replacement and
 continuous-batching scheduling are not implemented. The runtime calls the
-current model interface directly; editing sidecars cannot change a package's
-compiled signature.
+current model interface directly; editing `metadata.json` cannot change a
+package's compiled signature.
 
 ## Shared-weight archive and ownership
 
@@ -117,14 +118,16 @@ suffix. The manifest JSON is embedded under `__metadata__.xinfer_manifest` in th
 safetensors header, not a separate file. It maps each entry's constants to tensor
 views over deduplicated storage, preserving shape, stride, offset, dtype and device.
 Tied embeddings and shared packed sources can therefore share storage without
-changing their views.
+changing their views. Both model families record `identity` as
+`{"model": "<family>", "checkpoint": <manifest>}` (`qwen3` or `qwen3.5`).
 
-The sidecar `shared_weights` descriptor records `file: weights.safetensors`,
-logical identity, byte size and SHA-256. The embedded manifest also records the
-exact package hashes. Archive bytes cover both mappings and tensor data; the
-archive binds package hashes, not sidecar hashes. Native loading validates the
-safetensors header and copies deduplicated storages directly from an `mmap`ped
-file without TorchScript (`torch.jit`) dependencies.
+`metadata.json`'s `shared_weights` descriptor records the archive's logical
+identity, byte size and SHA-256 (always targeting `weights.safetensors`). The
+embedded manifest also records the exact package hashes. Archive bytes cover both
+mappings and tensor data; the archive binds package hashes, not `metadata.json`
+hashes. Native loading validates the safetensors header and copies deduplicated
+storages directly from an `mmap`ped file without TorchScript (`torch.jit`)
+dependencies.
 
 One export invocation loads the model once, compiles both entries sequentially,
 requires consistent shared tensor content, and serializes the archive once.
@@ -164,12 +167,7 @@ CPU instruction-set compatibility is not enforced; see
 ## Compatibility and retained bundles
 
 Re-export with the current exporter by default. Packages with embedded weights,
-the old attention interface or an external attention dependency require re-export;
-sidecar conversion cannot supply missing code or change the compiled ABI.
-
-Keep legacy bundles with their matching runtimes when retaining them as evidence.
-For retained bundles with the current dynamic-batch interface, remove the retired
-`schema_version` and `runtime_abi_version` fields from both sidecars. This
-metadata-only cleanup leaves the package and weight archive bytes unchanged.
-Bundles with different inputs, state shapes or compiled kernels still need a
-matching runtime or re-export.
+the old attention interface, an external attention dependency or legacy
+`prefill.json`/`decode.json` sidecars require re-export; metadata conversion
+cannot supply missing code or change the compiled ABI. Keep historical bundles
+with their matching runtimes when retaining them as evidence.

@@ -188,7 +188,7 @@ at configure time with a semicolon-separated list; its defaults are the selected
 and CUDA runtime directories. CMake also retains external linked-library
 directories. A different host must provide a compatible GPU/package contract and
 the matching native stack at those library paths; relocating that external
-stack is a separate step. Deploy each complete five-file model package directory
+stack is a separate step. Deploy each complete four-file model package directory
 alongside the installed runtime.
 
 CPU portability is a separate constraint: generated AOTI wrappers can inherit

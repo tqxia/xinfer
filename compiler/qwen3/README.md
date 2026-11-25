@@ -90,7 +90,7 @@ model loading and changing it requires re-export.
 There is no attention-backend or numerical-mode selector. Export uses BF16 cast
 emulation, disabled TF32 and ordinary Inductor fusion. Compiler/tuning choices
 can change rounding, so validate each new pair. The
-[package contract](../../docs/package-metadata.md) defines the five deployment
+[package contract](../../docs/package-metadata.md) defines the four deployment
 files, shared-weight ownership and compatibility checks; graph dumps and export
 logs are build diagnostics. The
 [shared attention guide](../../docs/flash-attention.md) explains native packaging.

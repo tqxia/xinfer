@@ -47,7 +47,7 @@ class NativeTraceContracts(unittest.TestCase):
             ),
         ]
         chats = [dict(name="chat", prompt=[1, 0], limit=3, order=0)]
-        metadata = dict(decode=dict(model_type=model, state=specs, vocab_size=2, eos_token_ids=[0]))
+        metadata = dict(model_type=model, state=specs, vocab_size=2, eos_token_ids=[0])
         # The first value contains FP32 bits that a BF16 round trip would discard.
         logits = torch.tensor([[[1 + 2**-23, 0.25]], [[-0.0, 2.5]]], dtype=torch.float32)
         chat_logits = torch.tensor([[[0.0, 2.0]], [[3.0, 0.0]]], dtype=torch.float32)
@@ -205,14 +205,12 @@ class SelectedNativeTrace(unittest.TestCase):
                 dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16", update="replace"),
             ]
             metadata = dict(
-                decode=dict(
-                    model_type="qwen35",
-                    state=specs,
-                    vocab_size=2,
-                    eos_token_ids=[0],
-                    cache_length=2048,
-                ),
-                prefill=dict(token_range=[2, 512]),
+                model_type="qwen35",
+                state=specs,
+                vocab_size=2,
+                eos_token_ids=[0],
+                cache_length=2048,
+                max_prefill_tokens=512,
             )
             cases = [dict(name="teacher", steps=[[1, 0], [1]])]
             logits = torch.tensor([[[1.0, -0.0]], [[0.25, 2.0]]], dtype=torch.bfloat16)

@@ -5,7 +5,7 @@ from tools.prepare.qwen3 import default_model_dir as prepare_default_model_dir
 
 
 def default_model_dir(metadata):
-    return prepare_default_model_dir(metadata["decode"]["checkpoint"]["model_id"])
+    return prepare_default_model_dir(metadata["checkpoint"]["model"])
 
 
 def prepare_tokens(model_dir):

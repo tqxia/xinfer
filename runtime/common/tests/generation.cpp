@@ -41,33 +41,20 @@ struct Bundle {
         {"cxx11_abi", bool(_GLIBCXX_USE_CXX11_ABI)},
         {"cuda_compute_capability", {8, 9}},
         {"cache_length", capacity},
+        {"max_prefill_tokens", 512},
         {"vocab_size", 16},
         {"eos_token_ids", {1}},
-        {"checkpoint", {{"model_id", "test"}, {"revision", "test"}, {"manifest", Json::object()}}},
+        {"checkpoint", {{"model", "test"}, {"revision", "test"}}},
         {"state", state},
-        {"export_options", {{"backed_size_oblivious", true}}},
-        {"tf32", false},
-        {"triton_enable_fp_fusion", true},
-        {"inductor_configs",
-         {{"emulate_precision_casts", true},
-          {"aot_inductor.package_constants_in_so", false},
-          {"always_keep_tensor_constants", true}}},
-        {"package_bytes", 1},
-        {"package_sha256", std::string(64, 'a')},
+        {"entries",
+         {{"prefill", {{"bytes", 1}, {"sha256", std::string(64, 'a')}}},
+          {"decode", {{"bytes", 1}, {"sha256", std::string(64, 'a')}}}}},
         {"shared_weights",
-         {{"file", xinfer::kSharedWeightsFile},
-          {"identity", std::string(64, 'b')},
-          {"bytes", 1},
-          {"sha256", std::string(64, 'c')}}},
-        {"model_specific", Json::object()},
+         {{"identity", std::string(64, 'b')}, {"bytes", 1}, {"sha256", std::string(64, 'c')}}},
     };
 
-    for (const auto *kind : {"prefill", "decode"}) {
-      metadata["entry_point"] = kind;
-      metadata["token_range"] = std::string(kind) == "prefill" ? Json{2, 512} : Json{1, 1};
-      auto file = xinfer::output_file(directory / (std::string(kind) + ".json"));
-      file << metadata.dump();
-    }
+    auto file = xinfer::output_file(directory / xinfer::kMetadataFile);
+    file << metadata.dump();
   }
 
   ~Bundle() {
@@ -174,52 +161,66 @@ int main() {
     check("context_contract_rejects_retired_prompt_field", [&] {
       require(spec.capacity == 16384 && spec.max_prefill == 512,
               "Compiled context and per-call bounds differ from the metadata");
-      const auto metadata = xinfer::read_json(bundle.directory / "prefill.json");
-      xinfer::validate_metadata(metadata, "prefill");
+      const auto metadata = xinfer::read_json(bundle.directory / xinfer::kMetadataFile);
+      xinfer::validate_metadata(metadata);
 
-      for (const auto *kind : {"prefill", "decode"}) {
-        auto small = xinfer::read_json(bundle.directory / (std::string(kind) + ".json"));
-        small["cache_length"] = 511;
-        bool rejected = false;
-        try {
-          xinfer::validate_metadata(small, kind);
-        } catch (const std::runtime_error &error) {
-          rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
-        }
-        require(rejected, "Sub-512 capacity was not rejected as a capacity error");
-
-        small["cache_length"] = 512;
-        for (auto &state : small["state"])
-          state["shape"][2] = 512;
-        xinfer::validate_metadata(small, kind);
-
-        auto too_large = small;
-        too_large["cache_length"] = xinfer::kMaxCacheLength + 1;
-        for (auto &state : too_large["state"])
-          state["shape"][2] = xinfer::kMaxCacheLength + 1;
-        rejected = false;
-        try {
-          xinfer::validate_metadata(too_large, kind);
-        } catch (const std::runtime_error &error) {
-          rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
-        }
-        require(rejected, "Over-int32-safe capacity was not rejected as a capacity error");
-
-        too_large["cache_length"] = xinfer::kMaxCacheLength;
-        for (auto &state : too_large["state"])
-          state["shape"][2] = xinfer::kMaxCacheLength;
-        xinfer::validate_metadata(too_large, kind);
-      }
-
-      auto retired_field = metadata;
-      retired_field["max_prompt_length"] = 8192;
+      auto small = metadata;
+      small["cache_length"] = 511;
       bool rejected = false;
       try {
-        xinfer::validate_metadata(retired_field, "prefill");
+        xinfer::validate_metadata(small);
       } catch (const std::runtime_error &error) {
-        rejected = std::string(error.what()) == "Unsupported package metadata: max_prompt_length";
+        rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
       }
-      require(rejected, "A retired prompt field was accepted as package metadata");
+      require(rejected, "Sub-512 capacity was not rejected as a capacity error");
+
+      small["cache_length"] = 512;
+      for (auto &state : small["state"])
+        state["shape"][2] = 512;
+      xinfer::validate_metadata(small);
+
+      auto too_large = small;
+      too_large["cache_length"] = xinfer::kMaxCacheLength + 1;
+      for (auto &state : too_large["state"])
+        state["shape"][2] = xinfer::kMaxCacheLength + 1;
+      rejected = false;
+      try {
+        xinfer::validate_metadata(too_large);
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()) == "Unsupported package metadata: cache_length";
+      }
+      require(rejected, "Over-int32-safe capacity was not rejected as a capacity error");
+
+      too_large["cache_length"] = xinfer::kMaxCacheLength;
+      for (auto &state : too_large["state"])
+        state["shape"][2] = xinfer::kMaxCacheLength;
+      xinfer::validate_metadata(too_large);
+
+      auto bad_prefill = metadata;
+      bad_prefill["max_prefill_tokens"] = 1024;
+      rejected = false;
+      try {
+        xinfer::validate_metadata(bad_prefill);
+      } catch (const std::runtime_error &error) {
+        rejected = std::string(error.what()) == "Unsupported package metadata: max_prefill_tokens";
+      }
+      require(rejected, "Unsupported max_prefill_tokens was accepted");
+
+      for (const auto *field : {"max_prompt_length", "entry_point", "token_range", "export_options",
+                                "tf32", "triton_enable_fp_fusion", "inductor_configs",
+                                "package_bytes", "package_sha256", "model_specific"}) {
+        auto retired_field = metadata;
+        retired_field[field] = 1;
+        rejected = false;
+        try {
+          xinfer::validate_metadata(retired_field);
+        } catch (const std::runtime_error &error) {
+          rejected =
+              std::string(error.what()) == std::string("Unsupported package metadata: ") + field;
+        }
+        require(rejected,
+                std::string("A retired field was accepted as package metadata: ") + field);
+      }
     });
 
     check("independent_row_admission", [&] {
@@ -445,16 +446,14 @@ int main() {
       };
 
       const std::string identity(64, 'b');
-      Json prefill = xinfer::read_json(weights_bundle.directory / "prefill.json");
-      Json decode = xinfer::read_json(weights_bundle.directory / "decode.json");
-      for (auto &[kind, meta] : std::vector<std::pair<std::string, Json *>>{{"prefill", &prefill},
-                                                                            {"decode", &decode}}) {
-        const auto pkg = weights_bundle.directory / (kind + ".pt2");
+      Json meta = xinfer::read_json(weights_bundle.directory / xinfer::kMetadataFile);
+      for (const auto *kind : {"prefill", "decode"}) {
+        const auto pkg = weights_bundle.directory / (std::string(kind) + ".pt2");
         auto file = xinfer::output_file(pkg, true);
         file << kind;
         file.close();
-        (*meta)["package_bytes"] = xinfer::fs::file_size(pkg);
-        (*meta)["package_sha256"] = xinfer::sha256_file(pkg);
+        meta["entries"][kind]["bytes"] = xinfer::fs::file_size(pkg);
+        meta["entries"][kind]["sha256"] = xinfer::sha256_file(pkg);
       }
 
       // Pack U8 (1 byte) before I64 (16 bytes at odd offset 1) + BF16 (12 bytes) + empty F32.
@@ -464,10 +463,10 @@ int main() {
           {"identity_sha256", identity},
           {"entries",
            {{"prefill",
-             {{"package_sha256", prefill["package_sha256"]},
+             {{"package_sha256", meta["entries"]["prefill"]["sha256"]},
               {"constants", {{"c_u8", "v_u8"}, {"c_i64", "v_i64"}, {"c_bf16", "v_bf16"}}}}},
             {"decode",
-             {{"package_sha256", decode["package_sha256"]},
+             {{"package_sha256", meta["entries"]["decode"]["sha256"]},
               {"constants", {{"c_bf16_alias", "v_bf16_slice"}, {"c_empty", "v_empty"}}}}}}},
           {"sources", Json::object()},
           {"storages",
@@ -523,19 +522,18 @@ int main() {
       const auto archive = weights_bundle.directory / xinfer::kSharedWeightsFile;
       auto update_contract = [&] {
         const Json contract = {
-            {"file", xinfer::kSharedWeightsFile},
             {"identity", identity},
             {"bytes", xinfer::fs::file_size(archive)},
             {"sha256", xinfer::sha256_file(archive)},
         };
-        prefill["shared_weights"] = decode["shared_weights"] = contract;
+        meta["shared_weights"] = contract;
         return contract;
       };
 
       write_safetensors(archive, base_header, payload);
       const auto contract = update_contract();
       {
-        auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+        auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, meta);
         xinfer::SharedWeights loaded(std::move(verified), contract);
         require(loaded.package_path("prefill").filename() == "prefill.pt2" &&
                     loaded.package_path("decode").filename() == "decode.pt2",
@@ -552,24 +550,22 @@ int main() {
         require(matched, "Expected error containing: " + expected);
       };
 
-      // Legacy weights.pt and retired format fields must be rejected.
+      // Legacy file and retired format fields must be rejected.
       {
-        auto legacy = prefill;
+        auto legacy = meta;
         legacy["shared_weights"]["format"] = 2;
         legacy["shared_weights"]["file"] = "weights.pt";
-        expect_error([&] { xinfer::validate_metadata(legacy, "prefill"); },
+        expect_error([&] { xinfer::validate_metadata(legacy); },
                      "Unsupported package metadata: shared_weights");
-        expect_error(
-            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, legacy, legacy); },
-            "Shared weights metadata is required");
+        expect_error([&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, legacy); },
+                     "Shared weights metadata is required");
 
-        auto retired = prefill;
-        retired["shared_weights"]["format"] = 3;
-        expect_error([&] { xinfer::validate_metadata(retired, "prefill"); },
+        auto retired = meta;
+        retired["shared_weights"]["file"] = xinfer::kSharedWeightsFile;
+        expect_error([&] { xinfer::validate_metadata(retired); },
                      "Unsupported package metadata: shared_weights");
-        expect_error(
-            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, retired, retired); },
-            "Shared weights metadata is required");
+        expect_error([&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, retired); },
+                     "Shared weights metadata is required");
       }
 
       // Retired format key inside embedded manifest must be rejected during preflight.
@@ -580,9 +576,8 @@ int main() {
         header["__metadata__"][xinfer::kSharedWeightsManifestKey] = bad_manifest.dump();
         write_safetensors(archive, header, payload);
         update_contract();
-        expect_error(
-            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
-            "Shared weights archive metadata is invalid");
+        expect_error([&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, meta); },
+                     "Shared weights archive metadata is invalid");
       }
 
       // Missing __metadata__ in safetensors header must be rejected during preflight.
@@ -591,9 +586,8 @@ int main() {
         header.erase("__metadata__");
         write_safetensors(archive, header, payload);
         update_contract();
-        expect_error(
-            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
-            "Shared weights archive metadata is invalid");
+        expect_error([&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, meta); },
+                     "Shared weights archive metadata is invalid");
       }
 
       // Truncated safetensors file must be rejected during preflight.
@@ -602,9 +596,8 @@ int main() {
         file.write("bad", 3);
         file.close();
         update_contract();
-        expect_error(
-            [&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode); },
-            "Shared weights archive metadata is invalid");
+        expect_error([&] { xinfer::ValidatedBundle::verify(weights_bundle.directory, meta); },
+                     "Shared weights archive metadata is invalid");
       }
 
       // Extra tensor in safetensors header must be rejected on load.
@@ -615,8 +608,7 @@ int main() {
         const auto bad_contract = update_contract();
         expect_error(
             [&] {
-              auto verified =
-                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, meta);
               xinfer::SharedWeights loaded(std::move(verified), bad_contract);
             },
             "Shared weights archive buffer set mismatch");
@@ -630,8 +622,7 @@ int main() {
         const auto bad_contract = update_contract();
         expect_error(
             [&] {
-              auto verified =
-                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, meta);
               xinfer::SharedWeights loaded(std::move(verified), bad_contract);
             },
             "Shared weights archive tensor metadata mismatch");
@@ -645,8 +636,7 @@ int main() {
         const auto bad_contract = update_contract();
         expect_error(
             [&] {
-              auto verified =
-                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, meta);
               xinfer::SharedWeights loaded(std::move(verified), bad_contract);
             },
             "Shared weights archive tensor metadata mismatch");
@@ -662,8 +652,7 @@ int main() {
         const auto bad_contract = update_contract();
         expect_error(
             [&] {
-              auto verified =
-                  xinfer::ValidatedBundle::verify(weights_bundle.directory, prefill, decode);
+              auto verified = xinfer::ValidatedBundle::verify(weights_bundle.directory, meta);
               xinfer::SharedWeights loaded(std::move(verified), bad_contract);
             },
             "Shared weights tensor layout is invalid");
@@ -728,12 +717,10 @@ int main() {
     check("spec_checks_torch_cuda_suffix_and_dangling_symlinks", [&] {
       Bundle version_bundle;
       const auto write_version = [&](const std::string &version) {
-        for (const auto *kind : {"prefill", "decode"}) {
-          auto meta = xinfer::read_json(version_bundle.directory / (std::string(kind) + ".json"));
-          meta["torch_version"] = version;
-          auto file = xinfer::output_file(version_bundle.directory / (std::string(kind) + ".json"));
-          file << meta.dump();
-        }
+        auto meta = xinfer::read_json(version_bundle.directory / xinfer::kMetadataFile);
+        meta["torch_version"] = version;
+        auto file = xinfer::output_file(version_bundle.directory / xinfer::kMetadataFile);
+        file << meta.dump();
       };
 
       const long cudart = at::Context::versionCUDART();
@@ -785,24 +772,22 @@ int main() {
       Bundle geometry_bundle;
       for (const auto &shape :
            std::vector<Json>{{8, 4, 16384, 128}, {8, 8, 16384, 64}, {8, 8, 16384, 256}}) {
-        for (const auto *kind : {"prefill", "decode"}) {
-          auto meta = xinfer::read_json(geometry_bundle.directory / (std::string(kind) + ".json"));
-          for (auto &item : meta["state"])
-            item["shape"] = shape;
-          auto file =
-              xinfer::output_file(geometry_bundle.directory / (std::string(kind) + ".json"));
-          file << meta.dump();
-        }
+        auto meta = xinfer::read_json(geometry_bundle.directory / xinfer::kMetadataFile);
+        for (auto &item : meta["state"])
+          item["shape"] = shape;
+        auto file = xinfer::output_file(geometry_bundle.directory / xinfer::kMetadataFile);
+        file << meta.dump();
+        file.close();
         const qwen::Spec ok(geometry_bundle.directory);
         require(ok.state.size() == 2 && ok.state[0].shape == ok.state[1].shape,
                 "Alternate Qwen3 KV geometry failed to load");
       }
 
-      for (const auto *kind : {"prefill", "decode"}) {
-        auto meta = xinfer::read_json(geometry_bundle.directory / (std::string(kind) + ".json"));
+      {
+        auto meta = xinfer::read_json(geometry_bundle.directory / xinfer::kMetadataFile);
         meta["state"][0]["shape"] = {8, 4, 16384, 128};
         meta["state"][1]["shape"] = {8, 8, 16384, 128};
-        auto file = xinfer::output_file(geometry_bundle.directory / (std::string(kind) + ".json"));
+        auto file = xinfer::output_file(geometry_bundle.directory / xinfer::kMetadataFile);
         file << meta.dump();
       }
       rejected = false;

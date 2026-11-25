@@ -40,9 +40,9 @@ def new_report(model_type, metadata=None):
     )
     if metadata:
         report.update(
-            checkpoint=metadata["decode"]["checkpoint"],
-            package_sha256={kind: entry["package_sha256"] for kind, entry in metadata.items()},
-            shared_weights=metadata["decode"]["shared_weights"],
+            checkpoint=metadata["checkpoint"],
+            package_sha256={kind: entry["sha256"] for kind, entry in metadata["entries"].items()},
+            shared_weights=metadata["shared_weights"],
         )
     return report
 

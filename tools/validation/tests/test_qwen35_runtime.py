@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from compiler.common.metadata import make_metadata, state_spec
+from compiler.common.metadata import METADATA_FILE, make_metadata, state_spec
 from tools.validation.common.runner import load_aoti_runtime
 
 
@@ -26,43 +26,32 @@ class AOTIRuntimeContract(unittest.TestCase):
             state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
             state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
         ]
-        pair = {}
-        for kind in ("prefill", "decode"):
-            value = make_metadata(
-                model_type="qwen35",
-                entry_point=kind,
-                token_range=[2, 512] if kind == "prefill" else [1, 1],
-                checkpoint=dict(model_id="Qwen/Qwen3.5-0.8B", revision="fixture", manifest={}),
-                torch_version="2.13.0",
-                cxx11_abi=True,
-                cuda_compute_capability=[8, 9],
-                cache_length=1024,
-                vocab_size=100,
-                eos_token_ids=[99],
-                state=state,
-                model_specific=dict(delta_backend="triton_op"),
-            )
-            value.update(
-                package_bytes=1,
-                package_sha256="1" * 64,
-                shared_weights=dict(
-                    file="weights.safetensors",
-                    identity="2" * 64,
-                    bytes=1,
-                    sha256="3" * 64,
-                ),
-                inductor_configs={
-                    "emulate_precision_casts": True,
-                    "aot_inductor.package_constants_in_so": False,
-                    "always_keep_tensor_constants": True,
-                },
-            )
-            pair[kind] = value
-        return pair
+        value = make_metadata(
+            model_type="qwen35",
+            checkpoint=dict(model="Qwen/Qwen3.5-0.8B", revision="fixture"),
+            torch_version="2.13.0",
+            cxx11_abi=True,
+            cuda_compute_capability=[8, 9],
+            cache_length=1024,
+            vocab_size=100,
+            eos_token_ids=[99],
+            state=state,
+        )
+        value.update(
+            entries=dict(
+                prefill=dict(bytes=1, sha256="1" * 64),
+                decode=dict(bytes=1, sha256="1" * 64),
+            ),
+            shared_weights=dict(
+                identity="2" * 64,
+                bytes=1,
+                sha256="3" * 64,
+            ),
+        )
+        return value
 
     def write_metadata(self, metadata):
-        for kind, value in metadata.items():
-            (self.directory / f"{kind}.json").write_text(json.dumps(value))
+        (self.directory / METADATA_FILE).write_text(json.dumps(metadata))
 
     def reject(self, metadata, error):
         self.write_metadata(metadata)
@@ -75,50 +64,35 @@ class AOTIRuntimeContract(unittest.TestCase):
             validate.assert_not_called()
             weights.assert_not_called()
 
-    def test_missing_export_options_are_rejected_before_loading(self):
-        metadata = self.metadata()
-        for value in metadata.values():
-            value.pop("export_options")
-        self.reject(metadata, "Unsupported package metadata: export_options")
-
     def test_model_tags_are_required_and_checked_before_loading(self):
-        for tags, message in (
-            (("qwen3", "qwen3"), "Unsupported model type"),
-            (("unknown", "unknown"), "Unsupported model type"),
-            ((None, None), "Unsupported model type"),
-            (("qwen3", "qwen35"), "Package model types differ"),
-        ):
-            with self.subTest(tags=tags):
+        for tag in ("qwen3", "unknown", None):
+            with self.subTest(tag=tag):
                 metadata = self.metadata()
-                for kind, tag in zip(("prefill", "decode"), tags):
-                    metadata[kind]["model_type"] = tag
-                self.reject(metadata, message)
+                metadata["model_type"] = tag
+                self.reject(metadata, "Unsupported model type")
         metadata = self.metadata()
-        metadata["prefill"].pop("model_type")
-        self.reject(metadata, "Package model types differ")
+        metadata.pop("model_type")
+        self.reject(metadata, "Unsupported model type")
 
-    def test_invalid_matching_export_options_are_rejected_before_loading(self):
+    def test_invalid_or_missing_prefill_bounds_are_rejected_before_loading(self):
         metadata = self.metadata()
-        for value in metadata.values():
-            value["export_options"] = {"backed_size_oblivious": False}
-        self.reject(metadata, "Unsupported package metadata: export_options")
+        metadata["max_prefill_tokens"] = 513
+        self.reject(metadata, "Unsupported package metadata: max_prefill_tokens")
+        metadata = self.metadata()
+        metadata.pop("max_prefill_tokens")
+        self.reject(metadata, "Unsupported package metadata: max_prefill_tokens")
 
-    def test_mismatched_export_options_identify_the_field(self):
-        for kind in ("prefill", "decode"):
-            with self.subTest(kind=kind):
-                metadata = self.metadata()
-                metadata[kind]["export_options"] = {"backed_size_oblivious": False}
-                self.reject(metadata, "Package metadata differs: export_options")
-
-    def test_missing_export_options_in_one_entry_is_rejected(self):
-        for kind in ("prefill", "decode"):
-            with self.subTest(kind=kind):
-                metadata = self.metadata()
-                metadata[kind].pop("export_options")
-                self.reject(metadata, "Package metadata differs: export_options")
-
-    def test_old_aliases_are_not_accepted(self):
+    def test_old_aliases_and_retired_fields_are_not_accepted(self):
         for field in (
+            "entry_point",
+            "token_range",
+            "export_options",
+            "tf32",
+            "triton_enable_fp_fusion",
+            "inductor_configs",
+            "package_bytes",
+            "package_sha256",
+            "model_specific",
             "eager_numerics",
             "torch",
             "sm",
@@ -136,35 +110,25 @@ class AOTIRuntimeContract(unittest.TestCase):
         ):
             with self.subTest(field=field):
                 metadata = self.metadata()
-                for value in metadata.values():
-                    value[field] = False
+                metadata[field] = False
                 self.reject(metadata, f"Unsupported package metadata: {field}")
 
-    def test_model_specific_backend_and_state_order_are_checked_before_loading(self):
+    def test_state_order_count_and_kv_shapes_are_checked_before_loading(self):
         def reverse_state(metadata):
-            for entry in metadata.values():
-                entry["state"].reverse()
+            metadata["state"].reverse()
 
         def mismatched_kv_shapes(metadata):
-            for entry in metadata.values():
-                entry["state"] = [
-                    state_spec(0, "key", [8, 2, 1024, 256], "bfloat16", "inplace"),
-                    state_spec(0, "value", [8, 3, 1024, 256], "bfloat16", "inplace"),
-                ]
+            metadata["state"] = [
+                state_spec(0, "key", [8, 2, 1024, 256], "bfloat16", "inplace"),
+                state_spec(0, "value", [8, 3, 1024, 256], "bfloat16", "inplace"),
+            ]
 
         for mutate, error in (
-            (
-                lambda m: [v["model_specific"].update(delta_backend="unknown") for v in m.values()],
-                "Unsupported DeltaNet backend",
-            ),
-            (
-                lambda m: [v["state"].pop() for v in m.values()],
-                "Invalid state count",
-            ),
+            (lambda m: m["state"].pop(), "Invalid state count"),
             (reverse_state, "Invalid state order or dtype"),
             (mismatched_kv_shapes, "K/V shapes differ"),
             (
-                lambda m: [s.update(layer=1) for v in m.values() for s in v["state"]],
+                lambda m: [s.update(layer=1) for s in m["state"]],
                 "Invalid state order or dtype",
             ),
         ):
@@ -172,7 +136,7 @@ class AOTIRuntimeContract(unittest.TestCase):
             mutate(metadata)
             self.reject(metadata, error)
 
-    def test_valid_pair_reaches_archive_validation(self):
+    def test_valid_bundle_reaches_archive_validation(self):
         metadata = self.metadata()
         self.write_metadata(metadata)
         with (
@@ -184,9 +148,7 @@ class AOTIRuntimeContract(unittest.TestCase):
         ):
             with self.assertRaises(ReachedArchiveValidation):
                 load_aoti_runtime(self.directory, model_type="qwen35", specs=[])
-            validate.assert_called_once_with(
-                self.directory, metadata["prefill"], metadata["decode"]
-            )
+            validate.assert_called_once_with(self.directory, metadata)
             weights.assert_not_called()
 
 

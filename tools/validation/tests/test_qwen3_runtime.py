@@ -25,13 +25,12 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.native = self.root / "xinfer_aoti"
         self.packages = self.root / "packages"
-        self.pair = {kind: metadata() for kind in ("prefill", "decode")}
-        self.pair["prefill"].update(entry_point="prefill", token_range=[2, 512])
+        self.metadata = metadata()
         self.enterContext(
             patch.dict(os.environ, XINFER_ATTENTION_OPS_LIBRARY="unrelated-attention.so")
         )
         self.read = self.enterContext(
-            patch.object(validator, "read_package_metadata", return_value=self.pair)
+            patch.object(validator, "read_package_metadata", return_value=self.metadata)
         )
         self.weights = self.enterContext(patch.object(validator, "validate_shared_weights"))
         self.load = self.enterContext(
@@ -59,9 +58,7 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         with self.assertRaises(StopBeforeRuntime):
             self.run_validator()
         self.read.assert_called_once_with(self.packages, model_type="qwen3")
-        self.weights.assert_called_once_with(
-            self.packages, self.pair["prefill"], self.pair["decode"]
-        )
+        self.weights.assert_called_once_with(self.packages, self.metadata)
         self.manifest.assert_called_once()
         self.load.assert_not_called()
         self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], "unrelated-attention.so")
@@ -69,24 +66,22 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
     def test_geometry_validation_precedes_loading(self):
         for index, shape in enumerate(([8, 4, 1024, 128], [8, 8, 1024, 256])):
             with self.subTest(valid_shape=shape):
-                value = copy.deepcopy(self.pair)
-                for entry in value.values():
-                    for state in entry["state"]:
-                        state["shape"] = shape
+                value = copy.deepcopy(self.metadata)
+                for state in value["state"]:
+                    state["shape"] = shape
                 self.read.return_value = value
                 with self.assertRaises(StopBeforeRuntime):
                     self.run_validator(f"valid-{index}")
         self.manifest.reset_mock()
-        for kind in ("prefill", "decode"):
-            for index, shape in enumerate(([8, 4, 1024, 128], [8, 8, 1024, 64])):
-                with self.subTest(entry=kind, shape=shape):
-                    value = copy.deepcopy(self.pair)
-                    value[kind]["state"][0]["shape"] = shape
-                    self.read.return_value = value
-                    with self.assertRaisesRegex(ValueError, "^K/V shapes differ"):
-                        self.run_validator(f"{kind}-{index}")
-                    self.load.assert_not_called()
-                    self.manifest.assert_not_called()
+        for index, shape in enumerate(([8, 4, 1024, 128], [8, 8, 1024, 64])):
+            with self.subTest(shape=shape):
+                value = copy.deepcopy(self.metadata)
+                value["state"][0]["shape"] = shape
+                self.read.return_value = value
+                with self.assertRaisesRegex(ValueError, "^K/V shapes differ"):
+                    self.run_validator(f"mismatch-{index}")
+                self.load.assert_not_called()
+                self.manifest.assert_not_called()
 
     def test_invalid_weights_fail_before_checkpoint_loading(self):
         self.weights.side_effect = ValueError("Shared weights archive checksum mismatch")

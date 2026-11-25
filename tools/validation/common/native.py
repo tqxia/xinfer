@@ -34,14 +34,14 @@ def _states(path, specs, position=0, compact=False):
 
 
 def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=None):
-    model = metadata["decode"]["model_type"]
-    specs = metadata["decode"]["state"]
-    vocab = metadata["decode"]["vocab_size"]
-    eos = metadata["decode"]["eos_token_ids"]
+    model = metadata["model_type"]
+    specs = metadata["state"]
+    vocab = metadata["vocab_size"]
+    eos = metadata["eos_token_ids"]
     manifest = sorted([*cases, *chats], key=lambda case: case.get("order", 1_000_000))
     require(len({case["name"] for case in manifest}) == len(manifest), "Duplicate native case")
     selected_states = state_keys is not None
-    compact = selected_states and metadata["decode"].get("cache_length", 0) > 1024
+    compact = selected_states and metadata.get("cache_length", 0) > 1024
     if selected_states:
         manifest = [
             dict(
@@ -181,7 +181,7 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
         require(
             row["position"] == len(case["prompt"]) + len(ids) - 1, "Invalid generation position"
         )
-        maximum = metadata.get("prefill", {}).get("token_range", [2, 512])[1]
+        maximum = metadata.get("max_prefill_tokens", 512)
         lengths = list(map(len, prompt_chunks(case["prompt"], maximum))) + [1] * (len(ids) - 1)
         require(
             row["prefill_calls"] == sum(length > 1 for length in lengths)

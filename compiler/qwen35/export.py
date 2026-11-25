@@ -67,46 +67,22 @@ def export_step(model, kind, capacity=None):
     return exported, packing
 
 
-def entry_metadata(model, kind, checkpoint, capacity):
-    from torch._inductor.runtime.triton_helpers import get_backend_options
-
+def bundle_metadata(model, checkpoint, capacity):
     return make_metadata(
         model_type="qwen35",
-        entry_point=kind,
-        token_range=[2, MAX_PREFILL] if kind == "prefill" else [1, 1],
-        checkpoint=dict(
-            model_id=checkpoint["model"],
-            revision=checkpoint["revision"],
-            manifest=checkpoint,
-        ),
+        checkpoint=checkpoint,
         torch_version=torch.__version__,
         cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
         cuda_compute_capability=torch.cuda.get_device_capability(),
         cache_length=capacity,
+        max_prefill_tokens=MAX_PREFILL,
         vocab_size=model.config.vocab_size,
         eos_token_ids=model.generation_config.eos_token_id,
         state=state_specs(model.config, capacity, batch_size=MAX_BATCH_SIZE),
-        triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-        model_specific=dict(
-            delta_backend="triton_op",
-            delta_preparation="triton",
-            delta_operator=DELTA_OPERATORS,
-            delta_algorithm=dict(
-                prefill="shape_cond",
-                short="fused_recurrent",
-                long="chunked_fp32",
-                decode="fused_recurrent",
-            ),
-            delta_short_threshold=SHORT_THRESHOLD,
-            delta_chunk_size=CHUNK_SIZE,
-            delta_transform_tile=TRANSFORM_TILE,
-            delta_dot_precision="ieee",
-            linear_packing=dict(enabled=True, version=1),
-        ),
     )
 
 
-def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
+def export_entry(kind, staging_directory, *, model, capacity):
     start = time.perf_counter()
     exported, packing = export_step(model, kind, capacity)
     (staging_directory / f"{kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
@@ -126,14 +102,27 @@ def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
     )
     compile_start = time.perf_counter()
 
-    def metadata_factory(compiled_path):
+    def on_compiled(compiled_path):
         diagnostics = dict(
             range_constraints=str(exported.range_constraints),
             graph_nodes=len(list(exported.graph.nodes)),
             export_seconds=export_seconds,
             compile_seconds=time.perf_counter() - compile_start,
+            delta_backend="triton_op",
+            delta_preparation="triton",
+            delta_operator=DELTA_OPERATORS,
+            delta_algorithm=dict(
+                prefill="shape_cond",
+                short="fused_recurrent",
+                long="chunked_fp32",
+                decode="fused_recurrent",
+            ),
+            delta_short_threshold=SHORT_THRESHOLD,
+            delta_chunk_size=CHUNK_SIZE,
+            delta_transform_tile=TRANSFORM_TILE,
+            delta_dot_precision="ieee",
+            linear_packing=dict(enabled=True, version=1),
         )
-        metadata = entry_metadata(model, kind, checkpoint, capacity)
         report_export(
             "qwen35",
             kind,
@@ -141,9 +130,8 @@ def export_entry(kind, staging_directory, *, model, checkpoint, capacity):
             package_bytes=compiled_path.stat().st_size,
             diagnostics=diagnostics,
         )
-        return metadata
 
-    return exported, metadata_factory
+    return exported, on_compiled
 
 
 def export_model(*, model_dir, output, max_context_length=None, enable_inductor_optimization=False):
@@ -157,12 +145,7 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
     options = {"emulate_precision_casts": True}
     if enable_inductor_optimization:
         options.update(combo_kernels=True, benchmark_combo_kernel=True)
-    prepare_entry = partial(
-        export_entry,
-        model=model,
-        checkpoint=checkpoint,
-        capacity=capacity,
-    )
+    prepare_entry = partial(export_entry, model=model, capacity=capacity)
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         load_attention_ops(model="qwen35")
         compile_shared(
@@ -170,6 +153,7 @@ def export_model(*, model_dir, output, max_context_length=None, enable_inductor_
             prepare_entry,
             identity=dict(model="qwen3.5", checkpoint=checkpoint),
             inductor_configs=options,
+            metadata=partial(bundle_metadata, model, checkpoint, capacity),
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),
         )

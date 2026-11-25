@@ -26,17 +26,16 @@ def prepare_validation(packages, model_dir, native):
     from tools.packages import validate_shared_weights
     from compiler.common.artifacts import require
 
-    pair = read_package_metadata(packages)
-    model_type = pair["decode"]["model_type"]
+    metadata = read_package_metadata(packages)
+    model_type = metadata["model_type"]
     native = native or default_build_dir(model_type) / "xinfer_validate"
     require(native.is_file(), "Build xinfer_validate with XINFER_BUILD_VALIDATION=ON first")
-    for entry in pair.values():
-        validate_model_metadata(entry)
-    validate_shared_weights(packages, pair["prefill"], pair["decode"])
+    validate_model_metadata(metadata)
+    validate_shared_weights(packages, metadata)
     load_packaged_attention_ops(packages)
     module = importlib.import_module(f"tools.validation.{model_type}.model")
-    suite = module.Suite(model_dir or module.default_model_dir(pair), pair)
-    return suite, pair, native
+    suite = module.Suite(model_dir or module.default_model_dir(metadata), metadata)
+    return suite, metadata, native
 
 
 def validate_packages(*, packages, output, model_dir=None, native=None):
@@ -48,9 +47,9 @@ def validate_packages(*, packages, output, model_dir=None, native=None):
         from tools.validation.common.chain import new_report
         from tools.validation.common.pipeline import validate_chain
 
-        suite, pair, native = prepare_validation(packages, model_dir, native)
-        report = new_report(pair["decode"]["model_type"], pair)
-        validate_chain(suite, packages, native, output, pair, report)
+        suite, metadata, native = prepare_validation(packages, model_dir, native)
+        report = new_report(metadata["model_type"], metadata)
+        validate_chain(suite, packages, native, output, metadata, report)
     except Exception as error:
         report.update(passed=False, error=dict(type=type(error).__name__, message=str(error)))
         traceback.print_exc()

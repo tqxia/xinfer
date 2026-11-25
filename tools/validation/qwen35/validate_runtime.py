@@ -13,7 +13,7 @@ from transformers import AutoTokenizer
 
 from compiler.qwen35.config import ARTIFACT_DIR, TEXT_DIR, configure
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, default_build_dir, sha256
-from compiler.common.metadata import read_package_metadata
+from compiler.common.metadata import METADATA_FILE, read_package_metadata
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.packages import validate_shared_weights
 from tools.common import native_environment, prompt_chunks, run
@@ -28,12 +28,12 @@ from tools.validation.common.validation import compare_file
 
 
 def reject_inputs(args, env, metadata, directory):
-    capacity = metadata["decode"]["cache_length"]
+    capacity = metadata["cache_length"]
     cases = [
         ("empty", "", "1", f"Expected 1..{capacity}"),
         ("oversized", "42 " * (capacity + 1), "1", f"Expected 1..{capacity}"),
         ("negative_id", "-1", "1", "Token ID out of range"),
-        ("large_id", str(metadata["decode"]["vocab_size"]), "1", "Token ID out of range"),
+        ("large_id", str(metadata["vocab_size"]), "1", "Token ID out of range"),
         ("not_integer", "42junk", "1", "Invalid integer"),
         ("zero_budget", "42", "0", "Generation budget"),
         ("negative_budget", "42", "-1", "Generation budget"),
@@ -82,104 +82,84 @@ def reject_inputs(args, env, metadata, directory):
     return passed, prompt
 
 
-def metadata_mutations(metadata):
+def metadata_mutations():
     mutations = [
         (
-            "mixed_model_types",
-            lambda m: m["prefill"].update(model_type="qwen3"),
-            "Package model types differ",
-        ),
-        (
-            "missing_prefill_model_type",
-            lambda m: m["prefill"].pop("model_type"),
-            "Package model types differ",
-        ),
-        (
-            "missing_decode_model_type",
-            lambda m: m["decode"].pop("model_type"),
-            "Package model types differ",
-        ),
-        (
-            "unknown_model_type",
-            lambda m: [v.update(model_type="unknown") for v in m.values()],
+            "missing_model_type",
+            lambda m: m.pop("model_type"),
             "Unsupported model type",
         ),
         (
-            "mixed_checkpoint",
-            lambda m: m["prefill"]["checkpoint"].update(revision="different"),
-            "Package metadata differs: checkpoint",
+            "unknown_model_type",
+            lambda m: m.update(model_type="unknown"),
+            "Unsupported model type",
         ),
         (
-            "mixed_state",
-            lambda m: m["prefill"]["state"][0]["shape"].__setitem__(-1, 5),
-            "Package metadata differs: state",
+            "invalid_checkpoint",
+            lambda m: m["checkpoint"].pop("model"),
+            "Unsupported package metadata: checkpoint",
         ),
         (
-            "legacy_prefill",
-            lambda m: m["prefill"].update(eager_numerics=True),
+            "legacy_eager_numerics",
+            lambda m: m.update(eager_numerics=True),
             "Unsupported package metadata: eager_numerics",
-        ),
-        (
-            "legacy_decode",
-            lambda m: m["decode"].update(eager_numerics=True),
-            "Unsupported package metadata: eager_numerics",
-        ),
-        (
-            "legacy_pair",
-            lambda m: [v.update(eager_numerics=True) for v in m.values()],
-            "Unsupported package metadata: eager_numerics",
-        ),
-        (
-            "mixed_packing",
-            lambda m: m["prefill"]["model_specific"].update(
-                linear_packing={"enabled": "different"}
-            ),
-            "Package metadata differs: model_specific",
-        ),
-        (
-            "entry_point",
-            lambda m: m["prefill"].update(entry_point="decode"),
-            "Unsupported package metadata: entry_point",
         ),
         (
             "torch_version",
-            lambda m: [v.update(torch_version="0.0.0") for v in m.values()],
+            lambda m: m.update(torch_version="0.0.0"),
             "Torch version mismatch",
         ),
         (
             "state_dtype",
-            lambda m: [v["state"][0].update(dtype="float32") for v in m.values()],
+            lambda m: m["state"][0].update(dtype="float32"),
             "Unsupported package metadata: state",
         ),
         (
             "state_order",
-            lambda m: [v["state"].reverse() for v in m.values()],
+            lambda m: m["state"].reverse(),
             "Invalid state order or dtype",
         ),
         (
             "gpu_arch",
-            lambda m: [v.update(cuda_compute_capability=[99, 0]) for v in m.values()],
+            lambda m: m.update(cuda_compute_capability=[99, 0]),
             "GPU architecture mismatch",
         ),
-    ]
-    mutations += [
         (
-            "mixed_export_options",
-            lambda m: m["prefill"]["export_options"].update(backed_size_oblivious=False),
-            "Package metadata differs: export_options",
+            "max_prefill_tokens",
+            lambda m: m.update(max_prefill_tokens=513),
+            "Unsupported package metadata: max_prefill_tokens",
         ),
         (
-            "invalid_export_options",
-            lambda m: [v["export_options"].update(backed_size_oblivious=False) for v in m.values()],
-            "Unsupported package metadata: export_options",
+            "missing_shared_weights",
+            lambda m: m.pop("shared_weights"),
+            "Unsupported package metadata: shared_weights",
         ),
         (
-            "missing_export_options",
-            lambda m: [v.pop("export_options") for v in m.values()],
-            "Unsupported package metadata: export_options",
+            "wrong_archive_checksum",
+            lambda m: m["shared_weights"].update(sha256="0" * 64),
+            "Shared weights archive checksum mismatch",
+        ),
+        (
+            "wrong_prefill_checksum",
+            lambda m: m["entries"]["prefill"].update(sha256="0" * 64),
+            "Package checksum mismatch: prefill",
+        ),
+        (
+            "wrong_decode_size",
+            lambda m: m["entries"]["decode"].update(bytes=1),
+            "Package file size mismatch",
         ),
     ]
     for field in (
+        "entry_point",
+        "token_range",
+        "export_options",
+        "tf32",
+        "triton_enable_fp_fusion",
+        "inductor_configs",
+        "package_bytes",
+        "package_sha256",
+        "model_specific",
         "batch_size",
         "dtype",
         "input_mutation",
@@ -191,75 +171,8 @@ def metadata_mutations(metadata):
         mutations.append(
             (
                 "legacy_" + field,
-                lambda m, field=field: [v.update({field: False}) for v in m.values()],
+                lambda m, field=field: m.update({field: False}),
                 "Unsupported package metadata: " + field,
-            )
-        )
-    mutations += [
-        (
-            "mixed_delta_threshold",
-            lambda m: m["prefill"]["model_specific"].update(delta_short_threshold=98),
-            "Package metadata differs: model_specific",
-        ),
-        (
-            "mixed_delta_algorithm",
-            lambda m: m["prefill"]["model_specific"].update(
-                delta_algorithm={"prefill": "different"}
-            ),
-            "Package metadata differs: model_specific",
-        ),
-        (
-            "mixed_delta_tile",
-            lambda m: m["prefill"]["model_specific"].update(delta_transform_tile=64),
-            "Package metadata differs: model_specific",
-        ),
-        (
-            "prefill_range",
-            lambda m: m["prefill"].update(token_range=[2, 513]),
-            "Unsupported package metadata: token_range",
-        ),
-        (
-            "decode_range",
-            lambda m: m["decode"].update(token_range=[1, 2]),
-            "Unsupported package metadata: token_range",
-        ),
-        (
-            "mixed_backend",
-            lambda m: m["prefill"]["model_specific"].update(delta_backend="invalid"),
-            "Package metadata differs: model_specific",
-        ),
-        (
-            "unknown_backend",
-            lambda m: [v["model_specific"].update(delta_backend="invalid") for v in m.values()],
-            "Unsupported DeltaNet backend",
-        ),
-        (
-            "mixed_shared_weights",
-            lambda m: m["prefill"]["shared_weights"].update(identity="0" * 64),
-            "Package metadata differs: shared_weights",
-        ),
-        (
-            "missing_shared_weights",
-            lambda m: [v.pop("shared_weights") for v in m.values()],
-            "Unsupported package metadata: shared_weights",
-        ),
-        (
-            "mixed_archive_checksum",
-            lambda m: m["prefill"]["shared_weights"].update(sha256="0" * 64),
-            "Package metadata differs: shared_weights",
-        ),
-        (
-            "wrong_archive_checksum",
-            lambda m: [v["shared_weights"].update(sha256="0" * 64) for v in m.values()],
-            "Shared weights archive checksum mismatch",
-        ),
-    ]
-    if "delta_short_threshold" in metadata["decode"]["model_specific"]:
-        mutations.append(
-            (
-                "missing_delta_threshold",
-                lambda m: m["prefill"]["model_specific"].pop("delta_short_threshold"),
-                "Package metadata differs: model_specific",
             )
         )
     return mutations
@@ -267,14 +180,13 @@ def metadata_mutations(metadata):
 
 def reject_metadata(args, env, metadata, directory, prompt):
     passed = []
-    mutations = metadata_mutations(metadata)
-    for name, mutate, error in mutations:
+    for name, mutate, error in metadata_mutations():
         packages = directory / name
         packages.mkdir()
         modified = copy.deepcopy(metadata)
         mutate(modified)
-        for kind, meta in modified.items():
-            (packages / f"{kind}.json").write_text(json.dumps(meta))
+        (packages / METADATA_FILE).write_text(json.dumps(modified))
+        for kind in ("prefill", "decode"):
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
         (packages / "weights.safetensors").symlink_to(
             (args.packages / "weights.safetensors").resolve()
@@ -307,10 +219,9 @@ def reject_archives(args, env, metadata, directory, prompt):
         elif name == "missing_embedded_weights_metadata":
             archive = packages / "weights.safetensors"
             save_file({}, str(archive))
-            for item in modified.values():
-                item["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
-        for kind, meta in modified.items():
-            (packages / f"{kind}.json").write_text(json.dumps(meta))
+            modified["shared_weights"].update(bytes=archive.stat().st_size, sha256=sha256(archive))
+        (packages / METADATA_FILE).write_text(json.dumps(modified))
+        for kind in ("prefill", "decode"):
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
         output = packages / "generated.ids"
         run(
@@ -349,30 +260,25 @@ def build_parser():
 
 def preflight(args):
     metadata = read_package_metadata(args.packages, model_type="qwen35")
-    for entry in metadata.values():
-        validate_model_metadata(entry)
-    validate_shared_weights(args.packages, metadata["prefill"], metadata["decode"])
+    validate_model_metadata(metadata)
+    validate_shared_weights(args.packages, metadata)
     configure()
-    for kind, meta in metadata.items():
-        assert meta["package_sha256"] == sha256(args.packages / f"{kind}.pt2")
-        assert meta["checkpoint"]["manifest"] == json.loads(
-            (args.model_dir / MODEL_MANIFEST_NAME).read_text()
-        )
+    for kind, entry in metadata["entries"].items():
+        assert entry["sha256"] == sha256(args.packages / f"{kind}.pt2")
+    assert metadata["checkpoint"] == json.loads((args.model_dir / MODEL_MANIFEST_NAME).read_text())
     tokenizer = AutoTokenizer.from_pretrained(args.model_dir, local_files_only=True)
-    assert metadata["prefill"]["model_specific"]["delta_backend"] == "triton_op"
     return metadata, tokenizer
 
 
 def runtime_cases(tokenizer, metadata):
-    capacity = metadata["decode"]["cache_length"]
+    capacity = metadata["cache_length"]
     cases = [case for case in fixtures(tokenizer) if sum(map(len, case["steps"])) <= capacity]
     seed = cases[1]["steps"][0]
     for length in (2, 63, 65, 96, 97, 98, 129, 511):
         prompt = (seed * (length // len(seed) + 1))[:length]
         if length + 1 <= capacity:
             cases.append(dict(name=f"dispatch_{length}", steps=[prompt, [42]]))
-    capacity = metadata["decode"]["cache_length"]
-    maximum = metadata["prefill"]["token_range"][1]
+    maximum = metadata["max_prefill_tokens"]
     stream = (seed * (capacity // len(seed) + 1))[:capacity]
     cases.append(
         dict(
@@ -400,7 +306,7 @@ def runtime_cases(tokenizer, metadata):
         )
     capital = next(c for c in cases if c["name"] == "capital")
     cases += [dict(capital, name="capital_repeat"), dict(capital, name="limit_one", limit=1)]
-    eos = metadata["decode"]["eos_token_ids"]
+    eos = metadata["eos_token_ids"]
     for case in list(cases):
         if case["name"] in ("long_prompt_513", "long_prompt_8191", "long_prompt_8192"):
             prompt = [token for chunk in case["steps"][:-2] for token in chunk]
@@ -421,16 +327,14 @@ def capture_runtime_state(case, step):
 
 
 def run_python_reference(args, metadata, teacher, chats, capital, eos):
-    runtime = load_aoti_runtime(
-        args.packages, model_type="qwen35", specs=metadata["decode"]["state"]
-    )
+    runtime = load_aoti_runtime(args.packages, model_type="qwen35", specs=metadata["state"])
     print("Python AOTI reference", flush=True)
     try:
         expected = run_stage(
             runtime,
             teacher,
             chats,
-            metadata["decode"]["state"],
+            metadata["state"],
             capture_runtime_state,
             eos,
             state_directory=args.output / "python_aoti",
@@ -461,7 +365,7 @@ def check_native_parity(args, metadata, teacher, chats, keys, capital, expected)
         "python_aoti",
         actual,
         expected,
-        metadata["decode"]["state"],
+        metadata["state"],
         Policy(),
         exact=True,
         state_keys=keys,

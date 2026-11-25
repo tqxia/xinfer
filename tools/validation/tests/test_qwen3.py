@@ -79,11 +79,11 @@ class LiveHFReferences(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        (self.root / MODEL_MANIFEST_NAME).write_text(json.dumps({}))
-        pair = {kind: metadata() for kind in ("prefill", "decode")}
-        for entry in pair.values():
-            entry.update(torch_version=torch.__version__, vocab_size=64, eos_token_ids=[1])
-        pair["prefill"].update(entry_point="prefill", token_range=[2, 512])
+        (self.root / MODEL_MANIFEST_NAME).write_text(
+            json.dumps(dict(model="Qwen/Qwen3-0.6B", revision="pinned"))
+        )
+        bundle = metadata()
+        bundle.update(torch_version=torch.__version__, vocab_size=64, eos_token_ids=[1])
         self.prompts = chat_prompts("qwen3")
         self.prompt_ids = {
             item["text"]: [10 + index, 20 + index] for index, item in enumerate(self.prompts)
@@ -93,7 +93,7 @@ class LiveHFReferences(unittest.TestCase):
             self.prompt_ids[messages[0]["content"]]
         )
         with patch.object(model, "load_tokenizer", return_value=tokenizer):
-            self.suite = model.Suite(self.root, pair)
+            self.suite = model.Suite(self.root, bundle)
 
         self.original = SimpleNamespace(
             config=SimpleNamespace(vocab_size=64),

@@ -15,8 +15,6 @@ struct Spec : xinfer::SpecBase {
 
   explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen35, "Unsupported model type");
-    const auto &specific = metadata.at("model_specific");
-    require(specific.value("delta_backend", Json()) == "triton_op", "Unsupported DeltaNet backend");
 
     require(!state.empty() && state.size() % 2 == 0, "Invalid state count");
     for (size_t i = 0; i < state.size(); i += 2) {

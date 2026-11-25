@@ -17,8 +17,8 @@ from tools.benchmark import common as benchmark
 from tools.benchmark import cli as benchmark_cli
 from tools.packages import validate_model_metadata
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, sha256, write_json
-from compiler.common.metadata import validate_metadata_pair
-from compiler.common.tests.test_metadata import metadata_pair
+from compiler.common.metadata import METADATA_FILE, validate_metadata
+from compiler.common.tests.test_metadata import bundle_metadata
 from tools.benchmark import qwen3 as qwen3_benchmark
 from tools.benchmark import qwen35 as qwen35_benchmark
 
@@ -318,10 +318,10 @@ class BenchmarkContract(unittest.TestCase):
 
 class SharedWeightComparison(unittest.TestCase):
     def profiles(self):
-        baseline = {kind: dict(metadata=metadata) for kind, metadata in metadata_pair().items()}
+        baseline = dict(metadata=bundle_metadata())
         candidate = copy.deepcopy(baseline)
-        for entry in candidate.values():
-            entry["metadata"]["shared_weights"].update(bytes=1000128, sha256="b" * 64)
+        candidate["metadata"]["shared_weights"].update(bytes=1000128, sha256="e" * 64)
+        candidate["metadata"]["entries"]["decode"].update(bytes=256, sha256="f" * 64)
         weights = dict(
             identity_sha256="1" * 64,
             sources={
@@ -337,13 +337,8 @@ class SharedWeightComparison(unittest.TestCase):
     def test_same_weights_with_different_archive_hashes_are_comparable(self):
         baseline, candidate, before, after = self.profiles()
         for profile in (baseline, candidate):
-            validate_metadata_pair(profile["prefill"]["metadata"], profile["decode"]["metadata"])
+            validate_metadata(profile["metadata"])
         benchmark.validate_comparison(baseline, candidate, before, after)
-        candidate["prefill"]["metadata"]["shared_weights"]["sha256"] = "e" * 64
-        with self.assertRaisesRegex(ValueError, "Package metadata differs: shared_weights"):
-            validate_metadata_pair(
-                candidate["prefill"]["metadata"], candidate["decode"]["metadata"]
-            )
 
     def test_changed_source_weights_are_rejected_despite_same_identity(self):
         baseline, candidate, before, after = self.profiles()
@@ -351,13 +346,10 @@ class SharedWeightComparison(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Incomparable shared weights: sources"):
             benchmark.validate_comparison(baseline, candidate, before, after)
 
-    def test_changed_numerical_settings_are_rejected(self):
+    def test_changed_contract_fields_are_rejected(self):
         baseline, candidate, before, after = self.profiles()
-        for entry in candidate.values():
-            entry["metadata"]["triton_enable_fp_fusion"] = False
-        with self.assertRaisesRegex(
-            ValueError, "Incomparable packages: prefill/triton_enable_fp_fusion"
-        ):
+        candidate["metadata"]["cuda_compute_capability"] = [9, 0]
+        with self.assertRaisesRegex(ValueError, "Incomparable packages: cuda_compute_capability"):
             benchmark.validate_comparison(baseline, candidate, before, after)
 
 
@@ -528,7 +520,7 @@ class ControllerContract(unittest.TestCase):
     def fixtures(self, root, model_type, mode="run"):
         model = root / "model"
         model.mkdir()
-        manifest = dict(revision="fixture-revision")
+        manifest = dict(model=model_type, revision="fixture-revision")
         write_json(model / MODEL_MANIFEST_NAME, manifest)
         native = root / "xinfer_benchmark"
         native.write_bytes(b"native benchmark fixture")
@@ -538,19 +530,19 @@ class ControllerContract(unittest.TestCase):
         for label in ("baseline", "candidate"):
             directory = root / label
             directory.mkdir()
-            pair = metadata_pair(model_type)
-            for kind, metadata in pair.items():
+            metadata = bundle_metadata(model_type)
+            metadata["checkpoint"] = manifest
+            for kind in ("prefill", "decode"):
                 package = directory / f"{kind}.pt2"
                 with zipfile.ZipFile(package, "w") as archive:
                     archive.writestr(
                         "fixture/data/aotinductor/model/libxinfer_attention_ops.so",
                         library.read_bytes() + label.encode(),
                     )
-                metadata["checkpoint"]["manifest"] = manifest
-                metadata.update(
-                    package_bytes=package.stat().st_size, package_sha256=sha256(package)
+                metadata["entries"][kind] = dict(
+                    bytes=package.stat().st_size, sha256=sha256(package)
                 )
-                write_json(directory / f"{kind}.json", metadata)
+            write_json(directory / METADATA_FILE, metadata)
             directories.append(directory)
         args = SimpleNamespace(
             command=mode,
@@ -659,11 +651,12 @@ class ControllerContract(unittest.TestCase):
                         environment = json.loads((args.output / "environment.json").read_text())
                         self.assertEqual(environment["gpu_uuid"], GpuSelection.GPU)
                         self.assertNotIn("attention_library", environment)
-                        for entries in environment["packages"].values():
-                            for entry in entries.values():
+                        for bundle in environment["packages"].values():
+                            for kind, entry in bundle["entries"].items():
                                 self.assertNotIn("attention_library_sha256", entry)
                                 self.assertEqual(
-                                    entry["sha256"], entry["metadata"]["package_sha256"]
+                                    entry["sha256"],
+                                    bundle["metadata"]["entries"][kind]["sha256"],
                                 )
                         self.assertEqual(environment["binary_sha256"], sha256(args.native))
                         self.assertEqual(
@@ -695,9 +688,11 @@ class ControllerContract(unittest.TestCase):
                     "fixture/data/aotinductor/model/libxinfer_attention_ops.so",
                     b"different attention implementation",
                 )
-            sidecar = args.packages / "decode.json"
+            sidecar = args.packages / METADATA_FILE
             metadata = json.loads(sidecar.read_text())
-            metadata.update(package_bytes=package.stat().st_size, package_sha256=sha256(package))
+            metadata["entries"]["decode"] = dict(
+                bytes=package.stat().st_size, sha256=sha256(package)
+            )
             write_json(sidecar, metadata)
             args.output.mkdir()
             write_json(args.output / "workload.json", {})
@@ -713,7 +708,7 @@ class ControllerContract(unittest.TestCase):
                     {"cpp_aoti": args.packages},
                     validate_model_metadata,
                 )
-            entries = environment["packages"]["cpp_aoti"]
+            entries = environment["packages"]["cpp_aoti"]["entries"]
             self.assertNotEqual(entries["prefill"]["sha256"], entries["decode"]["sha256"])
             self.assertEqual(entries["decode"]["sha256"], sha256(package))
             self.assertNotIn("attention_library_sha256", entries["decode"])
@@ -746,7 +741,7 @@ class ControllerContract(unittest.TestCase):
                 ):
                     self.run_controller(args, library, model_type)
                 default.assert_called_once()
-                self.assertEqual(default.call_args.args[0]["decode"]["model_type"], model_type)
+                self.assertEqual(default.call_args.args[0]["model_type"], model_type)
                 build.assert_called_once_with(model_type)
                 self.assertEqual(args.model_dir, expected_model)
                 self.assertEqual(args.native, expected_native)
@@ -754,8 +749,7 @@ class ControllerContract(unittest.TestCase):
     def test_mixed_models_are_rejected_before_worker_or_output_creation(self):
         with tempfile.TemporaryDirectory() as temporary:
             args, _ = self.fixtures(Path(temporary), "qwen3", "compare")
-            for kind, metadata in metadata_pair("qwen35").items():
-                write_json(args.candidate_packages / f"{kind}.json", metadata)
+            write_json(args.candidate_packages / METADATA_FILE, bundle_metadata("qwen35"))
             with (
                 patch.object(benchmark, "resolve_gpu") as resolve,
                 patch.object(benchmark, "run_worker") as worker,
@@ -766,15 +760,14 @@ class ControllerContract(unittest.TestCase):
             worker.assert_not_called()
             self.assertFalse(args.output.exists())
 
-    def test_comparison_rejects_different_numerical_contract_before_workers(self):
+    def test_comparison_rejects_different_contract_before_workers(self):
         for model_type in ("qwen3", "qwen35"):
             with self.subTest(model=model_type), tempfile.TemporaryDirectory() as temporary:
                 args, library = self.fixtures(Path(temporary), model_type, "compare")
-                for kind in ("prefill", "decode"):
-                    path = args.candidate_packages / f"{kind}.json"
-                    metadata = json.loads(path.read_text())
-                    metadata["triton_enable_fp_fusion"] = False
-                    write_json(path, metadata)
+                path = args.candidate_packages / METADATA_FILE
+                metadata = json.loads(path.read_text())
+                metadata["cuda_compute_capability"] = [9, 0]
+                write_json(path, metadata)
                 with patch.object(benchmark, "run_rounds") as rounds:
                     with self.assertRaisesRegex(ValueError, "Incomparable packages"):
                         self.run_controller(args, library, model_type)
@@ -892,7 +885,7 @@ class ControllerContract(unittest.TestCase):
 
 
 class WorkloadLimits(unittest.TestCase):
-    def invoke(self, root, length, capacity, decode_steps=64, bounds=(2, 512)):
+    def invoke(self, root, length, capacity, decode_steps=64, max_prefill=512):
         args = SimpleNamespace(
             warmup=1,
             repeats=1,
@@ -903,10 +896,7 @@ class WorkloadLimits(unittest.TestCase):
             output=root / "benchmark",
             gpu=None,
         )
-        metadata = {
-            "prefill": dict(token_range=list(bounds)),
-            "decode": dict(token_range=[1, 1], cache_length=capacity),
-        }
+        metadata = dict(cache_length=capacity, max_prefill_tokens=max_prefill)
         return args, metadata
 
     def run_core(self, args, metadata):
@@ -946,17 +936,16 @@ class WorkloadLimits(unittest.TestCase):
             self.assertNotIn("max_prompt_length", workload)
 
     def test_prompt_and_remaining_capacity_limits_reject_before_gpu_or_output(self):
-        for length, capacity, decode, bounds in (
-            (16385, 16384, 64, (2, 512)),
-            (8192, 8255, 64, (2, 512)),
-            (2, 1024, 1, (4, 512)),
-            (0, 1024, 1, (2, 512)),
+        for length, capacity, decode, max_prefill in (
+            (16385, 16384, 64, 512),
+            (8192, 8255, 64, 512),
+            (0, 1024, 1, 512),
         ):
             with (
-                self.subTest(length=length, capacity=capacity, bounds=bounds),
+                self.subTest(length=length, capacity=capacity, max_prefill=max_prefill),
                 tempfile.TemporaryDirectory() as temporary,
             ):
-                args, metadata = self.invoke(Path(temporary), length, capacity, decode, bounds)
+                args, metadata = self.invoke(Path(temporary), length, capacity, decode, max_prefill)
                 with patch.object(benchmark, "resolve_gpu") as resolve:
                     with self.assertRaisesRegex(ValueError, "prompt/context limits"):
                         self.run_core(args, metadata)
@@ -965,7 +954,7 @@ class WorkloadLimits(unittest.TestCase):
 
     def test_single_token_uses_decode_entry_range(self):
         with tempfile.TemporaryDirectory() as temporary:
-            args, metadata = self.invoke(Path(temporary), 1, 1024, bounds=(4, 512))
+            args, metadata = self.invoke(Path(temporary), 1, 1024)
             workload = self.run_core(args, metadata)
             self.assertEqual(workload["cases"][0]["prompt"], [7])
 

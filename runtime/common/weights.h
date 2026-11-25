@@ -122,41 +122,33 @@ public:
   ValidatedBundle(ValidatedBundle &&) = default;
   ValidatedBundle &operator=(ValidatedBundle &&) = default;
 
-  static ValidatedBundle verify(const fs::path &directory, const Json &prefill,
-                                const Json &decode) {
+  static ValidatedBundle verify(const fs::path &directory, const Json &metadata) {
     const auto root = fs::canonical(directory);
+    require(metadata.is_object() && metadata.contains("entries") &&
+                metadata.at("entries").is_object(),
+            "Unsupported package metadata: entries");
+    const auto &declared_entries = metadata.at("entries");
     std::unordered_map<std::string, std::string> package_digests;
-    for (const auto *entry : {&prefill, &decode}) {
-      const auto kind = entry->at("entry_point").get<std::string>();
-      const auto path = root / (kind + ".pt2");
-      require(fs::is_regular_file(path), "Package file is missing: " + kind);
-      require(fs::file_size(path) == entry->at("package_bytes").get<uintmax_t>(),
+    for (const auto *kind : {"prefill", "decode"}) {
+      require(declared_entries.contains(kind) && declared_entries.at(kind).is_object(),
+              "Unsupported package metadata: entries");
+      const auto &entry = declared_entries.at(kind);
+      const auto path = root / (std::string(kind) + ".pt2");
+      require(fs::is_regular_file(path), std::string("Package file is missing: ") + kind);
+      require(fs::file_size(path) == entry.at("bytes").get<uintmax_t>(),
               "Package file size mismatch");
       const auto digest = sha256_file(path);
-      require(digest == entry->at("package_sha256").get<std::string>(),
-              "Package checksum mismatch: " + kind);
+      require(digest == entry.at("sha256").get<std::string>(),
+              std::string("Package checksum mismatch: ") + kind);
       package_digests.emplace(kind, digest);
     }
 
-    require(prefill.contains("shared_weights") && decode.contains("shared_weights"),
+    require(metadata.contains("shared_weights"),
             "Shared weights metadata is required; re-export both packages");
-    require(prefill.at("shared_weights") == decode.at("shared_weights"),
-            "Shared weights contracts differ");
-    for (const auto *metadata : {&prefill, &decode}) {
-      const auto &options = metadata->at("inductor_configs");
-      require(options.contains("aot_inductor.package_constants_in_so") &&
-                  options.at("aot_inductor.package_constants_in_so") == false &&
-                  options.contains("always_keep_tensor_constants") &&
-                  options.at("always_keep_tensor_constants") == true,
-              "Shared weights require weightless package compiler options");
-    }
-
-    const auto &contract = decode.at("shared_weights");
-    require(contract.is_object() && contract.size() == 4 && contract.contains("file") &&
-                contract.at("file").is_string() &&
-                contract.at("file").get<std::string>() == kSharedWeightsFile &&
-                contract.contains("identity") && contract.at("identity").is_string() &&
-                contract.contains("bytes") && contract.at("bytes").is_number_integer() &&
+    const auto &contract = metadata.at("shared_weights");
+    require(contract.is_object() && contract.size() == 3 && contract.contains("identity") &&
+                contract.at("identity").is_string() && contract.contains("bytes") &&
+                contract.at("bytes").is_number_integer() &&
                 contract.at("bytes").get<int64_t>() >= 0 && contract.contains("sha256") &&
                 contract.at("sha256").is_string(),
             "Shared weights metadata is required; re-export both packages");

@@ -18,7 +18,7 @@ from compiler.common.artifacts import (
     require,
     sha256,
 )
-from compiler.common.metadata import finalize_metadata, validate_metadata_pair
+from compiler.common.metadata import ENTRY_KINDS, METADATA_FILE, finalize_metadata
 from compiler.common.package import compile_package
 
 
@@ -53,8 +53,7 @@ def read_shared_weight_manifest(directory, contract):
     directory = Path(directory)
     require(
         isinstance(contract, dict)
-        and set(contract) == {"file", "identity", "bytes", "sha256"}
-        and contract.get("file") == SHARED_WEIGHTS_FILE
+        and set(contract) == {"identity", "bytes", "sha256"}
         and isinstance(contract.get("identity"), str)
         and type(contract.get("bytes")) is int
         and contract["bytes"] >= 0
@@ -258,7 +257,7 @@ def _compile_entry(
     custom_op_shims,
 ):
     """Finish one graph before exporting the next, retaining only CPU tensors."""
-    exported, metadata_factory = export_entry(kind, directory)
+    exported, on_compiled = export_entry(kind, directory)
     compiled_path = directory / f"{kind}.pt2"
     options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
     print(
@@ -302,10 +301,11 @@ def _compile_entry(
             f"Shared weights cannot resolve exact constant FQN: {name}",
         )
         constants[name] = _register(tensor, data, storages, cache)
-    data["entries"][kind] = dict(constants=constants, package_sha256=sha256(compiled_path))
-    metadata = metadata_factory(compiled_path) if metadata_factory else dict(entry_point=kind)
-    require(isinstance(metadata, dict), "Package metadata factory must return an object")
-    return dict(metadata, inductor_configs=options)
+    digest = sha256(compiled_path)
+    data["entries"][kind] = dict(constants=constants, package_sha256=digest)
+    if on_compiled is not None:
+        on_compiled(compiled_path)
+    return dict(bytes=compiled_path.stat().st_size, sha256=digest)
 
 
 def compile_shared(
@@ -314,17 +314,18 @@ def compile_shared(
     *,
     identity,
     inductor_configs,
+    metadata=None,
     native_libraries=(),
     custom_op_shims=None,
 ):
     """Compile both entries and publish one complete shared-weight bundle.
 
     export_entry(kind, staging_directory) returns an ExportedProgram and an
-    optional metadata_factory(compiled_path). Graph dumps and other auxiliary
-    files can be written to staging_directory. Each graph is compiled and its
-    constants copied to the CPU pool before the next graph is exported.
-    The archive is saved once, then its final checksum is recorded in both
-    metadata files. Only the completed directory is exposed to readers.
+    optional on_compiled(compiled_path) hook for export diagnostics. Graph dumps
+    and other auxiliary files can be written to staging_directory. Each graph is
+    compiled and its constants copied to the CPU pool before the next graph is
+    exported. The archive is saved once, then entry and archive checksums are
+    recorded in metadata.json. Only the completed directory is exposed to readers.
     """
     directory = Path(directory)
 
@@ -352,7 +353,7 @@ def compile_shared(
     ) as temporary:
         staging = Path(temporary) / "bundle"
         staging.mkdir()
-        metadata = {
+        entries = {
             kind: _compile_entry(
                 kind,
                 staging,
@@ -363,8 +364,10 @@ def compile_shared(
                 native_libraries,
                 custom_op_shims,
             )
-            for kind in ("prefill", "decode")
+            for kind in ENTRY_KINDS
         }
+        bundle_metadata = metadata() if callable(metadata) else dict(metadata or {})
+        require(isinstance(bundle_metadata, dict), "Package metadata must be an object")
         needed_views = {
             name for entry in data["entries"].values() for name in entry["constants"].values()
         }
@@ -379,32 +382,20 @@ def compile_shared(
             metadata={SHARED_WEIGHTS_MANIFEST_KEY: canonical_json(data)},
         )
         contract = dict(
-            file=SHARED_WEIGHTS_FILE,
             identity=identity_sha256,
             bytes=archive_path.stat().st_size,
             sha256=sha256(archive_path),
         )
-        for kind, entry_metadata in metadata.items():
-            package = staging / f"{kind}.pt2"
-            if "model_type" in entry_metadata:
-                metadata[kind] = finalize_metadata(
-                    entry_metadata,
-                    package_path=package,
-                    inductor_configs=entry_metadata["inductor_configs"],
-                    shared_weights=contract,
-                )
-            else:
-                # Isolated operator/CPU fixtures do not describe a full model.
-                metadata[kind] = dict(
-                    entry_metadata,
-                    shared_weights=contract,
-                    package_bytes=package.stat().st_size,
-                    package_sha256=sha256(package),
-                )
-        if any("model_type" in item for item in metadata.values()):
-            validate_metadata_pair(metadata["prefill"], metadata["decode"])
-        for kind, entry_metadata in metadata.items():
-            (staging / f"{kind}.json").write_text(json.dumps(entry_metadata, indent=2) + "\n")
+        if "model_type" in bundle_metadata:
+            bundle_metadata = finalize_metadata(
+                bundle_metadata,
+                directory=staging,
+                shared_weights=contract,
+            )
+        else:
+            # Isolated operator/CPU fixtures do not describe a full model.
+            bundle_metadata = dict(bundle_metadata, entries=entries, shared_weights=contract)
+        (staging / METADATA_FILE).write_text(json.dumps(bundle_metadata, indent=2) + "\n")
         check_destination()
         os.replace(staging, directory)
     return contract

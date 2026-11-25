@@ -56,55 +56,49 @@ def export_step(step, kind, capacity):
     return exported
 
 
-def entry_metadata(model, kind, checkpoint, capacity, cache_shape):
-    from torch._inductor.runtime.triton_helpers import get_backend_options
-
+def bundle_metadata(model, checkpoint, capacity):
+    config = model.config
+    cache_shape = [MAX_BATCH_SIZE, config.num_key_value_heads, capacity, config.head_dim]
     state = [
-        state_spec(layer, name, list(cache_shape), "bfloat16", "inplace")
-        for layer in range(model.config.num_hidden_layers)
+        state_spec(layer, name, cache_shape, "bfloat16", "inplace")
+        for layer in range(config.num_hidden_layers)
         for name in ("key", "value")
     ]
     return make_metadata(
         model_type="qwen3",
-        entry_point=kind,
-        token_range=[1, 1] if kind == "decode" else [2, MAX_PREFILL],
         checkpoint=checkpoint,
         torch_version=torch.__version__,
         cxx11_abi=torch._C._GLIBCXX_USE_CXX11_ABI,
         cuda_compute_capability=list(torch.cuda.get_device_capability()),
         cache_length=capacity,
-        vocab_size=model.config.vocab_size,
+        max_prefill_tokens=MAX_PREFILL,
+        vocab_size=config.vocab_size,
         eos_token_ids=model.generation_config.eos_token_id,
         state=state,
-        triton_enable_fp_fusion=get_backend_options()["enable_fp_fusion"],
-        model_specific={},
     )
 
 
-def export_entry(kind, staging_directory, *, model, step, checkpoint, capacity):
+def export_entry(kind, staging_directory, *, step, capacity):
     start = time.perf_counter()
     exported = export_step(step, kind, capacity)
     # Text dumps expose mutation/shape behavior without another copy of the weights.
     (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
     print(f"Exported {kind}; compiling...", flush=True)
 
-    def metadata_factory(_compiled_path):
-        inputs = exported.example_inputs[0]
-        cache_shape = (MAX_BATCH_SIZE, *inputs[2][0].shape[1:])
-        metadata = entry_metadata(model, kind, checkpoint, capacity, cache_shape)
+    def on_compiled(compiled_path):
         report_export(
             "qwen3",
             kind,
             strict=False,
+            package_bytes=compiled_path.stat().st_size,
             diagnostics=dict(
                 graph_nodes=len(list(exported.graph.nodes)),
                 export_and_compile_seconds=time.perf_counter() - start,
                 model_adapter=dict(name="qwen3_flash_v1"),
             ),
         )
-        return metadata
 
-    return exported, metadata_factory
+    return exported, on_compiled
 
 
 def export_model(*, model_dir, output, max_context_length=None):
@@ -115,24 +109,17 @@ def export_model(*, model_dir, output, max_context_length=None):
     torch.backends.cudnn.allow_tf32 = False
     model = load_model(model_dir)
     step = ModelStep(model)
-    manifest = read_json(model_dir / MODEL_MANIFEST_NAME)
-    revision = manifest["revision"]
-    checkpoint = dict(model_id=manifest["model"], revision=revision, manifest=manifest)
+    checkpoint = read_json(model_dir / MODEL_MANIFEST_NAME)
     # Retain BF16 cast boundaries; fused arithmetic can still differ from eager.
     options = {"emulate_precision_casts": True}
-    prepare_entry = partial(
-        export_entry,
-        model=model,
-        step=step,
-        checkpoint=checkpoint,
-        capacity=capacity,
-    )
+    prepare_entry = partial(export_entry, step=step, capacity=capacity)
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         compile_shared(
             output,
             prepare_entry,
-            identity=dict(model="qwen3", revision=revision),
+            identity=dict(model="qwen3", checkpoint=checkpoint),
             inductor_configs=options,
+            metadata=partial(bundle_metadata, model, checkpoint, capacity),
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),
         )

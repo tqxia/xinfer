@@ -394,11 +394,10 @@ def summarize(records, workload, reference):
 
 
 def validate_comparison(baseline, candidate, baseline_weights, candidate_weights):
-    """Compare model inputs/numerical settings while allowing different compiled artifacts."""
-    for kind in ("prefill", "decode"):
-        before, after = (profile[kind]["metadata"] for profile in (baseline, candidate))
-        for key in COMPARISON_FIELDS:
-            require(before[key] == after[key], f"Incomparable packages: {kind}/{key}")
+    """Compare model inputs/contracts while allowing different compiled artifacts."""
+    before, after = baseline["metadata"], candidate["metadata"]
+    for key in COMPARISON_FIELDS:
+        require(before[key] == after[key], f"Incomparable packages: {key}")
     for key in ("identity_sha256", "sources"):
         require(
             baseline_weights[key] == candidate_weights[key], f"Incomparable shared weights: {key}"
@@ -463,27 +462,19 @@ def capture_environment(args, out, gpu, model_type, packages, validate_model):
     )
     for label, directory in packages.items():
         metadata = read_package_metadata(directory, model_type=model_type)
+        validate_model(metadata)
+        require(metadata["checkpoint"] == manifest, "Package checkpoint manifest differs")
         entries = {}
-        for kind, meta in metadata.items():
-            validate_model(meta)
+        for kind, declared in metadata["entries"].items():
             package = directory / f"{kind}.pt2"
             size, digest = package.stat().st_size, sha256(package)
             require(
-                meta["package_bytes"] == size and meta["package_sha256"] == digest,
+                declared["bytes"] == size and declared["sha256"] == digest,
                 f"Package file differs from metadata: {label}/{kind}",
             )
-            require(
-                meta["checkpoint"]["manifest"] == manifest, "Package checkpoint manifest differs"
-            )
-            entries[kind] = dict(
-                metadata=meta,
-                bytes=size,
-                sha256=digest,
-            )
-        environment["packages"][label] = entries
-        environment["shared_weights"][label] = validate_shared_weights(
-            directory, metadata["prefill"], metadata["decode"]
-        )
+            entries[kind] = dict(bytes=size, sha256=digest)
+        environment["packages"][label] = dict(metadata=metadata, entries=entries)
+        environment["shared_weights"][label] = validate_shared_weights(directory, metadata)
     return environment
 
 
@@ -553,12 +544,11 @@ def validate_benchmark_options(args, metadata):
     )
 
     def supported(length):
-        prefill, decode = metadata["prefill"], metadata["decode"]
-        if not (1 <= length and length + args.decode_steps <= decode["cache_length"]):
+        if not (1 <= length and length + args.decode_steps <= metadata["cache_length"]):
             return False
-        lower, upper = prefill["token_range"]
+        upper = metadata["max_prefill_tokens"]
         return all(
-            len(chunk) == 1 or lower <= len(chunk) <= upper
+            len(chunk) == 1 or 2 <= len(chunk) <= upper
             for chunk in prompt_chunks(range(length), upper)
         )
 
@@ -574,7 +564,7 @@ def prepare_benchmark(
     args, out, gpu, model_type, metadata, packages, prepare_tokens, validate_model, compare
 ):
     workload = make_workload(args, *prepare_tokens())
-    workload["cache_length"] = metadata["decode"]["cache_length"]
+    workload["cache_length"] = metadata["cache_length"]
     write_json(out / "workload.json", workload)
     packages = {label: directory.resolve() for label, directory in packages.items()}
     environment = capture_environment(args, out, gpu, model_type, packages, validate_model)
@@ -594,7 +584,7 @@ def benchmark_summary(args, model_type, metadata, eager, records, workload, refe
         decode_steps=args.decode_steps,
         functional_checks_passed=True,
         prefill_execution=dict(
-            native_chunk_tokens=metadata["prefill"]["token_range"][1],
+            native_chunk_tokens=metadata["max_prefill_tokens"],
             hf="whole_prompt" if eager else None,
         ),
         profiles=summarize(records, workload, reference),

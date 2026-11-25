@@ -217,7 +217,6 @@ class ValidationStages(unittest.TestCase):
         self.suite.capacity = 1024
         self.suite.max_prefill = 512
         self.suite.vocab_size = 16
-        self.suite.pair = {"prefill": {"model_specific": {}}}
         self.original = SimpleNamespace(config=object())
         self.events = []
         self.loader = self.enterContext(
@@ -232,7 +231,6 @@ class ValidationStages(unittest.TestCase):
                 delta, "install_delta", side_effect=lambda _: self.events.append("adapter")
             )
         )
-        self.wrapper = self.enterContext(patch.object(model, "ModelStep"))
         self.export_step = self.enterContext(patch.object(export, "export_step"))
         self.runtime = self.enterContext(
             patch.object(model, "ExplicitRuntime", return_value=sentinel.eager)
@@ -247,7 +245,6 @@ class ValidationStages(unittest.TestCase):
             self.assertEqual(stage.name, name)
             self.assertIs(stage.runtime, runtime)
             self.install.assert_not_called()
-            self.wrapper.assert_not_called()
             self.export_step.assert_not_called()
         return stages
 
@@ -269,7 +266,6 @@ class ValidationStages(unittest.TestCase):
         self.loader.assert_called_once_with(self.suite.model_dir)
 
     def test_packed_packages_apply_adapters_before_exporting_both_eager_entries(self):
-        self.suite.pair["prefill"]["model_specific"]["linear_packing"] = {"enabled": True}
         functions = {"prefill": Mock(), "decode": Mock()}
         exported = {
             kind: SimpleNamespace(module=Mock(return_value=function))
@@ -295,22 +291,6 @@ class ValidationStages(unittest.TestCase):
         self.assertEqual(self.export_step.call_count, 2)
         for entry in exported.values():
             entry.module.assert_called_once_with()
-        self.wrapper.assert_not_called()
-
-    def test_unpacked_packages_use_one_adapted_wrapper_without_exporting(self):
-        self.suite.pair["prefill"]["model_specific"]["linear_packing"] = {"enabled": False}
-
-        def wrap(original):
-            self.assertIs(original, self.original)
-            self.assertEqual(self.events, ["adapter"])
-            self.events.append("wrapper")
-            return sentinel.wrapper
-
-        self.wrapper.side_effect = wrap
-        self.check_eager(self.begin(), {"prefill": sentinel.wrapper, "decode": sentinel.wrapper})
-        self.assertEqual(self.events, ["adapter", "wrapper"])
-        self.wrapper.assert_called_once_with(self.original)
-        self.export_step.assert_not_called()
 
     def test_greedy_replay_reference_uses_default_bf16_model(self):
         runtime = Mock(spec=["close"])

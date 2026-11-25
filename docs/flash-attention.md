@@ -81,7 +81,7 @@ during normal packaging.
 Standard Python/C++ AOTI loaders extract the library beside the wrapper; the
 system linker loads it and registers the operator. Native executables neither
 link nor install a separate attention library. Deploy the complete
-[five-file bundle](package-metadata.md) with compatible LibTorch/CUDA. External-
+[four-file bundle](package-metadata.md) with compatible LibTorch/CUDA. External-
 library packages require re-export; editing JSON or copying a library beside
 an old package does not meet the bundled contract.
 

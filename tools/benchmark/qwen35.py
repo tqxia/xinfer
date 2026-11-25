@@ -7,7 +7,7 @@ from tools.benchmark.common import CONTINUATION_TEXT, PROMPT_TEXT, hf_eager_load
 
 
 def default_model_dir(metadata):
-    model_id = metadata["decode"]["checkpoint"]["model_id"]
+    model_id = metadata["checkpoint"]["model"]
     require(model_id in REVISIONS, "Unsupported Qwen3.5 checkpoint")
     return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
 

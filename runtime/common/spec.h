@@ -18,7 +18,9 @@
 
 namespace xinfer {
 
+inline constexpr const char *kMetadataFile = "metadata.json";
 inline constexpr int64_t kMaxBatchSize = 8;
+inline constexpr int64_t kMaxPrefillTokens = 512;
 // Keep cumulative int32 KV lengths across all compiled batch slots below INT32_MAX.
 inline constexpr int64_t kMaxCacheLength = std::numeric_limits<int32_t>::max() / kMaxBatchSize;
 
@@ -49,11 +51,6 @@ inline void metadata_check(bool condition, const std::string &field) {
   require(condition, "Unsupported package metadata: " + field);
 }
 
-inline bool metadata_equal(const Json &left, const Json &right) {
-  // Preserve JSON types: numeric coercion must not equate an ABI integer and float.
-  return left.dump() == right.dump();
-}
-
 inline bool metadata_integer(const Json &value, int64_t minimum = 0) {
   if (!value.is_number_integer())
     return false;
@@ -74,25 +71,12 @@ inline bool metadata_digest(const Json &value) {
 }
 
 inline const std::vector<std::string> &metadata_fields() {
-  static const std::vector<std::string> fields{"model_type",
-                                               "entry_point",
-                                               "token_range",
-                                               "torch_version",
-                                               "cxx11_abi",
-                                               "cuda_compute_capability",
-                                               "cache_length",
-                                               "vocab_size",
-                                               "eos_token_ids",
-                                               "checkpoint",
-                                               "state",
-                                               "export_options",
-                                               "tf32",
-                                               "triton_enable_fp_fusion",
-                                               "inductor_configs",
-                                               "package_bytes",
-                                               "package_sha256",
-                                               "shared_weights",
-                                               "model_specific"};
+  static const std::vector<std::string> fields{"model_type",   "torch_version",
+                                               "cxx11_abi",    "cuda_compute_capability",
+                                               "cache_length", "max_prefill_tokens",
+                                               "vocab_size",   "eos_token_ids",
+                                               "checkpoint",   "state",
+                                               "entries",      "shared_weights"};
   return fields;
 }
 
@@ -105,7 +89,7 @@ inline bool metadata_keys(const Json &value, const std::unordered_set<std::strin
   return true;
 }
 
-inline void validate_metadata(const Json &metadata, const std::string &entry) {
+inline void validate_metadata(const Json &metadata) {
   require(metadata.is_object(), "Unsupported package metadata: expected an object");
   require(metadata.contains("model_type") && metadata.at("model_type").is_string() &&
               (metadata.at("model_type") == "qwen3" || metadata.at("model_type") == "qwen35"),
@@ -118,17 +102,15 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
     metadata_check(std::find(fields.begin(), fields.end(), field) != fields.end(), field);
 
   const auto &m = metadata;
-  metadata_check(m.at("entry_point") == entry, "entry_point");
-  metadata_check(metadata_integer(m.at("cache_length"), 512) &&
+  metadata_check(metadata_integer(m.at("cache_length"), kMaxPrefillTokens) &&
                      m.at("cache_length").get<int64_t>() <= kMaxCacheLength,
                  "cache_length");
+  metadata_check(metadata_integer(m.at("max_prefill_tokens"), 1) &&
+                     m.at("max_prefill_tokens").get<int64_t>() == kMaxPrefillTokens &&
+                     m.at("max_prefill_tokens").get<int64_t>() <=
+                         m.at("cache_length").get<int64_t>(),
+                 "max_prefill_tokens");
   metadata_check(metadata_integer(m.at("vocab_size"), 1), "vocab_size");
-  const Json expected_tokens = entry == "prefill" ? Json::array({2, 512}) : Json::array({1, 1});
-  const auto &tokens = m.at("token_range");
-  metadata_check(tokens.is_array() && tokens.size() == 2 && metadata_integer(tokens[0], 1) &&
-                     metadata_integer(tokens[1], 1) && tokens == expected_tokens &&
-                     tokens[1].get<int64_t>() <= m.at("cache_length").get<int64_t>(),
-                 "token_range");
 
   metadata_check(m.at("torch_version").is_string() &&
                      !m.at("torch_version").get<std::string>().empty(),
@@ -147,21 +129,11 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
                    "eos_token_ids");
 
   const auto &checkpoint = m.at("checkpoint");
-  metadata_check(metadata_keys(checkpoint, {"model_id", "revision", "manifest"}), "checkpoint");
-  for (const auto *field : {"model_id", "revision"})
-    metadata_check(checkpoint.at(field).is_string() &&
+  metadata_check(checkpoint.is_object(), "checkpoint");
+  for (const auto *field : {"model", "revision"})
+    metadata_check(checkpoint.contains(field) && checkpoint.at(field).is_string() &&
                        !checkpoint.at(field).get<std::string>().empty(),
                    "checkpoint");
-  metadata_check(checkpoint.at("manifest").is_object(), "checkpoint");
-
-  metadata_check(metadata_equal(m.at("export_options"), Json({{"backed_size_oblivious", true}})),
-                 "export_options");
-  metadata_check(m.at("tf32").is_boolean() && m.at("tf32") == false, "tf32");
-  metadata_check(m.at("triton_enable_fp_fusion").is_boolean(), "triton_enable_fp_fusion");
-  const Json compiler = {{"emulate_precision_casts", true},
-                         {"aot_inductor.package_constants_in_so", false},
-                         {"always_keep_tensor_constants", true}};
-  metadata_check(metadata_equal(m.at("inductor_configs"), compiler), "inductor_configs");
 
   const auto &states = m.at("state");
   metadata_check(states.is_array() && !states.empty(), "state");
@@ -191,40 +163,22 @@ inline void validate_metadata(const Json &metadata, const std::string &entry) {
       metadata_check(shape[2] == m.at("cache_length"), "state");
   }
 
-  metadata_check(metadata_integer(m.at("package_bytes"), 1), "package_bytes");
-  metadata_check(metadata_digest(m.at("package_sha256")), "package_sha256");
-  const auto &weights = m.at("shared_weights");
-  metadata_check(
-      metadata_keys(weights, {"file", "identity", "bytes", "sha256"}) &&
-          weights.at("file") == kSharedWeightsFile && metadata_integer(weights.at("bytes"), 1) &&
-          metadata_digest(weights.at("identity")) && metadata_digest(weights.at("sha256")),
-      "shared_weights");
-
-  metadata_check(m.at("model_specific").is_object(), "model_specific");
-}
-
-inline void validate_metadata_pair(const Json &prefill, const Json &decode) {
-  require(prefill.is_object() && decode.is_object(),
-          "Unsupported package metadata: expected an object");
-
-  require(prefill.value("model_type", Json()) == decode.value("model_type", Json()),
-          "Package model types differ");
-  for (const auto *m : {&prefill, &decode}) {
-    require(m->contains("model_type") && m->at("model_type").is_string() &&
-                (m->at("model_type") == "qwen3" || m->at("model_type") == "qwen35"),
-            "Unsupported model type");
+  const auto &entries = m.at("entries");
+  metadata_check(metadata_keys(entries, {"prefill", "decode"}), "entries");
+  for (const auto *kind : {"prefill", "decode"}) {
+    const auto &entry = entries.at(kind);
+    metadata_check(metadata_keys(entry, {"bytes", "sha256"}) &&
+                       metadata_integer(entry.at("bytes"), 1) &&
+                       metadata_digest(entry.at("sha256")),
+                   "entries");
   }
 
-  static const std::unordered_set<std::string> entry_fields{"entry_point", "token_range",
-                                                            "package_bytes", "package_sha256"};
-  for (const auto &field : metadata_fields())
-    if (!entry_fields.contains(field))
-      require(prefill.contains(field) == decode.contains(field) &&
-                  (!prefill.contains(field) || metadata_equal(prefill.at(field), decode.at(field))),
-              "Package metadata differs: " + field);
-
-  validate_metadata(prefill, "prefill");
-  validate_metadata(decode, "decode");
+  const auto &weights = m.at("shared_weights");
+  metadata_check(metadata_keys(weights, {"identity", "bytes", "sha256"}) &&
+                     metadata_integer(weights.at("bytes"), 1) &&
+                     metadata_digest(weights.at("identity")) &&
+                     metadata_digest(weights.at("sha256")),
+                 "shared_weights");
 }
 
 struct StateSpec {
@@ -239,14 +193,13 @@ struct StateSpec {
 
 struct SpecBase {
   explicit SpecBase(const fs::path &directory) {
-    prefill_metadata = read_json(directory / "prefill.json");
-    metadata = read_json(directory / "decode.json");
-    validate_metadata_pair(prefill_metadata, metadata);
+    metadata = read_json(directory / kMetadataFile);
+    validate_metadata(metadata);
 
     model_type = parse_model_type(metadata.at("model_type").get<std::string>());
     capacity = metadata.at("cache_length");
     max_batch_size = metadata.at("state").at(0).at("shape").at(0);
-    max_prefill = prefill_metadata.at("token_range").at(1);
+    max_prefill = metadata.at("max_prefill_tokens");
     vocab = metadata.at("vocab_size");
     eos = metadata.at("eos_token_ids").get<std::vector<int64_t>>();
     compute_capability = metadata.at("cuda_compute_capability").get<std::vector<int64_t>>();
@@ -289,11 +242,11 @@ struct SpecBase {
   ModelType model_type;
   int64_t capacity = 0, max_prefill = 0, vocab = 0, max_batch_size = 1;
   std::vector<int64_t> eos, compute_capability;
-  Json prefill_metadata, metadata, shared_weights;
+  Json metadata, shared_weights;
   std::vector<StateSpec> state;
 
   ValidatedBundle validate_files(const fs::path &directory) const {
-    auto bundle = ValidatedBundle::verify(directory, prefill_metadata, metadata);
+    auto bundle = ValidatedBundle::verify(directory, metadata);
     require(model_from_identity(bundle.manifest().at("identity")) == model_type,
             "Package model identity mismatch");
     return bundle;

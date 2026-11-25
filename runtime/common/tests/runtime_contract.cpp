@@ -23,7 +23,6 @@ template <class Spec> void mutate(Spec &spec) {
   spec.max_prefill = spec.capacity = spec.vocab = 0;
   spec.eos = {-1};
   spec.state.clear();
-  spec.prefill_metadata = Json();
   spec.metadata = Json();
 }
 
@@ -194,10 +193,8 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
       }
 
       const auto digest = xinfer::sha256_file(path);
-      auto &metadata =
-          std::string(kind) == "prefill" ? descriptor.prefill_metadata : descriptor.metadata;
-      metadata["package_bytes"] = fs::file_size(path);
-      metadata["package_sha256"] = digest;
+      descriptor.metadata["entries"][kind]["bytes"] = fs::file_size(path);
+      descriptor.metadata["entries"][kind]["sha256"] = digest;
       data["entries"][kind]["package_sha256"] = digest;
     }
 
@@ -207,8 +204,7 @@ void check_package_payloads(const std::filesystem::path &fixture, const Spec &va
     auto contract = validated.shared_weights;
     contract["bytes"] = fs::file_size(weights);
     contract["sha256"] = xinfer::sha256_file(weights);
-    descriptor.shared_weights = descriptor.prefill_metadata["shared_weights"] =
-        descriptor.metadata["shared_weights"] = contract;
+    descriptor.shared_weights = descriptor.metadata["shared_weights"] = contract;
 
     auto verified = descriptor.validate_files(fixture);
     (void)verified;
@@ -233,7 +229,7 @@ void check_file_preflight(const std::filesystem::path &packages, const Spec &val
     }
   } cleanup{fixture};
 
-  for (const auto *name : {"prefill.json", "decode.json", "prefill.pt2", "decode.pt2"})
+  for (const auto *name : {xinfer::kMetadataFile, "prefill.pt2", "decode.pt2"})
     fs::copy_file(packages / name, fixture / name);
   // The large archive is immutable; only the copied packages are modified.
   fs::create_symlink(fs::absolute(packages / xinfer::kSharedWeightsFile),

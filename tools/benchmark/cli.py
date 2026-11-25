@@ -39,12 +39,10 @@ def run(args):
     else:
         packages = {"cpp_aoti": args.packages}
     metadata = read_package_metadata(next(iter(packages.values())))
-    model_type = metadata["decode"]["model_type"]
+    model_type = metadata["model_type"]
     hooks = model_hooks(model_type)
     for directory in packages.values():
-        pair = read_package_metadata(directory, model_type=model_type)
-        for entry in pair.values():
-            validate_model_metadata(entry)
+        validate_model_metadata(read_package_metadata(directory, model_type=model_type))
     args.model_dir = args.model_dir or hooks.default_model_dir(metadata)
     args.native = args.native or default_build_dir(model_type) / "xinfer_benchmark"
 

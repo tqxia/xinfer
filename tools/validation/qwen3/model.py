@@ -20,9 +20,9 @@ from tools.common import prompt_chunks
 from tools.validation.common.context import capture_long_state, long_context_cases
 
 
-def default_model_dir(pair):
+def default_model_dir(metadata):
     """Select the prepared checkpoint matching the package's pinned model ID."""
-    return prepare_default_model_dir(pair["decode"]["checkpoint"]["model_id"])
+    return prepare_default_model_dir(metadata["checkpoint"]["model"])
 
 
 class HFRuntime:
@@ -136,22 +136,21 @@ class HFRuntime:
 class Suite:
     model_type = "qwen3"
 
-    def __init__(self, model_dir, pair):
+    def __init__(self, model_dir, metadata):
         self.model_dir = Path(model_dir)
-        self.pair = pair
-        self.specs = pair["decode"]["state"]
-        self.capacity = pair["decode"]["cache_length"]
-        self.vocab_size = pair["decode"]["vocab_size"]
-        self.eos = pair["decode"]["eos_token_ids"]
-        self.max_prefill = pair["prefill"]["token_range"][1]
+        self.metadata = metadata
+        self.specs = metadata["state"]
+        self.capacity = metadata["cache_length"]
+        self.vocab_size = metadata["vocab_size"]
+        self.eos = metadata["eos_token_ids"]
+        self.max_prefill = metadata["max_prefill_tokens"]
         torch.set_num_threads(1)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         manifest = json.loads((self.model_dir / MODEL_MANIFEST_NAME).read_text())
-        for entry in pair.values():
-            validate_model_metadata(entry)
-            require(entry["torch_version"] == torch.__version__, "Package Torch version differs")
-            require(entry["checkpoint"]["manifest"] == manifest, "Checkpoint manifest differs")
+        validate_model_metadata(metadata)
+        require(metadata["torch_version"] == torch.__version__, "Package Torch version differs")
+        require(metadata["checkpoint"] == manifest, "Checkpoint manifest differs")
 
         self.tokenizer = load_tokenizer(self.model_dir)
 

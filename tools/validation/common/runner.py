@@ -183,22 +183,20 @@ class ExplicitRuntime:
 
 def load_aoti_runtime(packages, *, model_type, specs):
     """Validate the bundle before loading its operators and shared GPU weights."""
-    pair = read_package_metadata(packages, model_type=model_type)
-    for entry in pair.values():
-        validate_model_metadata(entry)
-    decode = pair["decode"]
-    validate_shared_weights(packages, pair["prefill"], decode)
-    require(specs == decode["state"], "Runtime state descriptors differ from package")
-    weights = SharedWeights(packages, decode["shared_weights"])
+    metadata = read_package_metadata(packages, model_type=model_type)
+    validate_model_metadata(metadata)
+    validate_shared_weights(packages, metadata)
+    require(specs == metadata["state"], "Runtime state descriptors differ from package")
+    weights = SharedWeights(packages, metadata["shared_weights"])
     return ExplicitRuntime(
         {kind: weights.load(kind) for kind in ("prefill", "decode")},
         specs,
-        decode["vocab_size"],
-        decode["cache_length"],
+        metadata["vocab_size"],
+        metadata["cache_length"],
         logits_only=model_type == "qwen3",
         owner=weights,
         require_write=model_type == "qwen3",
-        max_prefill=pair["prefill"]["token_range"][1],
+        max_prefill=metadata["max_prefill_tokens"],
     )
 
 

@@ -19,7 +19,7 @@ class ValidationReports(unittest.TestCase):
         for outcome in ("passed", "failed", "exception", "preflight"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as temporary:
                 output = Path(temporary) / "report"
-                pair = {kind: metadata() for kind in ("prefill", "decode")}
+                bundle = metadata()
 
                 def execute(suite, packages, native, destination, metadata, report):
                     report["stages"].append(dict(name="hf"))
@@ -31,7 +31,7 @@ class ValidationReports(unittest.TestCase):
                     patch.object(
                         validate,
                         "prepare_validation",
-                        return_value=(sentinel.suite, pair, Path("native")),
+                        return_value=(sentinel.suite, bundle, Path("native")),
                         side_effect=ValueError("invalid package")
                         if outcome == "preflight"
                         else None,

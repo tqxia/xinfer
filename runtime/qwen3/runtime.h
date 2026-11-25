@@ -17,7 +17,6 @@ struct Spec : xinfer::SpecBase {
 
   explicit Spec(const xinfer::SpecBase &parsed) : SpecBase(parsed) {
     require(model_type == xinfer::ModelType::Qwen3, "Unsupported model type");
-    xinfer::metadata_check(metadata.at("model_specific").empty(), "model_specific");
     xinfer::metadata_check(!state.empty() && state.size() % 2 == 0, "state");
 
     for (size_t i = 0; i < state.size(); i += 2) {

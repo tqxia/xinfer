@@ -11,7 +11,7 @@ from transformers import AutoTokenizer, DynamicCache, StaticCache
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
 from compiler.qwen35.config import TEXT_DIR, configure
 from tools.prepare.qwen35 import REVISIONS
-from compiler.qwen35.model import ModelStep, load_model, state_specs
+from compiler.qwen35.model import load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
 from tools.validation.common.prompts import PARAGRAPH, chat_prompts
@@ -21,9 +21,9 @@ from tools.common import prompt_chunks
 from tools.validation.common.context import capture_long_state, long_context_cases
 
 
-def default_model_dir(pair):
+def default_model_dir(metadata):
     """Select the prepared checkpoint matching the package's pinned model ID."""
-    model_id = pair["decode"]["checkpoint"]["model_id"]
+    model_id = metadata["checkpoint"]["model"]
     require(model_id in REVISIONS, "Unsupported Qwen3.5 checkpoint")
     return TEXT_DIR.parent.parent / model_id.rsplit("-", 1)[1].lower() / "text"
 
@@ -117,20 +117,19 @@ class HFStage:
 class Suite:
     model_type = "qwen35"
 
-    def __init__(self, model_dir, pair):
+    def __init__(self, model_dir, metadata):
         self.model_dir = Path(model_dir)
-        self.pair = pair
-        self.specs = pair["decode"]["state"]
-        self.vocab_size = pair["decode"]["vocab_size"]
-        self.capacity = pair["decode"]["cache_length"]
-        self.max_prefill = pair["prefill"]["token_range"][1]
-        self.eos = pair["decode"]["eos_token_ids"]
+        self.metadata = metadata
+        self.specs = metadata["state"]
+        self.vocab_size = metadata["vocab_size"]
+        self.capacity = metadata["cache_length"]
+        self.max_prefill = metadata["max_prefill_tokens"]
+        self.eos = metadata["eos_token_ids"]
         configure()
         manifest = read_json(self.model_dir / MODEL_MANIFEST_NAME)
-        for metadata in pair.values():
-            validate_model_metadata(metadata)
-            require(metadata["torch_version"] == torch.__version__, "Torch version mismatch")
-            require(metadata["checkpoint"]["manifest"] == manifest, "Checkpoint manifest differs")
+        validate_model_metadata(metadata)
+        require(metadata["torch_version"] == torch.__version__, "Torch version mismatch")
+        require(metadata["checkpoint"] == manifest, "Checkpoint manifest differs")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, local_files_only=True)
 
     def fixtures(self, hf_runtime):
@@ -233,8 +232,8 @@ class Suite:
         return cases
 
     def stages(self):
-        """Record HF before applying the adapters and package-selected graph passes."""
-        model, wrapper, functions = load_model(self.model_dir), None, None
+        """Record HF before applying the adapters and package graph passes."""
+        model, functions = load_model(self.model_dir), None
         try:
             require(
                 state_specs(model.config, self.capacity, batch_size=self.specs[0]["shape"][0])
@@ -249,22 +248,13 @@ class Suite:
                 "hf_dynamic", HFStage(model, self.specs, self.capacity, dynamic=True, **bounds)
             )
             from compiler.qwen35.adapters.delta import install_delta
+            from compiler.qwen35.export import export_step
 
             install_delta(model)
-            if (
-                self.pair["prefill"]["model_specific"]
-                .get("linear_packing", {})
-                .get("enabled", False)
-            ):
-                from compiler.qwen35.export import export_step
-
-                functions = {
-                    kind: export_step(model, kind, self.capacity)[0].module()
-                    for kind in ("prefill", "decode")
-                }
-            else:
-                wrapper = ModelStep(model)
-                functions = dict(prefill=wrapper, decode=wrapper)
+            functions = {
+                kind: export_step(model, kind, self.capacity)[0].module()
+                for kind in ("prefill", "decode")
+            }
             yield Stage(
                 "eager",
                 ExplicitRuntime(
@@ -272,7 +262,7 @@ class Suite:
                 ),
             )
         finally:
-            wrapper, functions, model = None, None, None
+            functions, model = None, None
             gc.collect()
             torch.cuda.empty_cache()
 
