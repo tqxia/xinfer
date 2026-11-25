@@ -16,14 +16,15 @@ import torch.nn.functional as F
 
 from compiler.common.artifacts import json_sha256, sha256
 from compiler.common.metadata import METADATA_FILE
-from compiler.common.package import compile_package
-from compiler.common.weights import (
+from compiler.common.compile import (
     SHARED_WEIGHT_OPTIONS,
+    compile_package,
+    compile_shared,
+)
+from compiler.common.weights import (
     SHARED_WEIGHTS_FILE,
     SHARED_WEIGHTS_MANIFEST_KEY,
     SharedWeights,
-    _capture_constants,
-    compile_shared,
     read_shared_weight_manifest,
 )
 
@@ -218,7 +219,7 @@ class SharedWeightBundle(unittest.TestCase):
         with (
             torch.inference_mode(),
             patch(
-                "compiler.common.weights.compile_package",
+                "compiler.common.compile.compile_package",
                 wraps=compile_package,
             ) as compile_graph,
             patch("torch._inductor.aot_compile", side_effect=compile_with_shims) as compile_native,
@@ -485,31 +486,6 @@ class SharedWeightBundle(unittest.TestCase):
         ):
             with self.assertRaisesRegex(ValueError, "constant FQNs differ"):
                 bad_pool.load("decode")
-
-    def test_capture_constants_separates_runtime_and_requested_names(self):
-        from torch._inductor.graph import GraphLowering
-
-        seen = []
-        first, second = torch.tensor([1.0]), torch.tensor([2.0])
-
-        def fake_allocate(_graph, name, _tensor):
-            runtime_name = name if name not in seen else f"{name}_{len(seen)}"
-            seen.append(runtime_name)
-            return runtime_name
-
-        with (
-            patch.object(GraphLowering, "allocate_non_dup_const_name", side_effect=fake_allocate),
-            _capture_constants() as (by_runtime_name, by_name),
-        ):
-            self.assertEqual(
-                GraphLowering.allocate_non_dup_const_name(None, "const_a", first), "const_a"
-            )
-            self.assertEqual(
-                GraphLowering.allocate_non_dup_const_name(None, "const_a", second), "const_a_1"
-            )
-        self.assertIs(by_runtime_name["const_a"], first)
-        self.assertIs(by_runtime_name["const_a_1"], second)
-        self.assertIs(by_name["const_a"], first)
 
     def test_shared_weights_releases_cpu_buffers_as_storages_move(self):
         from compiler.common.weights import _archive_storages

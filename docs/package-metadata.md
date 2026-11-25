@@ -6,8 +6,9 @@ the current implementation without separate version fields.
 
 `compiler/common/metadata.py` writes and validates the common format.
 `tools/packages.py` owns model ABI and shared-weight bundle checks for Python
-tooling. `compiler/common/weights.py` owns archive compilation, verified manifest
-reading and shared tensor loading.
+tooling. `compiler/common/compile.py` owns AOTI compilation and paired bundle
+publication; `compiler/common/weights.py` owns the shared-weight archive pool,
+verified manifest reading and shared tensor loading.
 `runtime/common/spec.h` is the C++ reader; `runtime/<model>/runtime.h` validates
 model-specific geometry and `runtime/common/state.h` implements state ownership.
 

@@ -18,7 +18,7 @@ from compiler.common.export import (
     prepare_export,
     report_export,
 )
-from compiler.common.weights import compile_shared
+from compiler.common.compile import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
 from compiler.qwen3.model import MAX_BATCH_SIZE, MAX_PREFILL, ModelStep, allocate_cache, load_model
 from compiler.qwen3.config import DEFAULT_MODEL

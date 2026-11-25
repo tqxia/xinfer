@@ -64,8 +64,8 @@ It writes `libxinfer_attention_ops.so` to `build/qwen3/` or `build/qwen35/`.
 Runtime executable targets build independently.
 
 Both exporters pass the shared C shim declaration/mapping from
-`compiler/common/kernels/flash_attention/attention.py` through the shared-weight compiler to
-`compiler/common/package.py`. Torch's `aot_inductor.custom_ops_to_c_shims` emits
+`compiler/common/kernels/flash_attention/attention.py` to
+`compiler/common/compile.py`. Torch's `aot_inductor.custom_ops_to_c_shims` emits
 direct C calls; `aot_inductor.custom_op_libs` adds native linkage. The shim borrows
 input tensor handles, calls the operator and transfers the output handle to
 AOTI. Torch's error bridge propagates native exceptions.

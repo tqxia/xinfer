@@ -19,7 +19,11 @@ from compiler.common.kernels.flash_attention.attention import (
     batched_attention_metadata,
     load_attention_ops,
 )
-from compiler.common.package import _linking_environment, compile_package
+from compiler.common.compile import (
+    _capture_constants,
+    _linking_environment,
+    compile_package,
+)
 
 
 WORKER = textwrap.dedent(
@@ -207,6 +211,31 @@ class PackagePreflight(unittest.TestCase):
                 self.assertEqual(os.environ["LD_RUN_PATH"], "$ORIGIN")
             self.assertNotIn("LIBRARY_PATH", os.environ)
             self.assertNotIn("LD_RUN_PATH", os.environ)
+
+    def test_capture_constants_separates_runtime_and_requested_names(self):
+        from torch._inductor.graph import GraphLowering
+
+        seen = []
+        first, second = torch.tensor([1.0]), torch.tensor([2.0])
+
+        def fake_allocate(_graph, name, _tensor):
+            runtime_name = name if name not in seen else f"{name}_{len(seen)}"
+            seen.append(runtime_name)
+            return runtime_name
+
+        with (
+            patch.object(GraphLowering, "allocate_non_dup_const_name", side_effect=fake_allocate),
+            _capture_constants() as (by_runtime_name, by_name),
+        ):
+            self.assertEqual(
+                GraphLowering.allocate_non_dup_const_name(None, "const_a", first), "const_a"
+            )
+            self.assertEqual(
+                GraphLowering.allocate_non_dup_const_name(None, "const_a", second), "const_a_1"
+            )
+        self.assertIs(by_runtime_name["const_a"], first)
+        self.assertIs(by_runtime_name["const_a_1"], second)
+        self.assertIs(by_name["const_a"], first)
 
 
 @unittest.skipUnless(

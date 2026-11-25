@@ -1,12 +1,9 @@
-"""Complete prefill/decode bundles backed by one retained, verified tensor pool."""
+"""Shared-weight safetensors archive creation, verification and retained loading."""
 
-from contextlib import contextmanager
 import hashlib
 import json
-import os
 from pathlib import Path
 import struct
-import tempfile
 import weakref
 
 from safetensors.torch import load_file, save_file
@@ -18,8 +15,6 @@ from compiler.common.artifacts import (
     require,
     sha256,
 )
-from compiler.common.metadata import ENTRY_KINDS, METADATA_FILE, finalize_metadata
-from compiler.common.package import compile_package
 
 
 SHARED_WEIGHTS_FILE = "weights.safetensors"
@@ -28,10 +23,6 @@ SHARED_WEIGHTS_MANIFEST_FIELDS = frozenset(
     {"identity", "identity_sha256", "entries", "sources", "storages", "tensors"}
 )
 MAX_HEADER_BYTES = 100 * 1024 * 1024
-SHARED_WEIGHT_OPTIONS = {
-    "aot_inductor.package_constants_in_so": False,
-    "always_keep_tensor_constants": True,
-}
 
 
 def _read_safetensors_header(path):
@@ -185,217 +176,93 @@ class SharedWeights:
         return self.models[kind]
 
 
-@contextmanager
-def _capture_constants():
-    from torch._inductor.graph import GraphLowering
+class SharedWeightPool:
+    """Deduplicate shared constant storages and write one verified weights archive."""
 
-    original = GraphLowering.allocate_non_dup_const_name
-    by_runtime_name, by_name = {}, {}
-
-    def allocate(graph, name, tensor):
-        runtime_name = original(graph, name, tensor)
-        if isinstance(tensor, torch.Tensor):
-            by_runtime_name[runtime_name] = tensor
-            if name is not None:
-                by_name.setdefault(str(name), tensor)
-        return runtime_name
-
-    GraphLowering.allocate_non_dup_const_name = allocate
-    try:
-        yield by_runtime_name, by_name
-    finally:
-        GraphLowering.allocate_non_dup_const_name = original
-
-
-def _register(tensor, data, storages, cache):
-    require(
-        isinstance(tensor, torch.Tensor) and tensor.layout == torch.strided,
-        "Shared weights support only strided tensor constants",
-    )
-    device = tensor.device.type
-    require(device in ("cpu", "cuda"), "Shared weights constant has unsupported device")
-    dtype = str(tensor.dtype).removeprefix("torch.")
-    key = (
-        tensor.device,
-        tensor.dtype,
-        tensor.untyped_storage().data_ptr(),
-        tensor.untyped_storage().nbytes(),
-    )
-    if key not in cache:
-        elements, remainder = divmod(tensor.untyped_storage().nbytes(), tensor.element_size())
-        require(not remainder, "Shared weights storage dtype alignment mismatch")
-        flat = tensor.detach().as_strided((elements,), (1,), 0).to("cpu", copy=True)
-        header = {"dtype": dtype, "device": device, "bytes": flat.numel() * flat.element_size()}
-        digest = hashlib.sha256(canonical_json(header).encode())
-        digest.update(memoryview(flat.view(torch.uint8).numpy()))
-        name = "w_" + digest.hexdigest()
-        if name not in storages:
-            storages[name] = flat
-            data["storages"][name] = header
-        cache[key] = name
-    descriptor = dict(
-        storage=cache[key],
-        dtype=dtype,
-        device=device,
-        shape=list(tensor.shape),
-        stride=list(tensor.stride()),
-        offset=tensor.storage_offset(),
-    )
-    view_name = "v_" + json_sha256(descriptor)
-    data["tensors"][view_name] = descriptor
-    return view_name
-
-
-def _compile_entry(
-    kind,
-    directory,
-    export_entry,
-    data,
-    storages,
-    inductor_configs,
-    native_libraries,
-    custom_op_shims,
-):
-    """Finish one graph before exporting the next, retaining only CPU tensors."""
-    exported, on_compiled = export_entry(kind, directory)
-    compiled_path = directory / f"{kind}.pt2"
-    options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
-    print(
-        json.dumps(dict(event="compile_options", entry_point=kind, inductor_configs=options)),
-        flush=True,
-    )
-    with _capture_constants() as (captured_runtime, captured_name):
-        compile_package(
-            exported,
-            compiled_path,
-            inductor_configs=options,
-            native_libraries=native_libraries,
-            custom_op_shims=custom_op_shims,
+    def __init__(self, identity):
+        self.identity_sha256 = json_sha256(identity)
+        self.manifest = dict(
+            identity=identity,
+            identity_sha256=self.identity_sha256,
+            entries={},
+            sources={},
+            storages={},
+            tensors={},
         )
-    compiled = torch._inductor.aoti_load_package(str(compiled_path))
-    names = compiled.get_constant_fqns()
-    require(len(names) == len(set(names)), "Shared weights package has duplicate constant FQNs")
-    values = dict(exported.state_dict)
-    values.update(
-        {
-            name: value
-            for name, value in exported.constants.items()
-            if isinstance(value, torch.Tensor)
-        }
-    )
-    cache = {}
-    for name, tensor in exported.state_dict.items():
-        view = _register(tensor, data, storages, cache)
+        self.storages = {}
+
+    def _register(self, tensor, cache):
         require(
-            name not in data["sources"] or data["sources"][name] == view,
-            f"Shared weights source tensor differs between entries: {name}",
+            isinstance(tensor, torch.Tensor) and tensor.layout == torch.strided,
+            "Shared weights support only strided tensor constants",
         )
-        data["sources"][name] = view
-    constants = {}
-    for name in names:
-        tensor = values.get(name)
-        if tensor is None:
-            tensor = captured_runtime.get(name, captured_name.get(name))
-        require(
-            isinstance(tensor, torch.Tensor),
-            f"Shared weights cannot resolve exact constant FQN: {name}",
+        device = tensor.device.type
+        require(device in ("cpu", "cuda"), "Shared weights constant has unsupported device")
+        dtype = str(tensor.dtype).removeprefix("torch.")
+        key = (
+            tensor.device,
+            tensor.dtype,
+            tensor.untyped_storage().data_ptr(),
+            tensor.untyped_storage().nbytes(),
         )
-        constants[name] = _register(tensor, data, storages, cache)
-    digest = sha256(compiled_path)
-    data["entries"][kind] = dict(constants=constants, package_sha256=digest)
-    if on_compiled is not None:
-        on_compiled(compiled_path)
-    return dict(bytes=compiled_path.stat().st_size, sha256=digest)
-
-
-def compile_shared(
-    directory,
-    export_entry,
-    *,
-    identity,
-    inductor_configs,
-    metadata=None,
-    native_libraries=(),
-    custom_op_shims=None,
-):
-    """Compile both entries and publish one complete shared-weight bundle.
-
-    export_entry(kind, staging_directory) returns an ExportedProgram and an
-    optional on_compiled(compiled_path) hook for export diagnostics. Graph dumps
-    and other auxiliary files can be written to staging_directory. Each graph is
-    compiled and its constants copied to the CPU pool before the next graph is
-    exported. The archive is saved once, then entry and archive checksums are
-    recorded in metadata.json. Only the completed directory is exposed to readers.
-    """
-    directory = Path(directory)
-
-    def check_destination():
-        require(
-            not directory.is_symlink()
-            and (not directory.exists() or directory.is_dir() and not any(directory.iterdir())),
-            f"Refusing to overwrite output directory: {directory}",
+        if key not in cache:
+            elements, remainder = divmod(tensor.untyped_storage().nbytes(), tensor.element_size())
+            require(not remainder, "Shared weights storage dtype alignment mismatch")
+            flat = tensor.detach().as_strided((elements,), (1,), 0).to("cpu", copy=True)
+            header = {"dtype": dtype, "device": device, "bytes": flat.numel() * flat.element_size()}
+            digest = hashlib.sha256(canonical_json(header).encode())
+            digest.update(memoryview(flat.view(torch.uint8).numpy()))
+            name = "w_" + digest.hexdigest()
+            if name not in self.storages:
+                self.storages[name] = flat
+                self.manifest["storages"][name] = header
+            cache[key] = name
+        descriptor = dict(
+            storage=cache[key],
+            dtype=dtype,
+            device=device,
+            shape=list(tensor.shape),
+            stride=list(tensor.stride()),
+            offset=tensor.storage_offset(),
         )
+        view_name = "v_" + json_sha256(descriptor)
+        self.manifest["tensors"][view_name] = descriptor
+        return view_name
 
-    check_destination()
-    directory.parent.mkdir(parents=True, exist_ok=True)
-    identity_sha256 = json_sha256(identity)
-    data = dict(
-        identity=identity,
-        identity_sha256=identity_sha256,
-        entries={},
-        sources={},
-        storages={},
-        tensors={},
-    )
-    storages = {}
-    with tempfile.TemporaryDirectory(
-        prefix=f".{directory.name}-", dir=directory.parent
-    ) as temporary:
-        staging = Path(temporary) / "bundle"
-        staging.mkdir()
-        entries = {
-            kind: _compile_entry(
-                kind,
-                staging,
-                export_entry,
-                data,
-                storages,
-                inductor_configs,
-                native_libraries,
-                custom_op_shims,
+    def record_entry(self, kind, *, state_dict, constants, package_sha256):
+        cache = {}
+        for name, tensor in state_dict.items():
+            view = self._register(tensor, cache)
+            require(
+                name not in self.manifest["sources"] or self.manifest["sources"][name] == view,
+                f"Shared weights source tensor differs between entries: {name}",
             )
-            for kind in ENTRY_KINDS
-        }
-        bundle_metadata = metadata() if callable(metadata) else dict(metadata or {})
-        require(isinstance(bundle_metadata, dict), "Package metadata must be an object")
+            self.manifest["sources"][name] = view
+        mapped = {name: self._register(tensor, cache) for name, tensor in constants.items()}
+        self.manifest["entries"][kind] = dict(constants=mapped, package_sha256=package_sha256)
+
+    def save(self, directory):
         needed_views = {
-            name for entry in data["entries"].values() for name in entry["constants"].values()
+            name
+            for entry in self.manifest["entries"].values()
+            for name in entry["constants"].values()
         }
-        data["tensors"] = {name: data["tensors"][name] for name in needed_views}
-        needed_storages = {descriptor["storage"] for descriptor in data["tensors"].values()}
-        data["storages"] = {name: data["storages"][name] for name in needed_storages}
-        archive_path = staging / SHARED_WEIGHTS_FILE
-        ordered = {name: storages[name] for name in sorted(needed_storages)}
+        self.manifest["tensors"] = {name: self.manifest["tensors"][name] for name in needed_views}
+        needed_storages = {
+            descriptor["storage"] for descriptor in self.manifest["tensors"].values()
+        }
+        self.manifest["storages"] = {
+            name: self.manifest["storages"][name] for name in needed_storages
+        }
+        archive_path = Path(directory) / SHARED_WEIGHTS_FILE
+        ordered = {name: self.storages[name] for name in sorted(needed_storages)}
         save_file(
             ordered,
             str(archive_path),
-            metadata={SHARED_WEIGHTS_MANIFEST_KEY: canonical_json(data)},
+            metadata={SHARED_WEIGHTS_MANIFEST_KEY: canonical_json(self.manifest)},
         )
-        contract = dict(
-            identity=identity_sha256,
+        return dict(
+            identity=self.identity_sha256,
             bytes=archive_path.stat().st_size,
             sha256=sha256(archive_path),
         )
-        if "model_type" in bundle_metadata:
-            bundle_metadata = finalize_metadata(
-                bundle_metadata,
-                directory=staging,
-                shared_weights=contract,
-            )
-        else:
-            # Isolated operator/CPU fixtures do not describe a full model.
-            bundle_metadata = dict(bundle_metadata, entries=entries, shared_weights=contract)
-        (staging / METADATA_FILE).write_text(json.dumps(bundle_metadata, indent=2) + "\n")
-        check_destination()
-        os.replace(staging, directory)
-    return contract
