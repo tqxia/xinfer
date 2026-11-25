@@ -11,7 +11,10 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
     Qwen3_5TextRotaryEmbedding,
 )
 
-from compiler.common.attention import batched_attention_metadata, load_attention_ops
+from compiler.common.kernels.flash_attention.attention import (
+    batched_attention_metadata,
+    load_attention_ops,
+)
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen35.adapters.attention import FlashAttention, install_attention
 from compiler.qwen35.config import configure

@@ -13,7 +13,7 @@ import zipfile
 
 import torch
 
-from compiler.common.attention import (
+from compiler.common.kernels.flash_attention.attention import (
     attention_c_shims,
     attention_library,
     batched_attention_metadata,

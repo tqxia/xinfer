@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from compiler.common import attention
+from compiler.common.kernels.flash_attention import attention
 
 
 class NativeLibrarySelection(unittest.TestCase):

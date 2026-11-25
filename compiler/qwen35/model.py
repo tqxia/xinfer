@@ -12,8 +12,8 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.qwen35.config import TEXT_DIR
-from compiler.common.attention import batched_attention_metadata
-from compiler.common.kernels.kv_cache import append_kv_batched
+from compiler.common.kernels.flash_attention.attention import batched_attention_metadata
+from compiler.common.kernels.kv.kv_cache import append_kv_batched
 from compiler.common.metadata import state_spec
 from compiler.common.context import resolve_context_length
 

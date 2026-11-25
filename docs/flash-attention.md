@@ -1,7 +1,7 @@
 # Shared valid-prefix FlashAttention
 
 Qwen3 and Qwen3.5 full-attention layers use native FlashAttention operators
-implemented under `compiler/common/kernels/`. Both model families use batched
+implemented under `compiler/common/kernels/flash_attention/`. Both model families use batched
 variable-length attention.
 Model-specific adapters preserve HF projections, normalization and RoPE;
 Qwen3.5 also preserves its output gate. Neither model has an attention-backend
@@ -64,7 +64,7 @@ It writes `libxinfer_attention_ops.so` to `build/qwen3/` or `build/qwen35/`.
 Runtime executable targets build independently.
 
 Both exporters pass the shared C shim declaration/mapping from
-`compiler/common/attention.py` through the shared-weight compiler to
+`compiler/common/kernels/flash_attention/attention.py` through the shared-weight compiler to
 `compiler/common/package.py`. Torch's `aot_inductor.custom_ops_to_c_shims` emits
 direct C calls; `aot_inductor.custom_op_libs` adds native linkage. The shim borrows
 input tensor handles, calls the operator and transfers the output handle to

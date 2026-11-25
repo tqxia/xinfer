@@ -3,7 +3,7 @@
 import torch
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Attention, apply_rotary_pos_emb
 
-from compiler.common.attention import load_attention_ops
+from compiler.common.kernels.flash_attention.attention import load_attention_ops
 from compiler.qwen35.model import HybridCache
 
 

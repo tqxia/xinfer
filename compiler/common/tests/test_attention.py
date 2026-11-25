@@ -6,8 +6,11 @@ import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-from compiler.common.attention import batched_attention_metadata, load_attention_ops
-from compiler.common.kernels.kv_cache import append_kv_batched
+from compiler.common.kernels.flash_attention.attention import (
+    batched_attention_metadata,
+    load_attention_ops,
+)
+from compiler.common.kernels.kv.kv_cache import append_kv_batched
 from compiler.common.tests.tensors import row_errors
 
 

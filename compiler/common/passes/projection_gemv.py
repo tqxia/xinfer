@@ -4,7 +4,7 @@ import torch
 from torch.export.graph_signature import InputKind
 from torch.fx.experimental.symbolic_shapes import statically_known_true
 
-from compiler.common.kernels.projection_gemv import MAX_BATCH_SIZE  # registers the operator
+from compiler.common.kernels.gemv.projection_gemv import MAX_BATCH_SIZE  # registers the operator
 
 
 # Scope the rewrite to the measured decoder regions, leaving the vocabulary

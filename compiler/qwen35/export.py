@@ -14,7 +14,7 @@ from compiler.common.passes.pack_linears import pack_linears
 from compiler.common.passes.projection_gemv import replace_projection_gemv
 from compiler.qwen35.config import ARTIFACT_DIR, MAX_BATCH_SIZE, MAX_PREFILL, TEXT_DIR, configure
 from compiler.common.weights import compile_shared
-from compiler.common.attention import (
+from compiler.common.kernels.flash_attention.attention import (
     attention_library,
     attention_c_shims,
     load_attention_ops,

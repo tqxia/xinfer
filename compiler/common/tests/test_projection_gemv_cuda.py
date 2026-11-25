@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.fx.experimental import _config as symbolic_config
 
-from compiler.common.kernels.projection_gemv import MAX_BATCH_SIZE, projection_gemv
+from compiler.common.kernels.gemv.projection_gemv import MAX_BATCH_SIZE, projection_gemv
 from compiler.common.tests.tensors import bits_equal, cpu_copy, row_errors
 
 

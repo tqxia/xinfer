@@ -9,7 +9,7 @@ from unittest.mock import call, patch, sentinel
 
 import torch
 
-from compiler.common import attention
+from compiler.common.kernels.flash_attention import attention
 from compiler.common.metadata import METADATA_FILE, make_metadata, state_spec
 from tools.validation.common import runner
 from tools.validation.common.pipeline import _contract_probes

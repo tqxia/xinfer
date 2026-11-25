@@ -8,7 +8,7 @@ import torch
 from torch.fx.experimental import _config as symbolic_config
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json
-from compiler.common.attention import (
+from compiler.common.kernels.flash_attention.attention import (
     attention_library,
     attention_c_shims,
 )

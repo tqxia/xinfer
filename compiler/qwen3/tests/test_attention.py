@@ -9,7 +9,7 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3RotaryEmbedding,
 )
 
-from compiler.common.attention import load_attention_ops
+from compiler.common.kernels.flash_attention.attention import load_attention_ops
 from compiler.common.tests.tensors import bits_equal, row_errors
 from compiler.qwen3.adapters.attention import FlashAttention
 from compiler.qwen3.model import ModelStep, KVCache

@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import zipfile
 
-from compiler.common import attention
+from compiler.common.kernels.flash_attention import attention
 from compiler.common.artifacts import require
 
 
