@@ -1,133 +1,107 @@
-# Investigate decode with existing profilers
+# Profiling xinfer on GB10
 
-Read this for the initial native baseline profile. Within each experiment
-iteration, profile the candidate after validation and unprofiled paired
-benchmarking. Use `nsys` for native execution and targeted `ncu` captures for
-kernel analysis.
-
-Reuse an existing capture when its packages/native implementation, device,
-software environment and relevant workload match the variant being analyzed. A
-baseline capture supplies the before evidence; analyze a matching candidate
-capture to explain the change and identify the next target. If matching
-profiling evidence is missing, obtain it or report the gap before choosing the
-next candidate.
+Use `nsys` for native execution timelines and `ncu` for kernel-level analysis.
+Reuse an existing capture only when package, native binary, GPU, environment,
+and workload all match.
 
 ## Prepare the workload
 
-Reuse `workload.json` from an existing xinfer benchmark result. Its cases
-contain the actual prompt and forced decode tokens. For a focused capture, write
-a new scratch copy with one relevant case and fewer repetitions; keep positive
-warmup and repeat counts. Record those changes. Do not overwrite the benchmark
-evidence.
+Reuse `workload.json` from an existing `tools.benchmark` result so prompt and
+forced decode tokens match. For focused captures, copy it to a scratch file with
+one relevant case and fewer repeats (keep positive warmup and repeat counts);
+never overwrite benchmark evidence.
 
-Set `NATIVE`, `PACKAGES`, `WORKLOAD`, `CAPTURE`, `NCU_CAPTURE` and `RESULT` to
-absolute paths on the execution host; `NATIVE` is the existing
-`xinfer_benchmark`. Use a fresh capture prefix and result filename for each run.
-Select the same `GPU_UUID` as the benchmark.
+Set absolute paths on the GB10 host for `NATIVE` (`xinfer_benchmark`),
+`PACKAGES`, `WORKLOAD`, `CAPTURE`, `NCU_CAPTURE`, and `RESULT`, using the same
+`GPU_UUID` as the benchmark. Check `nsys --version` / `ncu --version` and
+`--help` before selecting flags. If profiling alters library resolution, use a
+documented local command workaround rather than modifying repo environments.
 
-Run the tools directly on the GPU host. Check their installed `--help` and
-versions before choosing capture/filter options; supported metrics depend on the
-tool and device. If profiling changes library resolution, inspect the actual
-environment and dependencies; apply only a local, documented workaround rather
-than changing the project environment or Dockerfile as part of the optimization.
-
-## Profile native execution with NSYS
-
-A starting
-[NSYS capture](https://docs.nvidia.com/nsight-systems/UserGuide/index.html):
+## Native timeline with NSYS
 
 ```bash
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 CUDA_VISIBLE_DEVICES="$GPU_UUID" \
   nsys profile --trace=cuda --sample=none --output="$CAPTURE" \
   "$NATIVE" "$PACKAGES" "$WORKLOAD" "$RESULT"
-```
 
-This profiles the native executable directly, including initialization, model
-loading, first use, warmups, prefill and decode. The current executable does not
-provide NVTX phase labels. Whole-process kernel totals are therefore not decode
-totals. Separate phases during analysis without adding a runtime driver.
-
-Start with kernel/CUDA API summaries, then export for phase-specific analysis:
-
-```bash
 nsys stats --report cuda_gpu_kern_sum,cuda_api_sum "$CAPTURE.nsys-rep"
 nsys export --type sqlite --output "$CAPTURE.sqlite" "$CAPTURE.nsys-rep"
 ```
 
-Inspect the exported schema before querying. Use API/kernel correlations, the
-native call sequence and repeated launch patterns to identify requests and
-decode steps. Check their counts against the workload, excluding prefill and
-warmups; a time-window cutoff alone does not establish a phase boundary. If
-needed, compare captures with different decode counts and the same prompt.
+`xinfer_benchmark` does not emit NVTX phase ranges, so whole-process totals mix
+loading, warmup, prefill, and decode:
 
-Record the selected request/context positions, steps and boundary evidence.
-Compute kernel counts and GPU time per selected token; examine CPU submission
-gaps, copies and synchronization separately. Kernel durations can overlap, so
-their sum is not wall time. Retain uncertainty in phase attribution. Trace
-copies and synchronization to their cause; runtime-only findings belong to the
-future runtime skill.
+- Inspect the sqlite schema, then use CUDA API/kernel correlations and repeated
+  launch patterns to isolate steady-state decode steps (exclude load, warmup,
+  and prefill; verify step counts against `workload.json`). Do not rely on a
+  guesswork time cutoff alone — compare captures with different decode counts if
+  phase boundaries are ambiguous.
+- Compute kernel counts and GPU time per decode token; inspect CPU launch gaps,
+  copies, and synchronization separately. Because kernels can overlap, summing
+  kernel durations is not wall time.
+- If the dominant bottleneck is runtime/host orchestration (e.g., launch
+  overhead needing CUDA Graphs), record the finding and note it as out-of-scope
+  runtime work.
 
-## Baseline calibration
+## Kernel analysis with NCU
 
-For the kernel inner loop, compare unprofiled local baseline GPU time with the
-corresponding operation or complete region in the native NSYS capture. Match
-shapes, strides, dtypes, actual implementations, launch configurations and timing
-scope. For discrepancies that could change candidate ranking, check cache
-residency, surrounding work, warmup, clocks and measurement overhead. Adjust the
-fixture or explain the difference before using local gains to rank revisions;
-identical absolute timings are not required. Record the comparison and its limits
-with the baseline evidence, using the capture-reuse conditions above.
-
-## Analyze selected kernels with NCU
-
-NCU evidence is required for baseline and candidate kernel analysis, including
-the [kernel inner loop](kernel-optimization-loop.md#kernel-inner-loop).
-Follow selected launches into the corresponding export graph, generated wrapper,
-Triton/CUDA source or PTX/SASS, using the actual package/build artifacts.
-Shapes, dispatch and call sites help disambiguate repeated names. Fusion, combo
-kernels and external calls can make a one-kernel/one-node mapping impossible;
-retain that ambiguity.
-
-Choose a few decode invocations to investigate sensitivity to context, shape,
-layout or launch configuration, accounting for their share of native decode
-cost. Derive `KERNEL_REGEX`, `SKIP` and `COUNT` from each variant's launch
-sequence: `--launch-skip` counts only launches matching the kernel filter.
-Rewrites can change both names and counts.
-
-For a memory/occupancy question, a starting capture and CSV export are:
+Use `ncu` to diagnose why a hotspot kernel is slow (roofline balance, memory
+throughput, occupancy, register pressure, stalls). Derive `KERNEL_REGEX`,
+`SKIP`, and `COUNT` from the variant's launch sequence (`--launch-skip` counts
+only launches matching the regex; rewrites can change both names and counts):
 
 ```bash
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 CUDA_VISIBLE_DEVICES="$GPU_UUID" \
   ncu --kernel-name-base demangled --kernel-name "regex:$KERNEL_REGEX" \
   --launch-skip "$SKIP" --launch-count "$COUNT" \
-  --section LaunchStats --section Occupancy --section MemoryWorkloadAnalysis \
+  --section SpeedOfLight --section LaunchStats \
+  --section Occupancy --section MemoryWorkloadAnalysis \
   --export "$NCU_CAPTURE" "$NATIVE" "$PACKAGES" "$WORKLOAD" "$RESULT"
+
 ncu --import "$NCU_CAPTURE.ncu-rep" --page raw --csv > "$NCU_CAPTURE.csv"
 ```
 
-Use `--list-sections` and `--query-metrics` to select supported data for the
-question. Verify the captured names, grid/block sizes and invocation counts
-against the intended call sites; a matching name alone does not identify a
-shape. Nsight Compute can replay launches to collect counters, so its timings
-and cache conditions do not establish end-to-end latency. Record replay, cache
-and clock-control settings and keep comparisons consistent with the question; do
-not assume NCU's cache state matches native execution.
-[NVIDIA CLI guide](https://docs.nvidia.com/nsight-compute/NsightComputeCli/index.html)
+- Check `--list-sections` and `--query-metrics` for host-supported metrics.
+- Verify captured kernel names, grid/block dimensions, and invocation counts
+  against the intended call sites; a matching name alone does not identify a
+  shape.
+- NCU replays launches and alters cache/clock state, so its timings never
+  establish end-to-end latency. Record replay/cache/clock settings consistently.
+- **If NCU is unavailable or permission-blocked:** record the exact error in the
+  lab notebook, fall back to `nsys` + roofline math (bytes moved / GPU time) +
+  generated Triton/PTX/SASS inspection, and note the missing counter evidence
+  explicitly when making kernel claims.
 
-If NCU collection is unavailable or permission-blocked, retain the error and
-defer kernel analysis and further kernel hypotheses until collection is
-available. Preparation and correctness work can continue; timing or `nsys`
-summaries do not replace the required NCU evidence.
+## Inspecting compiled packages
 
-## Record the evidence
+Always confirm that an intended pass or kernel rewrite reached the measured
+artifact and did not silently alter unrelated kernels:
 
-Add captures as evidence in the [investigation record](records/format.md),
-naming the revision(s) and exact export where applicable. Link commands,
-versions, artifact/workload identities, capture/results and notes on selected
-invocations, observations and uncertainty. Use a context override for a modified
-workload. For candidates, confirm the intended generated code or dispatch
-changed. Return these findings to the
-[experiment loop](experiment-loop.md#6-profile-and-analyze) for comparison with the
-hypothesis and unprofiled paired measurements, feedback and next-target
-selection. Resolve uncertain phase attribution before selecting a candidate;
-local probes do not replace native measurement.
+- Check export logs (`decoder_projection_gemv` `replaced > 0`, `Packed ...`
+  counts, `compile_options`, `compiled`) and staged `*.graph.txt` /
+  `*.packing.json` files.
+- Inspect the `.pt2` zip archive (`unzip -l decode.pt2`) and its `*.wrapper.cpp`
+  to verify generated kernel calls, launch configs, and C-shim linkage.
+- When a graph rewrite changes kernel names, Inductor may miss retained tuning
+  cache entries for *unchanged* ops. Copying a tuning cache does not guarantee
+  isolation — compare unaffected kernel bodies/launch configs against baseline
+  before attributing a speedup or regression to your edit.
+
+## Baseline calibration (kernel inner loop)
+
+Before ranking standalone kernel revisions, compare unprofiled local baseline
+GPU time against the corresponding operation or fused region in native `nsys`:
+
+- Match shapes, strides, dtypes, actual implementation, launch config, and
+  timing scope.
+- If timings diverge enough to distort candidate ranking, check cache residency,
+  surrounding traffic, warmup, clocks, and harness overhead. Adjust the fixture
+  or document the gap before trusting local speedups.
+
+## Measurement disagreements
+
+When local timing, NCU counters, `nsys`, and paired native timing disagree in a
+way that affects the decision: first check scope, cache state, and actual
+generated code. If still unresolved, run one time-boxed follow-up check; if
+uncertainty remains, document it and trust controlled unprofiled paired native
+timing for model latency. Improved counters alone do not prove lower latency.

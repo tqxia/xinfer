@@ -1,6 +1,6 @@
 {
   "name": "xinfer-perf",
-  "version": "0.1.1",
-  "description": "Investigate and optimize xinfer decode performance on NVIDIA GB10 through fusion and kernel optimization.",
+  "version": "0.2.0",
+  "description": "Profile and optimize compiled xinfer decode performance on NVIDIA GB10 through fusion and GPU kernel optimization.",
   "skills": "./skills/"
 }

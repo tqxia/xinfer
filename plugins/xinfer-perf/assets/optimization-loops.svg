@@ -1,69 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="900" viewBox="0 0 820 900" role="img" aria-labelledby="title description">
-  <title id="title">Xinfer optimization loops</title>
-  <desc id="description">The model loop profiles native execution and selects a candidate. Kernel work enters the design loop, which chooses an architecture before entering the implementation loop below it. Implementation checks correctness, measures performance and profiles with NCU. Evidence can trigger local revision or architectural reassessment. A local winner returns to model export, validation and native measurement. Fusion changes that require no kernel implementation work proceed directly to export.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="620" viewBox="0 0 760 620" role="img" aria-labelledby="title description">
+  <title id="title">xinfer optimization loops</title>
+  <desc id="description">Outer model loop: profile native GB10 baseline and choose a candidate. Graph-level fusion proceeds directly to export and screening. Kernel work enters the nested kernel inner loop: calibrate local baseline against NSYS, iterate edit/correctness/microbenchmark/NCU (tweaking or redesigning when stuck), then bring a local winner back to model export, fast screening, full validation, paired C++ benchmarking, and candidate profiling.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#52647a"/>
     </marker>
     <style>
-      text { font-family: system-ui, -apple-system, sans-serif; font-size: 16px; fill: #23364d; text-anchor: middle; }
-      .heading { font-size: 18px; font-weight: 600; }
-      .label { font-size: 14px; fill: #52647a; }
+      text { font-family: system-ui, -apple-system, sans-serif; font-size: 15px; fill: #23364d; text-anchor: middle; }
+      .heading { font-size: 17px; font-weight: 600; }
+      .label { font-size: 13px; fill: #52647a; }
       .node { fill: #fff; stroke: #9aaec3; stroke-width: 1.5; }
       .edge { fill: none; stroke: #52647a; stroke-width: 1.6; marker-end: url(#arrow); }
       .feedback { stroke-dasharray: 6 5; }
     </style>
   </defs>
 
-  <rect width="820" height="900" fill="#fff"/>
-  <rect x="16" y="16" width="788" height="868" rx="14" fill="#f7f9fc" stroke="#bac7d5"/>
-  <text class="heading" x="410" y="47">Model loop</text>
+  <rect width="760" height="620" fill="#fff"/>
+  <rect x="16" y="16" width="728" height="588" rx="14" fill="#f7f9fc" stroke="#bac7d5"/>
+  <text class="heading" x="380" y="45">Model loop (GB10)</text>
 
-  <rect class="node" x="260" y="72" width="300" height="64" rx="8"/>
-  <text x="410" y="99">Profile native baseline</text>
-  <text x="410" y="122">Choose candidate</text>
-  <path class="edge" d="M410 136 V185"/>
-  <text class="label" x="463" y="166">Kernel work</text>
+  <rect class="node" x="220" y="66" width="320" height="60" rx="8"/>
+  <text x="380" y="92">Profile native baseline</text>
+  <text class="label" x="380" y="113">Rank opportunities &amp; choose candidate</text>
+  <path class="edge" d="M380 126 V174"/>
+  <text class="label" x="432" y="155">Kernel work</text>
 
-  <rect x="100" y="185" width="620" height="490" rx="12" fill="#edf4fc" stroke="#92aecf"/>
-  <text class="heading" x="410" y="216">Kernel design loop</text>
-  <rect class="node" x="250" y="240" width="320" height="64" rx="8"/>
-  <text x="410" y="267">Choose or revise architecture</text>
-  <text class="label" x="410" y="289">Partitioning, dataflow and resources</text>
-  <path class="edge" d="M410 304 V355"/>
+  <rect x="115" y="174" width="530" height="232" rx="12" fill="#eaf5f0" stroke="#8ab7a1"/>
+  <text class="heading" x="380" y="202">Kernel inner loop</text>
 
-  <rect x="170" y="355" width="490" height="200" rx="10" fill="#eaf5f0" stroke="#8ab7a1"/>
-  <text class="heading" x="415" y="384">Kernel implementation loop</text>
-  <rect class="node" x="190" y="406" width="160" height="62" rx="8"/>
-  <text x="270" y="432">Edit and compile</text>
-  <text class="label" x="270" y="454">Focused revision</text>
-  <rect class="node" x="405" y="399" width="230" height="76" rx="8"/>
-  <text x="520" y="423">Check correctness</text>
-  <text x="520" y="446">Microbenchmark and NCU</text>
-  <text class="label" x="520" y="466">Compare with prediction</text>
-  <path class="edge" d="M350 437 H405"/>
-  <path class="edge feedback" d="M520 475 V525 H270 V468"/>
-  <text class="label" x="395" y="516">Revise kernel</text>
+  <rect class="node" x="195" y="220" width="370" height="46" rx="8"/>
+  <text x="380" y="248">Calibrate local baseline against native NSYS</text>
+  <path class="edge" d="M380 266 V294"/>
 
-  <path class="edge" d="M410 555 V590"/>
-  <rect class="node" x="260" y="590" width="300" height="58" rx="8"/>
-  <text x="410" y="614">Assess design against evidence</text>
-  <text class="label" x="410" y="636">Continue, redesign or integrate</text>
-  <path class="edge feedback" d="M260 619 H125 V272 H250"/>
-  <text class="label" x="162" y="327">Revise</text>
-  <text class="label" x="162" y="345">design</text>
+  <rect class="node" x="140" y="294" width="175" height="56" rx="8"/>
+  <text x="227" y="318">Edit &amp; compile</text>
+  <text class="label" x="227" y="338">Tweak or redesign</text>
 
-  <path class="edge" d="M410 675 V740"/>
-  <text class="label" x="469" y="711">Local winner</text>
-  <rect class="node" x="260" y="740" width="300" height="85" rx="8"/>
-  <text x="410" y="765">Export and validate</text>
-  <text x="410" y="788">Paired C++ timing</text>
-  <text x="410" y="811">Native profiling</text>
+  <rect class="node" x="365" y="294" width="255" height="56" rx="8"/>
+  <text x="492" y="318">Correctness, microbench &amp; NCU</text>
+  <text class="label" x="492" y="338">Compare with prediction</text>
 
-  <path class="edge" d="M260 104 H60 V782 H260"/>
-  <text class="label" x="142" y="712">Fusion without</text>
-  <text class="label" x="142" y="731">kernel changes</text>
-  <path class="edge feedback" d="M560 782 H770 V104 H560"/>
-  <text class="label" x="688" y="712">Next candidate</text>
-  <text class="label" x="410" y="860">Shared budget · linked records · native model acceptance</text>
+  <path class="edge" d="M315 322 H365"/>
+  <path class="edge feedback" d="M492 350 V388 H227 V350"/>
+  <text class="label" x="360" y="381">Revise (redesign if tweaks stall)</text>
+
+  <path class="edge" d="M380 406 V456"/>
+  <text class="label" x="435" y="436">Local winner</text>
+
+  <rect class="node" x="210" y="456" width="340" height="96" rx="8"/>
+  <text x="380" y="481">Export &amp; fast-screen (local check + quick timing)</text>
+  <text x="380" y="504">Full validation &amp; paired C++ benchmark</text>
+  <text x="380" y="527">Profile candidate &amp; record decision</text>
+
+  <path class="edge" d="M220 96 H58 V504 H210"/>
+  <text class="label" x="128" y="426">Graph fusion /</text>
+  <text class="label" x="128" y="443">pass only</text>
+
+  <path class="edge feedback" d="M550 504 H706 V96 H540"/>
+  <text class="label" x="635" y="436">Next candidate</text>
+
+  <text class="label" x="380" y="584">Shared budget · Markdown lab notebook · native model acceptance</text>
 </svg>

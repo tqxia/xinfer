@@ -19,8 +19,8 @@ histories in local artifacts).
   drivers under `tools/{benchmark,validation}/native/`. Production compiler code
   must not depend on tooling.
 - `environments/` owns setup, device/model requirements and hardware profiles.
-- `plugins/` owns general coding-agent skills and performance bookkeeping
-  helpers that reuse project tools; keep model-specific details in model guides.
+- `plugins/` owns coding-agent skills that reuse project tools; keep
+  model-specific details in model guides.
 - Tests follow the code they cover: module/operator/kernel checks belong in unit
   tests; full export-to-native checks belong in `tools/validation/`.
 - Keep test-only and tool-only helpers in test/tool modules (and native test

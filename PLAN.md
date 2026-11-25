@@ -54,7 +54,7 @@ This file lists unfinished work, not completed refactors or experiment logs.
   shells. Until then, keep the documented Nsight library-path correction as a
   running-container workaround; leave the Dockerfile unchanged.
 - Add CodeBuddy packaging and verify discovery when that integration is taken up.
-  The current plugin supports Codex and Claude Code. Grow hardware recipes and
-  kernel cases from actual investigations using the existing templates.
+  The current plugin supports Codex and Claude Code. Grow GB10 hardware notes and
+  kernel examples in `plugins/xinfer-perf/` from actual investigations.
 - CI and small end-to-end GPU fixtures remain deferred. This cleanup does not
   introduce either.
