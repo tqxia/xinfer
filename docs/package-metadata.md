@@ -31,12 +31,11 @@ and `shared_weights` from benchmark comparison; shared weights are compared by
 logical identity and source mappings separately from their archive checksum.
 
 Fixed export/compiler invariants (`backed_size_oblivious=True`, TF32 disabled,
-`emulate_precision_casts=True`, weightless AOTI compilation), resolved compiler
-options, DeltaNet kernel/packing policy, dependency versions, graph diagnostics
-and timings belong in JSON export-log events rather than `metadata.json`.
-Detailed packing reports are saved as separate export diagnostics.
-There are no package `provenance`, `diagnostics` or source-code-hash fields.
-Retain the export log when investigating a build.
+`emulate_precision_casts=True`, weightless AOTI compilation) live in code rather
+than `metadata.json`. Resolved compiler options, pass counts and compile timings
+are printed as export-log events, and graph dumps / packing reports are saved as
+separate export diagnostics. There are no package `provenance`, `diagnostics` or
+source-code-hash fields. Retain the export log when investigating a build.
 
 ## Capacity and state
 

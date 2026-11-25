@@ -168,7 +168,7 @@ there is no runtime weight concatenation.
 For 0.8B, 48 groups reduce 187 linear calls to 97 across DeltaNet inputs, MLP
 gate/up and attention QKV. Outputs retain BF16 and contiguous layouts. Packing
 reduces launches, not weight bytes; output copies can cost time during prefill.
-The policy version is recorded in export logs, while detailed source/group mappings live in
+Packing counts are printed during export, while detailed source/group mappings live in
 `prefill.packing.json` / `decode.packing.json` diagnostics.
 
 The GEMV pass targets five profiled 0.8B BF16 decoder geometries for dynamic

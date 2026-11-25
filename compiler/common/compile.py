@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 
 import torch
 
@@ -151,13 +152,16 @@ def _compile_entry(
     custom_op_shims,
 ):
     """Finish one graph before exporting the next, retaining only CPU tensors."""
-    exported, on_compiled = export_entry(kind, directory)
+    export_start = time.perf_counter()
+    exported = export_entry(kind, directory)
+    export_seconds = time.perf_counter() - export_start
     compiled_path = directory / f"{kind}.pt2"
     options = {**inductor_configs, **SHARED_WEIGHT_OPTIONS}
     print(
         json.dumps(dict(event="compile_options", entry_point=kind, inductor_configs=options)),
         flush=True,
     )
+    compile_start = time.perf_counter()
     with _capture_constants() as (captured_runtime, captured_name):
         compile_package(
             exported,
@@ -166,6 +170,7 @@ def _compile_entry(
             native_libraries=native_libraries,
             custom_op_shims=custom_op_shims,
         )
+    compile_seconds = time.perf_counter() - compile_start
     compiled = torch._inductor.aoti_load_package(str(compiled_path))
     constants = _resolve_constants(
         exported, compiled.get_constant_fqns(), captured_runtime, captured_name
@@ -174,9 +179,21 @@ def _compile_entry(
     pool.record_entry(
         kind, state_dict=exported.state_dict, constants=constants, package_sha256=digest
     )
-    if on_compiled is not None:
-        on_compiled(compiled_path)
-    return dict(bytes=compiled_path.stat().st_size, sha256=digest)
+    package_bytes = compiled_path.stat().st_size
+    print(
+        json.dumps(
+            dict(
+                event="compiled",
+                entry_point=kind,
+                package_bytes=package_bytes,
+                graph_nodes=len(list(exported.graph.nodes)),
+                export_seconds=round(export_seconds, 3),
+                compile_seconds=round(compile_seconds, 3),
+            )
+        ),
+        flush=True,
+    )
+    return dict(bytes=package_bytes, sha256=digest)
 
 
 def compile_shared(
@@ -191,8 +208,7 @@ def compile_shared(
 ):
     """Compile both entries and publish one complete shared-weight bundle.
 
-    export_entry(kind, staging_directory) returns an ExportedProgram and an
-    optional on_compiled(compiled_path) hook for export diagnostics. Graph dumps
+    export_entry(kind, staging_directory) returns an ExportedProgram. Graph dumps
     and other auxiliary files can be written to staging_directory. Each graph is
     compiled and its constants copied to the CPU pool before the next graph is
     exported. The archive is saved once, then entry and archive checksums are

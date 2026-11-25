@@ -2,7 +2,6 @@
 
 from functools import partial
 import json
-import time
 from pathlib import Path
 
 import torch
@@ -23,18 +22,10 @@ from compiler.common.export import (
     ExportInputError,
     export_parser,
     prepare_export,
-    report_export,
 )
 from compiler.common.metadata import make_metadata
 from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
 from compiler.qwen35.adapters.delta import install_delta
-from compiler.qwen35.kernels.chunked import CHUNK_SIZE, TRANSFORM_TILE
-from compiler.qwen35.kernels.recurrent import SHORT_THRESHOLD
-
-
-DELTA_OPERATORS = dict(
-    short="xinfer.delta_cond_short.default", long="xinfer.delta_cond_long.default"
-)
 
 
 def export_step(model, kind, capacity=None):
@@ -83,7 +74,6 @@ def bundle_metadata(model, checkpoint, capacity):
 
 
 def export_entry(kind, staging_directory, *, model, capacity):
-    start = time.perf_counter()
     exported, packing = export_step(model, kind, capacity)
     (staging_directory / f"{kind}.packing.json").write_text(json.dumps(packing, indent=2) + "\n")
     print(
@@ -91,7 +81,6 @@ def export_entry(kind, staging_directory, *, model, capacity):
         f"{packing['linear_calls_before']} -> {packing['linear_calls_after']} linear calls",
         flush=True,
     )
-    export_seconds = time.perf_counter() - start
     (staging_directory / f"{kind}.graph.txt").write_text(
         exported.graph_module.print_readable(print_output=False) + "\n"
     )
@@ -100,38 +89,7 @@ def export_entry(kind, staging_directory, *, model, capacity):
         f"ranges {exported.range_constraints}",
         flush=True,
     )
-    compile_start = time.perf_counter()
-
-    def on_compiled(compiled_path):
-        diagnostics = dict(
-            range_constraints=str(exported.range_constraints),
-            graph_nodes=len(list(exported.graph.nodes)),
-            export_seconds=export_seconds,
-            compile_seconds=time.perf_counter() - compile_start,
-            delta_backend="triton_op",
-            delta_preparation="triton",
-            delta_operator=DELTA_OPERATORS,
-            delta_algorithm=dict(
-                prefill="shape_cond",
-                short="fused_recurrent",
-                long="chunked_fp32",
-                decode="fused_recurrent",
-            ),
-            delta_short_threshold=SHORT_THRESHOLD,
-            delta_chunk_size=CHUNK_SIZE,
-            delta_transform_tile=TRANSFORM_TILE,
-            delta_dot_precision="ieee",
-            linear_packing=dict(enabled=True, version=1),
-        )
-        report_export(
-            "qwen35",
-            kind,
-            strict=True,
-            package_bytes=compiled_path.stat().st_size,
-            diagnostics=diagnostics,
-        )
-
-    return exported, on_compiled
+    return exported
 
 
 def export_model(*, model_dir, output, max_context_length=None, enable_inductor_optimization=False):

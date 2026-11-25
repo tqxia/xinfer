@@ -1,7 +1,6 @@
 """Export Qwen prefill and decode as one shared-weight AOTInductor bundle."""
 
 from functools import partial
-import time
 from pathlib import Path
 
 import torch
@@ -16,7 +15,6 @@ from compiler.common.export import (
     ExportInputError,
     export_parser,
     prepare_export,
-    report_export,
 )
 from compiler.common.compile import compile_shared
 from compiler.common.metadata import make_metadata, state_spec
@@ -79,26 +77,11 @@ def bundle_metadata(model, checkpoint, capacity):
 
 
 def export_entry(kind, staging_directory, *, step, capacity):
-    start = time.perf_counter()
     exported = export_step(step, kind, capacity)
     # Text dumps expose mutation/shape behavior without another copy of the weights.
     (staging_directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
     print(f"Exported {kind}; compiling...", flush=True)
-
-    def on_compiled(compiled_path):
-        report_export(
-            "qwen3",
-            kind,
-            strict=False,
-            package_bytes=compiled_path.stat().st_size,
-            diagnostics=dict(
-                graph_nodes=len(list(exported.graph.nodes)),
-                export_and_compile_seconds=time.perf_counter() - start,
-                model_adapter=dict(name="qwen3_flash_v1"),
-            ),
-        )
-
-    return exported, on_compiled
+    return exported
 
 
 def export_model(*, model_dir, output, max_context_length=None):

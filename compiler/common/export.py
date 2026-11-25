@@ -1,11 +1,8 @@
-"""Shared CLI preflight and build reporting for model exports."""
+"""Shared CLI preflight for model exports."""
 
 import argparse
-import importlib.metadata
 import json
 from pathlib import Path
-
-import torch
 
 from compiler.common.artifacts import read_json
 from compiler.common.context import model_context_limit, resolve_context_length
@@ -49,33 +46,3 @@ def prepare_export(model_dir, output, max_context_length, max_prefill):
         flush=True,
     )
     return capacity
-
-
-def report_export(model_type, kind, *, strict, diagnostics, **fields):
-    """Keep build diagnostics in export logs, separate from deployment metadata."""
-    print(
-        json.dumps(
-            dict(
-                event="export",
-                model_type=model_type,
-                entry_point=kind,
-                **fields,
-                build=dict(
-                    strict_export=strict,
-                    torch_cuda_version=torch.version.cuda,
-                    versions={
-                        name: importlib.metadata.version(name)
-                        for name in (
-                            "transformers",
-                            "triton",
-                            "safetensors",
-                            "tokenizers",
-                            "huggingface-hub",
-                        )
-                    },
-                ),
-                diagnostics=diagnostics,
-            )
-        ),
-        flush=True,
-    )

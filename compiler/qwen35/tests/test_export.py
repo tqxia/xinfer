@@ -18,6 +18,11 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from compiler.qwen35 import export
 
 
+DELTA_OPERATORS = dict(
+    short="xinfer.delta_cond_short.default", long="xinfer.delta_cond_long.default"
+)
+
+
 class ExportContextLength(unittest.TestCase):
     def test_cli_preserves_default_and_optional_compilation_settings(self):
         with TemporaryDirectory() as temporary:
@@ -154,7 +159,7 @@ class ExportGraph(unittest.TestCase):
                     for branch in node.args[1:3]:
                         visit(module.get_submodule(branch.target))
                 else:
-                    for branch, operator in export.DELTA_OPERATORS.items():
+                    for branch, operator in DELTA_OPERATORS.items():
                         counts[branch] += str(node.target) == operator
 
         visit(exported.graph_module)

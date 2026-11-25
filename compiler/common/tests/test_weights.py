@@ -54,7 +54,7 @@ def inputs(rows):
 def export_entry(model, kind, directory):
     exported = torch.export.export(model, (inputs(1 if kind == "decode" else 3),))
     (directory / f"{kind}.graph.txt").write_text(exported.graph_module.code)
-    return exported, None
+    return exported
 
 
 def compile_bundle(model, directory, identity):
