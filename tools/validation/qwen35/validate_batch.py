@@ -6,25 +6,28 @@ from pathlib import Path
 
 import torch
 
-from compiler.common.artifacts import default_build_dir, read_json, require
-from compiler.common.metadata import read_package_metadata
 from compiler.common.adapters.gated_delta_net import install_delta
+from compiler.common.artifacts import default_build_dir, read_json, require
+from compiler.common.metadata import is_kv_state, read_package_metadata
 from compiler.qwen35.config import configure
 from tools.packages import validate_model_metadata, validate_shared_weights
 from tools.prepare.common import load_tokenizer
-from tools.validation.common.attention import load_packaged_attention_ops
 from tools.validation.common.batch import (
     case_groups,
     run_batch_waves,
     validate_native,
     validate_python_stages,
 )
+from tools.validation.common.operators import (
+    load_packaged_attention_ops,
+    load_packaged_deltanet_ops,
+)
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
 from tools.validation.qwen35.model import HFStage
 
 
 def delta_cases(prompts):
-    """Exercise both sides of GDN dispatch, carried state and the step-2 numerical fixture."""
+    """Exercise varied GDN lengths, carried state and the step-2 numerical fixture."""
     cases = [
         dict(
             name="prompt_prefix_teacher",
@@ -58,11 +61,7 @@ def collect_hf(factory, steps):
             logits.append(torch.cat(scores))
         states = [runtime.state for runtime in runtimes]
         state = [
-            (
-                values[index][:, :, : runtime.position]
-                if spec["update"] == "inplace"
-                else values[index]
-            ).cpu()
+            (values[index][:, :, : runtime.position] if is_kv_state(spec) else values[index]).cpu()
             for index, spec in enumerate(runtimes[0].specs)
             for runtime, values in zip(runtimes, states)
         ]
@@ -77,6 +76,7 @@ def collect_hf(factory, steps):
 def validate_python(args, meta, *, selected_groups=None):
     configure()
     load_packaged_attention_ops(args.packages)
+    load_packaged_deltanet_ops(args.packages)
     groups = case_groups(load_tokenizer(args.model_dir), meta["cache_length"])
     if selected_groups is not None:
         groups = {name: groups[name] for name in selected_groups if name in groups}
@@ -108,6 +108,7 @@ def validate_python(args, meta, *, selected_groups=None):
             meta["state"],
             meta["vocab_size"],
             meta["cache_length"],
+            logits_only=True,
             owner=adapted,
             require_write=True,
         )

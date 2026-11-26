@@ -30,7 +30,8 @@ class FrontendDispatch(unittest.TestCase):
                     patch.object(validate, "read_package_metadata", return_value=bundle),
                     patch.object(validate, "default_build_dir", return_value=root) as build,
                     patch("tools.packages.validate_shared_weights"),
-                    patch("tools.validation.common.attention.load_packaged_attention_ops"),
+                    patch("tools.validation.common.operators.load_packaged_attention_ops"),
+                    patch("tools.validation.common.operators.load_packaged_deltanet_ops"),
                     patch.object(frontend, "Suite", return_value=sentinel.suite) as suite,
                 ):
                     actual, actual_metadata, native = validate.prepare_validation(

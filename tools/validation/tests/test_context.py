@@ -33,10 +33,12 @@ class ContextFixtures(unittest.TestCase):
         self.assertEqual(long_context_cases([3], 1024, 512), [])
 
     def test_only_kv_state_uses_populated_prefix(self):
-        key = dict(shape=[1, 4, 16384, 256], update="inplace")
-        recurrent = dict(shape=[1, 32, 128, 128], update="replace")
+        key = dict(kind="key", shape=[1, 4, 16384, 256])
+        conv = dict(kind="conv", shape=[1, 8192, 4])
+        recurrent = dict(kind="recurrent", shape=[1, 32, 128, 128])
         self.assertEqual(state_shape(key, 513, True), [1, 4, 513, 256])
         self.assertEqual(state_shape(key, 513, False), key["shape"])
+        self.assertEqual(state_shape(conv, 513, True), conv["shape"])
         self.assertEqual(state_shape(recurrent, 513, True), recurrent["shape"])
         self.assertEqual(key["shape"], [1, 4, 16384, 256])
 

@@ -35,7 +35,7 @@ class Qwen3RuntimeDependencies(unittest.TestCase):
         self.weights = self.enterContext(patch.object(validator, "validate_shared_weights"))
         self.load = self.enterContext(
             patch(
-                "tools.validation.common.attention.load_packaged_attention_ops",
+                "tools.validation.common.operators.load_packaged_attention_ops",
                 side_effect=AssertionError("AOTI loads its bundled attention dependency"),
             )
         )

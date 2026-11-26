@@ -20,11 +20,12 @@ FIELDS = (
     "vocab_size",  # Vocabulary size and exclusive token-ID upper bound.
     "eos_token_ids",  # Token IDs that stop greedy generation.
     "checkpoint",  # Prepared checkpoint manifest (model, revision and file facts).
-    "state",  # Ordered contiguous state shapes, dtypes and update policies.
+    "state",  # Ordered contiguous in-place state shapes and dtypes.
     "entries",  # Compiled prefill/decode .pt2 sizes and SHA-256 checksums.
     "shared_weights",  # Shared weight archive identity, size and SHA-256 checksum.
 )
-STATE_FIELDS = {"layer", "kind", "shape", "dtype", "update"}
+STATE_FIELDS = {"layer", "kind", "shape", "dtype"}
+KV_STATE_KINDS = ("key", "value")
 MAX_BATCH_SIZE = 8
 MAX_PREFILL_TOKENS = 512
 # Keep cumulative int32 KV lengths across all compiled batch slots below INT32_MAX.
@@ -46,20 +47,24 @@ def _digest(value):
     return isinstance(value, str) and re.fullmatch("[0-9a-f]{64}", value) is not None
 
 
+def is_kv_state(spec):
+    """Return whether a state descriptor refers to a KV-cache tensor."""
+    return spec["kind"] in KV_STATE_KINDS
+
+
 def state_name(spec):
     """Derive a diagnostic label without storing a duplicate state identifier."""
     return f"layer_{spec['layer']}.{spec['kind']}"
 
 
-def state_spec(layer, kind, shape, dtype, update):
-    """Describe one contiguous caller-owned input and its update contract."""
+def state_spec(layer, kind, shape, dtype):
+    """Describe one contiguous caller-owned in-place state tensor."""
     shape = list(shape)
     return dict(
         layer=layer,
         kind=kind,
         shape=shape,
         dtype=dtype,
-        update=update,
     )
 
 
@@ -159,8 +164,7 @@ def validate_metadata(metadata, model_type=None):
             "state",
         )
         _check(item["dtype"] == ("float32" if kind == "recurrent" else "bfloat16"), "state")
-        _check(item["update"] == ("inplace" if kind in ("key", "value") else "replace"), "state")
-        if kind in ("key", "value"):
+        if kind in KV_STATE_KINDS:
             _check(shape[2] == m["cache_length"], "state")
     entries = m["entries"]
     _check(

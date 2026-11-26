@@ -150,7 +150,7 @@ void write_state(std::ofstream &file, const Runtime &runtime, bool compact, doub
     const auto &tensor = state[i];
     require(at::isfinite(tensor).all().template item<bool>(), "Non-finite state");
 
-    if (compact && runtime.spec().state[i].inplace) {
+    if (compact && runtime.spec().state[i].is_kv()) {
       const auto future = tensor.slice(2, runtime.position());
       const auto expected = at::full_like(future, fill);
       require(at::equal(future.contiguous().view(at::kByte), expected.contiguous().view(at::kByte)),
@@ -170,37 +170,44 @@ void finish(std::ofstream &file, const std::string &message) {
   require(bool(file), message);
 }
 
-void check_native_libraries(Json &report) {
+void check_native_libraries(Json &report, ModelType model_type) {
   std::ifstream maps("/proc/self/maps");
   require(maps.is_open(), "Cannot inspect process mappings");
 
   bool attention = false;
+  bool deltanet = false;
+  const bool expect_deltanet = model_type == ModelType::Qwen35 || model_type == ModelType::Qwen38;
   for (std::string line; std::getline(maps, line);) {
     require(line.find("libpython") == std::string::npos &&
                 line.find("libtorch_python") == std::string::npos,
             "Python library loaded");
 
-    const bool expected = line.find("libxinfer_attention_ops.so") != std::string::npos;
+    const bool is_attention = line.find("libxinfer_attention_ops.so") != std::string::npos;
+    const bool is_deltanet = line.find("libxinfer_deltanet_ops.so") != std::string::npos;
+    const bool expected = is_attention || (expect_deltanet && is_deltanet);
     require(line.find("libxinfer_") == std::string::npos || expected,
             "Unexpected custom-op library loaded");
-    attention = attention || expected;
+    attention = attention || is_attention;
+    deltanet = deltanet || is_deltanet;
   }
 
   require(attention, "Native attention library was not loaded");
+  require(!expect_deltanet || deltanet, "Native DeltaNet library was not loaded");
   report["no_python_library"] = true;
   report["attention_library"] = true;
+  if (expect_deltanet)
+    report["deltanet_library"] = true;
 }
 
 template <class Runtime>
 void check_persistent(const Runtime &runtime, const std::vector<const void *> &persistent) {
   for (size_t i = 0; i < persistent.size(); ++i)
-    if (runtime.spec().state[i].inplace)
-      require(runtime.state()[i].const_data_ptr() == persistent[i], "KV cache storage changed");
+    require(runtime.state()[i].const_data_ptr() == persistent[i], "State buffer storage changed");
 }
 
 template <class Runtime> void check_reset(const Runtime &runtime, double fill) {
   for (size_t i = 0; i < runtime.spec().state.size(); ++i) {
-    const double expected = runtime.spec().state[i].inplace ? fill : 0;
+    const double expected = runtime.spec().state[i].is_kv() ? fill : 0;
     require(runtime.state()[i].eq(expected).all().template item<bool>(),
             "State reset left stale data");
   }
@@ -208,18 +215,17 @@ template <class Runtime> void check_reset(const Runtime &runtime, double fill) {
 
 void check_state_update(const StateSpec &spec, const at::Tensor &input, const at::Tensor &before,
                         const at::Tensor &after, int64_t start, int64_t end) {
-  if (spec.inplace) {
-    require(input.const_data_ptr() == after.const_data_ptr() && input.strides() == after.strides(),
-            "KV output lost caller-owned storage");
+  require(input.const_data_ptr() == after.const_data_ptr() && input.strides() == after.strides(),
+          "State output lost caller-owned storage");
+
+  if (spec.is_kv()) {
     require(at::equal(before.slice(2, 0, start), after.slice(2, 0, start)), "Past KV overwritten");
     require(at::equal(before.slice(2, end), after.slice(2, end)), "Future KV overwritten");
     if (end > start)
       require(!at::equal(before.slice(2, start, end), after.slice(2, start, end)),
               "Cache update missing");
-  } else {
-    require(at::equal(input, before), "Functional input state mutated");
-    if (start == end)
-      require(at::equal(after, before), "Inactive functional state changed");
+  } else if (start == end) {
+    require(at::equal(after, before), "Inactive state changed");
   }
 
   require(at::isfinite(after).all().item<bool>(), "Non-finite state");
@@ -317,8 +323,7 @@ void run_trace_case(Runtime &runtime, const Case &c, const TraceLayout &layout,
   row["rows"] = c.steps.size();
   row["steps"] = c.steps.size();
   row["write_region_checks"] = row["reset_check"] = true;
-  row["kv_inputs_updated_in_place"] = row["non_kv_inputs_unchanged"] =
-      row["kv_write_regions_preserved"] = true;
+  row["state_inputs_updated_in_place"] = row["kv_write_regions_preserved"] = true;
 
   if (runtime.spec().model_type == ModelType::Qwen3 && c.dump_cache && !layout.selected_states) {
     auto cache = output_file(output / (c.name + ".kv.bf16"), true);
@@ -359,8 +364,7 @@ Json run_case(Runtime &runtime, const Case &c, const TraceLayout &layout, const 
 
   row["position"] = runtime.position();
   row["positions"] = runtime.positions();
-  if (runtime.spec().model_type == ModelType::Qwen3)
-    row["stable_storage"] = true;
+  row["stable_storage"] = true;
   row["stable_kv_storage"] = true;
   row["prefill_calls"] = runtime.prefill_calls();
   row["decode_calls"] = runtime.decode_calls();
@@ -441,7 +445,7 @@ void run_validation(const Options &options) {
       std::cerr << c.name << ": position " << runtime->position() << '\n';
     }
 
-    check_native_libraries(report);
+    check_native_libraries(report, spec.model_type);
     write_report(options.output, report);
   });
 }

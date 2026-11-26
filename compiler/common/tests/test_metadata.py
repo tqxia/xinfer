@@ -13,6 +13,7 @@ from compiler.common.metadata import (
     MAX_CACHE_LENGTH,
     METADATA_FILE,
     finalize_metadata,
+    is_kv_state,
     make_metadata,
     read_package_metadata,
     state_spec,
@@ -24,18 +25,15 @@ def bundle_metadata(model_type="qwen3", *, cache_length=1024):
     if model_type == "qwen3":
         shape = [8, 8, cache_length, 128]
         states = [
-            state_spec(i, kind, shape, "bfloat16", "inplace")
-            for i in range(28)
-            for kind in ("key", "value")
+            state_spec(i, kind, shape, "bfloat16") for i in range(28) for kind in ("key", "value")
         ]
     else:
         states = [
-            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32"),
         ]
         states += [
-            state_spec(1, kind, [8, 2, cache_length, 256], "bfloat16", "inplace")
-            for kind in ("key", "value")
+            state_spec(1, kind, [8, 2, cache_length, 256], "bfloat16") for kind in ("key", "value")
         ]
     metadata = make_metadata(
         model_type=model_type,
@@ -63,7 +61,7 @@ def bundle_metadata(model_type="qwen3", *, cache_length=1024):
 
 
 class PackageMetadata(unittest.TestCase):
-    def test_one_format_handles_both_output_state_abis(self):
+    def test_one_format_handles_all_model_types_with_unified_inplace_abi(self):
         for model_type in ("qwen3", "qwen35", "qwen38"):
             with self.subTest(model_type=model_type):
                 metadata = bundle_metadata(model_type)
@@ -74,11 +72,15 @@ class PackageMetadata(unittest.TestCase):
                             validate_metadata(metadata, other)
                 self.assertTrue(
                     all(
-                        set(item) == {"layer", "kind", "shape", "dtype", "update"}
+                        set(item) == {"layer", "kind", "shape", "dtype"}
                         for item in metadata["state"]
                     )
                 )
                 self.assertEqual(metadata["eos_token_ids"], [151645])
+        qwen35 = bundle_metadata("qwen35")
+        self.assertEqual(
+            [is_kv_state(item) for item in qwen35["state"]], [False, False, True, True]
+        )
 
     def test_both_models_reserve_eight_rows_and_reject_other_allocations(self):
         for model_type in ("qwen3", "qwen35", "qwen38"):
@@ -219,6 +221,7 @@ class PackageMetadata(unittest.TestCase):
             lambda s: s["shape"].__setitem__(1, 0),
             lambda s: s.update(stride=[1]),
             lambda s: s.update(dtype="float32"),
+            lambda s: s.update(update="inplace"),
             lambda s: s.update(update="replace"),
             lambda s: s.update(name="other.key"),
             lambda s: s.update(layer=True),
@@ -228,6 +231,12 @@ class PackageMetadata(unittest.TestCase):
             change(metadata["state"][0])
             with self.assertRaisesRegex(ValueError, "Unsupported package metadata: state"):
                 validate_metadata(metadata)
+        for index in (0, 1, 2, 3):
+            metadata = bundle_metadata("qwen35")
+            metadata["state"][index]["update"] = "replace"
+            with self.subTest(index=index):
+                with self.assertRaisesRegex(ValueError, "Unsupported package metadata: state"):
+                    validate_metadata(metadata)
 
     def test_duplicate_state_identity_is_rejected(self):
         metadata = bundle_metadata()

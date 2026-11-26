@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from compiler.common.kernels.flash_attention import attention
+from compiler.common.kernels.gated_delta_net import deltanet
 
 
 class NativeLibrarySelection(unittest.TestCase):
@@ -96,6 +97,74 @@ class NativeLibrarySelection(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "two different attention libraries"):
                 attention.load_attention_ops(self.other)
         self.torch.ops.load_library.assert_called_once_with(str(self.library))
+
+
+class DeltaNetLibrarySelection(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.library = self.root / "selected build/libxinfer_deltanet_ops.so"
+        self.library.parent.mkdir()
+        self.library.touch()
+        self.other = self.root / "other-deltanet.so"
+        self.other.touch()
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop("XINFER_DELTANET_OPS_LIBRARY", None)
+        self.enterContext(patch.object(deltanet, "_loaded", None))
+        self.default = self.root / "build/libxinfer_deltanet_ops.so"
+        self.enterContext(patch("compiler.common.artifacts.ROOT", self.root))
+        self.torch = SimpleNamespace(
+            ops=SimpleNamespace(
+                load_library=Mock(),
+                xinfer=SimpleNamespace(batched_deltanet=Mock()),
+            ),
+            library=SimpleNamespace(register_fake=Mock(return_value=lambda function: function)),
+        )
+
+    def test_library_registers_operator_shapes(self):
+        with patch.dict("sys.modules", {"torch": self.torch}):
+            deltanet.load_deltanet_ops(self.library)
+        self.assertEqual(
+            [call.args[0] for call in self.torch.library.register_fake.call_args_list],
+            ["xinfer::batched_deltanet"],
+        )
+
+    def test_default_build_and_environment_selection(self):
+        self.default.parent.mkdir(parents=True)
+        self.default.touch()
+        with patch.dict("sys.modules", {"torch": self.torch}):
+            deltanet.load_deltanet_ops()
+            self.assertEqual(deltanet.deltanet_library(), self.default)
+        self.torch.ops.load_library.assert_called_once_with(str(self.default))
+
+    def test_missing_default_and_selected_library_fail_before_torch(self):
+        with (
+            patch.dict("sys.modules", {"torch": None}),
+            self.assertRaises(FileNotFoundError) as error,
+        ):
+            deltanet.load_deltanet_ops()
+        self.assertIn(str(self.default), str(error.exception))
+        self.assertIsNone(deltanet._loaded)
+        selected = self.root / "missing/libxinfer_deltanet_ops.so"
+        os.environ["XINFER_DELTANET_OPS_LIBRARY"] = str(selected)
+        with (
+            patch.dict("sys.modules", {"torch": None}),
+            self.assertRaises(FileNotFoundError) as error,
+        ):
+            deltanet.load_deltanet_ops()
+        self.assertIn(str(selected), str(error.exception))
+        self.assertIsNone(deltanet._loaded)
+
+    def test_reuse_and_conflict_rejection(self):
+        with patch.dict("sys.modules", {"torch": self.torch}):
+            deltanet.load_deltanet_ops(self.library)
+            deltanet.load_deltanet_ops()
+            deltanet.load_deltanet_ops(self.library)
+            with self.assertRaisesRegex(ValueError, "two different DeltaNet libraries"):
+                deltanet.load_deltanet_ops(self.other)
+        self.torch.ops.load_library.assert_called_once_with(str(self.library))
+        self.assertEqual(self.torch.library.register_fake.call_count, 1)
 
 
 if __name__ == "__main__":

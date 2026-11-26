@@ -9,9 +9,10 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 from transformers import AutoTokenizer, DynamicCache, StaticCache
 
 from compiler.common.artifacts import MODEL_MANIFEST_NAME, read_json, require
+from compiler.common.metadata import is_kv_state
 from compiler.qwen35.config import configure
-from tools.prepare.qwen35 import default_model_dir as prepared_model_dir
 from compiler.qwen35.export import export_step
+from tools.prepare.qwen35 import default_model_dir as prepared_model_dir
 from compiler.qwen35.model import load_model, state_specs
 from tools.packages import validate_qwen35_metadata as validate_model_metadata
 from tools.prepare.common import encode_prompt
@@ -73,11 +74,11 @@ class HFStage:
             )
         result = []
         for tensor, spec in zip(tensors, self.specs):
-            if self.dynamic and spec["update"] == "inplace":
+            if self.dynamic and is_kv_state(spec):
                 tensor = torch.nn.functional.pad(tensor, (0, 0, 0, self.capacity - self.position))
             tail = tensor.new_full(
                 (spec["shape"][0] - 1, *tensor.shape[1:]),
-                self.fill if spec["update"] == "inplace" else 0,
+                self.fill if is_kv_state(spec) else 0,
             )
             result.append(torch.cat((tensor, tail), dim=0))
         return result
@@ -259,7 +260,13 @@ class Suite:
             yield Stage(
                 "eager",
                 ExplicitRuntime(
-                    functions, self.specs, self.vocab_size, self.capacity, owner=model, **bounds
+                    functions,
+                    self.specs,
+                    self.vocab_size,
+                    self.capacity,
+                    logits_only=True,
+                    owner=model,
+                    **bounds,
                 ),
             )
         finally:

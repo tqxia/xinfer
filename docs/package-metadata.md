@@ -21,7 +21,7 @@ model-specific geometry and `runtime/common/state.h` implements state ownership.
 | `cache_length`, `max_prefill_tokens` | Allocated context capacity and compiled per-call prefill ceiling (512) |
 | `vocab_size`, `eos_token_ids` | Vocabulary upper bound and explicit EOS stop list |
 | `checkpoint` | Prepared `model_manifest.json` object (`model`, `revision` and checkpoint files) |
-| `state` | Ordered contiguous state descriptors (`layer`, `kind`, `shape`, `dtype`, `update`) |
+| `state` | Ordered contiguous in-place state descriptors (`layer`, `kind`, `shape`, `dtype`) |
 | `entries` | Per-entry (`prefill`, `decode`) `.pt2` byte sizes and SHA-256 checksums |
 | `shared_weights` | Shared `weights.safetensors` logical identity, byte size and SHA-256 checksum |
 
@@ -59,12 +59,14 @@ clamped. There is no separate prompt cap. Changing capacity requires re-export
 of both entries; editing `metadata.json` cannot enlarge compiled buffers or
 symbolic bounds.
 
-Each ordered state descriptor contains `layer`, `kind`, `shape`, `dtype` and
-`update`. KV uses `inplace`; convolution/recurrent state uses `replace`.
-Readers derive names, contiguous strides, model geometry and output positions
-from these descriptors and the model's calling convention. Reset retains KV
-allocations and fills them with the requested value; replacement state is
-initialized to zero.
+Each ordered state descriptor contains `layer`, `kind`, `shape` and `dtype`.
+Every state tensor across both model families (KV cache as well as Qwen3.5
+convolution/recurrent state) is updated in place, so no per-tensor `update`
+field is recorded. Readers derive names, contiguous
+strides and model geometry from these descriptors. Reset retains every state
+allocation (requiring 16-byte buffer alignment so AOTI alignment guards never
+clone caller-owned inputs), fills KV buffers (`key`/`value`) with the requested
+value, and zeroes non-KV (`conv`/`recurrent`) buffers.
 
 ## Dynamic batch interfaces
 
@@ -76,8 +78,8 @@ allocate 1 row). Export and compilation enable `backed_size_oblivious` to
 retain B=1 in the symbolic range.
 
 - Python inputs: `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
-  IDs and positions are CUDA int64 `[B,T]`. State inputs are contiguous views
-  into the first B rows of the allocated state buffers.
+  IDs and positions are CUDA int64 `[B,T]`. State inputs are a tuple of
+  contiguous views into the first B rows of the allocated state buffers.
 - Flat AOTI inputs: IDs, positions, ordered state tensors, KV lengths, query
   lengths. Qwen3-0.6B/1.7B have 56 state tensors / 60 inputs; Qwen3.5-0.8B has
   48 / 52; Qwen3.5-4B has 64 / 68.
@@ -89,18 +91,17 @@ retain B=1 in the symbolic range.
   widths 2–512 select prefill. Per-row positions identify contiguous appends.
 - Logits are BF16 `[B,vocab_size]` for each row's last real token. Empty rows
   return zero logits without advancing any state or position.
-- Qwen3 returns only logits and updates KV in place. Qwen3.5 and Qwen3.8 return logits
-  followed by all state tensors: KV outputs alias input buffers, while fresh
-  convolution/recurrent outputs replace the active rows. Recurrent state is FP32.
+- Qwen3, Qwen3.5 and Qwen3.8 use one unified logits-only `inplace` ABI:
+  compiled entries return only `[B,vocab_size]` BF16 logits and update every
+  state tensor (KV cache, DeltaNet convolution state and FP32 recurrent state)
+  in place on caller-owned buffers.
 - State allocation and row identity persist across calls up to
-  `allocated_batch_size`. Smaller B omits tail rows without modifying them.
-  Larger B resumes those rows or starts unused rows with their first tokens.
-  The runtime retains all allocated rows, combining functional outputs with the
-  unchanged tail without modifying the previous functional input. Full-batch
-  functional outputs (`B == allocated_batch_size`) are adopted directly.
-- Reset clears all allocated rows; KV storage is retained. The state policy
-  checks returned shape, dtype, device, contiguity and required aliases before
-  adopting outputs.
+  `allocated_batch_size`. Smaller B passes active-prefix views (`narrow(0, 0, B)`)
+  and leaves omitted tail rows (`B..allocated_batch_size`) untouched. Larger B
+  resumes those rows or starts unused rows with their first tokens.
+- Reset clears all allocated rows while retaining every state buffer allocation.
+  The state policy checks output count (`outputs.size() == 1`), batch bounds and
+  16-byte buffer alignment.
 - The runner validates every supplied row before execution. `positions()` exposes
   all allocated row counts; `position()` is their maximum for trace handling.
 
@@ -167,11 +168,13 @@ compatibility before loading GPU weights. Each package and archive is hashed
 once per construction, and the archive manifest is parsed once. This is a
 load-scoped result, not a persistent trust cache across runtime instances.
 
-Both packages embed `libxinfer_attention_ops.so`; package checksums cover it.
-Generic weight readers do not inspect or compare the embedded attention payloads.
-Current exporters select one implementation for both entries, but readers do not
-require byte equality between them. Standard AOTI loaders extract the native
-library with the wrapper. LibTorch/CUDA remain external dependencies.
+All model families embed `libxinfer_attention_ops.so` in each `.pt2` package,
+and Qwen3.5/Qwen3.8 additionally embed `libxinfer_deltanet_ops.so`; package checksums
+cover all embedded operator libraries. Generic weight readers do not inspect or
+compare embedded operator payloads. Current exporters select one implementation
+for both entries, but readers do not require byte equality between them.
+Standard AOTI loaders extract the native libraries alongside the wrapper via
+`$ORIGIN`. LibTorch/CUDA remain external dependencies.
 See [attention packaging](flash-attention.md#build-and-deployment) for the C shim,
 linker search path and limits on selecting independent implementations.
 
@@ -190,7 +193,9 @@ bundles labeled `qwen35`; no compatibility routing is provided. Relabeling only
 `metadata.json` would mismatch the embedded archive identity.
 
 Re-export with the current exporter by default. Packages with embedded weights,
-the old attention interface, an external attention dependency or legacy
-`prefill.json`/`decode.json` sidecars require re-export; metadata conversion
-cannot supply missing code or change the compiled ABI. Keep historical bundles
-with their matching runtimes when retaining them as evidence.
+the old attention interface, an external operator dependency, legacy state
+`update` fields (such as returned-state `replace` Qwen3.5 metadata), or legacy
+`prefill.json`/`decode.json` sidecars
+require re-export; metadata conversion cannot supply missing code or change the
+compiled ABI. Keep historical bundles with their matching runtimes when
+retaining them as evidence.

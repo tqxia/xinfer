@@ -161,6 +161,7 @@ class BatchedModelStep(unittest.TestCase):
         step = model.ModelStep(original)
         state = model.zero_state(config, 512, batch_size=2)
         independent = [model.zero_state(config, 512) for _ in range(2)]
+        pointers = [t.data_ptr() for t in state]
         starts = torch.zeros(2, dtype=torch.int32)
         for counts in ((7, 3), (1, 0), (0, 2), (97, 98), (1, 1)):
             with self.subTest(counts=counts):
@@ -168,36 +169,33 @@ class BatchedModelStep(unittest.TestCase):
                 width = max(counts)
                 ids = torch.randint(0, config.vocab_size, (2, width), device="cuda")
                 positions = starts.to("cuda")[:, None] + torch.arange(width, device="cuda")
-                saved = [t.clone() for t in state]
-                logits, *next_state = step(ids, positions, state, starts + lengths, lengths)
+                saved = tuple(t.clone() for t in state)
+                logits = step(ids, positions, state, starts + lengths, lengths)
+                self.assertIsInstance(logits, torch.Tensor)
+                self.assertEqual([t.data_ptr() for t in state], pointers)
                 # Poison only padding and rerun from exactly the same carried state.
                 poisoned = ids.clone()
                 for row, count in enumerate(counts):
                     poisoned[row, count:] = (poisoned[row, count:] + 1) % config.vocab_size
-                again = step(
-                    poisoned, positions, [t.clone() for t in saved], starts + lengths, lengths
-                )
-                self.assertTrue(all(bits_equal(a, b) for a, b in zip((logits, *next_state), again)))
-                for index, (before, after) in enumerate(zip(state, next_state)):
-                    self.assertEqual(after.data_ptr() == before.data_ptr(), index >= 2)
-                    if index < 2:
-                        self.assertTrue(bits_equal(before, saved[index]))
+                again_state = tuple(t.clone() for t in saved)
+                again_logits = step(poisoned, positions, again_state, starts + lengths, lengths)
+                self.assertTrue(bits_equal(logits, again_logits))
+                self.assertTrue(all(bits_equal(a, b) for a, b in zip(state, again_state)))
+                for index, (before, after) in enumerate(zip(saved, state)):
                     for row, count in enumerate(counts):
                         if index >= 2:
                             start, end = starts[row].item(), (starts[row] + count).item()
                             self.assertTrue(
-                                bits_equal(after[row, :, :start], saved[index][row, :, :start])
+                                bits_equal(after[row, :, :start], before[row, :, :start])
                             )
-                            self.assertTrue(
-                                bits_equal(after[row, :, end:], saved[index][row, :, end:])
-                            )
+                            self.assertTrue(bits_equal(after[row, :, end:], before[row, :, end:]))
                         if count == 0:
-                            self.assertTrue(bits_equal(after[row], saved[index][row]))
+                            self.assertTrue(bits_equal(after[row], before[row]))
                 for row, count in enumerate(counts):
                     if count == 0:
                         self.assertEqual(torch.count_nonzero(logits[row]).item(), 0)
                         continue
-                    reference, *independent[row] = step(
+                    reference = step(
                         ids[row : row + 1, :count].contiguous(),
                         positions[row : row + 1, :count].contiguous(),
                         independent[row],
@@ -207,7 +205,6 @@ class BatchedModelStep(unittest.TestCase):
                     error = row_errors(logits[row : row + 1].float(), reference.float())
                     self.assertLessEqual(error["relative_l2"], 0.05)
                     self.assertLessEqual(error["peak_relative"], 0.05)
-                state = next_state
                 starts += lengths
 
 

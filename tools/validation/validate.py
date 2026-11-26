@@ -22,7 +22,10 @@ def build_parser():
 
 
 def prepare_validation(packages, model_dir, native):
-    from tools.validation.common.attention import load_packaged_attention_ops
+    from tools.validation.common.operators import (
+        load_packaged_attention_ops,
+        load_packaged_deltanet_ops,
+    )
     from tools.packages import validate_shared_weights
     from compiler.common.artifacts import require
 
@@ -33,6 +36,8 @@ def prepare_validation(packages, model_dir, native):
     validate_model_metadata(metadata)
     validate_shared_weights(packages, metadata)
     load_packaged_attention_ops(packages)
+    if model_type in ("qwen35", "qwen38"):
+        load_packaged_deltanet_ops(packages)
     module = importlib.import_module(f"tools.validation.{model_type}.model")
     suite = module.Suite(model_dir or module.default_model_dir(metadata), metadata)
     return suite, metadata, native

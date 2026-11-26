@@ -1,4 +1,4 @@
-"""Select packaged attention only for eager validation."""
+"""Select packaged native operators only for eager validation."""
 
 import gc
 import os
@@ -10,7 +10,8 @@ import zipfile
 from unittest.mock import Mock, patch
 
 from compiler.common.kernels.flash_attention import attention
-from tools.validation.common import attention as packaged_attention
+from compiler.common.kernels.gated_delta_net import deltanet
+from tools.validation.common import operators as packaged_operators
 
 
 class PackagedAttentionSelection(unittest.TestCase):
@@ -23,7 +24,7 @@ class PackagedAttentionSelection(unittest.TestCase):
         self.enterContext(patch.dict(os.environ))
         os.environ.pop("XINFER_ATTENTION_OPS_LIBRARY", None)
         self.enterContext(patch.object(attention, "_loaded", None))
-        self.enterContext(patch.object(packaged_attention, "_packaged_directory", None))
+        self.enterContext(patch.object(packaged_operators, "_packaged_directory", None))
         self.addCleanup(self.cleanup_packaged_library)
         self.torch = SimpleNamespace(
             ops=SimpleNamespace(
@@ -33,8 +34,8 @@ class PackagedAttentionSelection(unittest.TestCase):
         )
 
     def cleanup_packaged_library(self):
-        if packaged_attention._packaged_directory is not None:
-            packaged_attention._packaged_directory.cleanup()
+        if packaged_operators._packaged_directory is not None:
+            packaged_operators._packaged_directory.cleanup()
 
     def packages(self, name="packages", **payloads):
         directory = self.root / name
@@ -55,7 +56,7 @@ class PackagedAttentionSelection(unittest.TestCase):
             patch.dict("sys.modules", {"torch": self.torch}),
             self.assertRaisesRegex(ValueError, "Package is missing its attention library"),
         ):
-            packaged_attention.load_packaged_attention_ops(packages)
+            packaged_operators.load_packaged_attention_ops(packages)
         self.torch.ops.load_library.assert_not_called()
         self.torch.library.register_fake.assert_not_called()
 
@@ -69,22 +70,22 @@ class PackagedAttentionSelection(unittest.TestCase):
                     patch.object(attention, "_loaded", None),
                     patch.dict("sys.modules", {"torch": self.torch}),
                 ):
-                    library = packaged_attention.load_packaged_attention_ops(packages)
+                    library = packaged_operators.load_packaged_attention_ops(packages)
                     self.assertEqual(library.read_bytes(), b"prefill implementation")
-                packaged_attention._packaged_directory.cleanup()
+                packaged_operators._packaged_directory.cleanup()
         self.assertEqual(self.torch.ops.load_library.call_count, 2)
 
     def test_packaged_eager_library_is_retained_and_reused(self):
         packages = self.packages()
         with patch.dict("sys.modules", {"torch": self.torch}):
-            library = packaged_attention.load_packaged_attention_ops(packages).resolve()
+            library = packaged_operators.load_packaged_attention_ops(packages).resolve()
             self.assertEqual(library.name, "libxinfer_attention_ops.so")
             self.assertEqual(library.read_bytes(), b"packaged attention implementation")
             self.assertNotEqual(library.parent, packages)
             gc.collect()
             self.assertTrue(library.is_file())
             self.assertEqual(
-                packaged_attention.load_packaged_attention_ops(packages).resolve(), library
+                packaged_operators.load_packaged_attention_ops(packages).resolve(), library
             )
             self.assertEqual(attention.attention_library(), library)
         self.torch.ops.load_library.assert_called_once_with(str(library))
@@ -95,7 +96,7 @@ class PackagedAttentionSelection(unittest.TestCase):
         stale = str(self.root / "missing/libxinfer_attention_ops.so")
         os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = stale
         with patch.dict("sys.modules", {"torch": self.torch}):
-            library = packaged_attention.load_packaged_attention_ops(packages).resolve()
+            library = packaged_operators.load_packaged_attention_ops(packages).resolve()
             attention.load_attention_ops()
             self.assertEqual(attention.attention_library(), library)
         self.torch.ops.load_library.assert_called_once_with(str(library))
@@ -108,10 +109,71 @@ class PackagedAttentionSelection(unittest.TestCase):
             attention.load_attention_ops(self.library)
             with patch.object(Path, "read_bytes", side_effect=AssertionError("No byte comparison")):
                 self.assertEqual(
-                    packaged_attention.load_packaged_attention_ops(packages), self.library
+                    packaged_operators.load_packaged_attention_ops(packages), self.library
                 )
         self.torch.ops.load_library.assert_called_once_with(str(self.library))
         self.assertEqual(self.torch.library.register_fake.call_count, 1)
+
+
+class PackagedDeltaNetSelection(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.library = self.root / "libxinfer_deltanet_ops.so"
+        self.library.touch()
+        self.enterContext(patch.dict(os.environ))
+        os.environ.pop("XINFER_DELTANET_OPS_LIBRARY", None)
+        self.enterContext(patch.object(deltanet, "_loaded", None))
+        self.enterContext(patch.object(packaged_operators, "_packaged_deltanet_directory", None))
+        self.addCleanup(self.cleanup_packaged_library)
+        self.torch = SimpleNamespace(
+            ops=SimpleNamespace(
+                load_library=Mock(), xinfer=SimpleNamespace(batched_deltanet=Mock())
+            ),
+            library=SimpleNamespace(register_fake=Mock(return_value=lambda function: function)),
+        )
+
+    def cleanup_packaged_library(self):
+        if packaged_operators._packaged_deltanet_directory is not None:
+            packaged_operators._packaged_deltanet_directory.cleanup()
+
+    def packages(self, name="packages", payload=b"packaged deltanet implementation"):
+        directory = self.root / name
+        directory.mkdir()
+        for kind in ("prefill", "decode"):
+            with zipfile.ZipFile(directory / f"{kind}.pt2", "w") as archive:
+                archive.writestr("fixture/data/aotinductor/model/model.wrapper.so", b"wrapper")
+                if payload is not None:
+                    archive.writestr(
+                        "fixture/data/aotinductor/model/libxinfer_deltanet_ops.so", payload
+                    )
+        return directory
+
+    def test_missing_deltanet_library_is_rejected_before_loading(self):
+        packages = self.packages(payload=None)
+        with (
+            patch.dict("sys.modules", {"torch": self.torch}),
+            self.assertRaisesRegex(ValueError, "Package is missing its DeltaNet library"),
+        ):
+            packaged_operators.load_packaged_deltanet_ops(packages)
+        self.torch.ops.load_library.assert_not_called()
+
+    def test_packaged_deltanet_library_is_retained_and_reused(self):
+        packages = self.packages()
+        stale = str(self.root / "missing/libxinfer_deltanet_ops.so")
+        os.environ["XINFER_DELTANET_OPS_LIBRARY"] = stale
+        with patch.dict("sys.modules", {"torch": self.torch}):
+            library = packaged_operators.load_packaged_deltanet_ops(packages).resolve()
+            self.assertEqual(library.name, "libxinfer_deltanet_ops.so")
+            self.assertEqual(library.read_bytes(), b"packaged deltanet implementation")
+            deltanet.load_deltanet_ops()
+            self.assertEqual(
+                packaged_operators.load_packaged_deltanet_ops(packages).resolve(), library
+            )
+            self.assertEqual(deltanet.deltanet_library(), library)
+        self.torch.ops.load_library.assert_called_once_with(str(library))
+        self.assertEqual(os.environ["XINFER_DELTANET_OPS_LIBRARY"], stale)
 
 
 if __name__ == "__main__":

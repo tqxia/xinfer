@@ -68,7 +68,8 @@ written before exiting nonzero.
 ## Build compiler kernels and native runtimes
 
 Use `environments/build.sh` to configure and build `xinfer_attention_ops`,
-`xinfer_aoti`, `xinfer_validate`, `xinfer_benchmark` and the native contract
+`xinfer_deltanet_ops`, `xinfer_aoti`, `xinfer_validate`, `xinfer_benchmark` and
+the native contract
 tests into `build/` against the active venv's LibTorch:
 
 ```bash
@@ -87,9 +88,10 @@ exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
 `--nvcc PATH`, `--jobs N` (default `2`), `--targets LIST` (comma-separated
 subset), `--no-validation`, `--no-benchmark`.
 
-The compiler owns the `xinfer_attention_ops` target and its native sources in
-`compiler/common/kernels/`. It writes `libxinfer_attention_ops.so` into `build/`
-for export and standalone operator tests.
+The compiler owns the `xinfer_attention_ops` and `xinfer_deltanet_ops` targets
+and their native sources in `compiler/common/kernels/`. They write
+`libxinfer_attention_ops.so` and `libxinfer_deltanet_ops.so` into `build/` for
+export and standalone operator tests.
 The root build produces `xinfer_aoti` and, when enabled, the tooling workers
 `xinfer_benchmark` and `xinfer_validate` for all model families. Model selection
 comes from package metadata; there is no separate model build switch.
@@ -98,16 +100,18 @@ Kernel export/AOTI checks run through
 runner.
 
 Export entry points load `build/libxinfer_attention_ops.so` by default (or
-`XINFER_ATTENTION_OPS_LIBRARY`). Numerical validation and benchmark tools
+`XINFER_ATTENTION_OPS_LIBRARY`), and Qwen3.5/Qwen3.8 additionally load
+`build/libxinfer_deltanet_ops.so` (or `XINFER_DELTANET_OPS_LIBRARY`). Numerical validation and benchmark tools
 default to native executables in `build/` and dispatch by package `model_type`
 (`qwen3`, `qwen35` or `qwen38`); native-path options (`--native`, `--binary`,
 `--cli`) select another build directory. Qwen3.8 packages use
 `model_type="qwen38"` with the shared Qwen3.5 runtime and calling convention.
 
-Build `xinfer_attention_ops` before full-model export so Python can register the
-shared native FlashAttention operator. Exporters embed
-`libxinfer_attention_ops.so` in each `.pt2`; native executables load it through
-those packages and do not link or install a separate copy.
+Build `xinfer_attention_ops` (and `xinfer_deltanet_ops` for Qwen3.5/Qwen3.8)
+before full-model export so Python can register the shared native custom
+operators. All exporters embed `libxinfer_attention_ops.so` in each `.pt2`, and
+Qwen3.5/Qwen3.8 also embed `libxinfer_deltanet_ops.so`; native executables load
+them through those packages and do not link or install a separate copy.
 
 For L20, `build.sh` passes `-DCUDA_cudart_LIBRARY` and `-DCUDA_CUDART_LIBRARY`
 pointing to Torch's CUDA 12.6 runtime so host toolchains with an older CUDA

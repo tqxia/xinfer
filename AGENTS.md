@@ -47,12 +47,12 @@ with `environments/build.sh`.
 
 Run Python tools as modules from the repository root with the target
 interpreter, and build native code against that interpreter's LibTorch in
-`build/`. Build `xinfer_attention_ops` before export or standalone
-attention tests; runtime targets build independently and consume packaged
-kernels. Enforce C++20 as the minimum native standard, avoid deprecated
-serialization (`torch.jit`) and extra native runtime dependencies (e.g.,
-OpenSSL, Python), and use `python -m environments.check` to verify the stack
-and build.
+`build/`. Build `xinfer_attention_ops` (and `xinfer_deltanet_ops` for
+Qwen3.5/Qwen3.8) before export or standalone operator tests; runtime targets
+build independently and consume packaged kernels. Enforce C++20 as the minimum
+native standard, avoid deprecated serialization (`torch.jit`) and extra native
+runtime dependencies (e.g., OpenSSL, Python), and use
+`python -m environments.check` to verify the stack and build.
 
 Keep compiler dependency workarounds in version-specific `compiler/patches/`
 directories with applicability checks, focused tests and documentation. Do not

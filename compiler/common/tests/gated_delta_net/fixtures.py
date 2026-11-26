@@ -10,9 +10,10 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 )
 
 from compiler.common.tests.tensors import bits_equal, cpu_copy, row_errors
-from compiler.common.kernels.gated_delta_net.chunked import CHUNK_SIZE
-from compiler.common.kernels.gated_delta_net.recurrent import SHORT_THRESHOLD, fused, long, short
+from compiler.common.kernels.gated_delta_net.deltanet import batched_deltanet
 
+CHUNK_SIZE = 64
+BOUNDARY_LENGTH = 97
 LENGTHS = (1, 2, 3, 4, 5, 31, 32, 33, 63, 64, 65, 127, 128, 129, 511, 512)
 PARTITIONS = (1, 2, 3, 4, 5, 31, 32, 33, 64, 65, 272)
 KEY_HEADS, HEAD_DIM, CONV_WIDTH = 16, 128, 4
@@ -38,7 +39,9 @@ def geometry(value_heads):
 
 class Fused(torch.nn.Module):
     def forward(self, qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=None):
-        return fused(qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths)
+        return batched_deltanet(
+            qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=query_lengths
+        )
 
 
 def reference(qkv, b, a, conv, state, weight, A_log, dt_bias, *, chunked=False):
@@ -157,7 +160,7 @@ def make_cases(value_heads=16):
     for dtype in ("bf16", "fp32"):
         for state in ("zero", "state"):
             source = next(c for c in cases if c["name"] == f"{dtype}-t512-{state}")
-            for tokens in (SHORT_THRESHOLD - 1, SHORT_THRESHOLD, SHORT_THRESHOLD + 1):
+            for tokens in (BOUNDARY_LENGTH - 1, BOUNDARY_LENGTH, BOUNDARY_LENGTH + 1):
                 cases.append(
                     dict(
                         source,
@@ -175,10 +178,10 @@ def dispatch_cases(cases):
     for dtype in ("bf16", "fp32"):
         source = next(c for c in cases if c["name"] == f"{dtype}-whole")
         lengths = (
-            SHORT_THRESHOLD - 1,
-            SHORT_THRESHOLD + 1,
-            SHORT_THRESHOLD,
-            SHORT_THRESHOLD + 2,
+            BOUNDARY_LENGTH - 1,
+            BOUNDARY_LENGTH + 1,
+            BOUNDARY_LENGTH,
+            BOUNDARY_LENGTH + 2,
             1,
         )
         lengths += (512 - sum(lengths),)
@@ -193,7 +196,7 @@ def dispatch_cases(cases):
                 carry,
                 name=f"{dtype}-cond-short-carry",
                 steps=[
-                    tuple(x[:, : SHORT_THRESHOLD - 1].clone() for x in carry["steps"][0]),
+                    tuple(x[:, : BOUNDARY_LENGTH - 1].clone() for x in carry["steps"][0]),
                     *carry["steps"][1:],
                 ],
             )
@@ -209,16 +212,7 @@ def inputs_for(case):
     )
 
 
-def selected(*inputs):
-    """Explicit branch control, independent of torch.cond lowering."""
-    branch = short if inputs[0].shape[1] <= SHORT_THRESHOLD else long
-    lengths = torch.full(
-        (inputs[0].shape[0],), inputs[0].shape[1], device=inputs[0].device, dtype=torch.int32
-    )
-    return branch(*(x.contiguous() for x in inputs), lengths)
-
-
-def run_cases(call, cases):
+def run_cases(call, cases, *, inplace=True):
     results = {}
     for case in cases:
         # .contiguous() leaves unused B=1 strides unchanged. Force the exact
@@ -236,22 +230,37 @@ def run_cases(call, cases):
         for step, data in enumerate(case["steps"]):
             inputs = (*map(convert, data), conv, state, weight, A_log, dt_bias)
             before = [x.clone() for x in inputs]
-            values = call(*inputs)
-            assert len(values) == 3 and values[0].shape == (
-                1,
-                inputs[0].shape[1],
-                state.shape[1],
-                state.shape[3],
-            )
-            assert values[0].dtype == inputs[0].dtype and values[1].dtype == conv.dtype
-            assert values[1].shape == conv.shape and values[2].shape == state.shape
-            assert values[2].dtype == torch.float32
-            assert all(bits_equal(a, b) for a, b in zip(inputs, before)), "Input mutation"
-            assert not any(torch._C._is_alias_of(x, y) for x in values for y in inputs), (
-                "Output aliases input"
-            )
-            results[case["name"], step] = cpu_copy(values)
-            conv, state = values[1:]
+            conv_ptr, state_ptr = conv.data_ptr(), state.data_ptr()
+            if inplace:
+                core = call(*inputs)
+                assert isinstance(core, torch.Tensor)
+                assert core.shape == (1, inputs[0].shape[1], state.shape[1], state.shape[3])
+                assert core.dtype == inputs[0].dtype
+                assert conv.data_ptr() == conv_ptr and state.data_ptr() == state_ptr
+                assert conv.dtype == inputs[0].dtype and state.dtype == torch.float32
+                for index in (0, 1, 2, 5, 6, 7):
+                    assert bits_equal(inputs[index], before[index]), "Read-only input mutated"
+                assert not any(torch._C._is_alias_of(core, y) for y in inputs), (
+                    "Output aliases input"
+                )
+                results[case["name"], step] = cpu_copy((core, conv, state))
+            else:
+                values = call(*inputs)
+                assert len(values) == 3 and values[0].shape == (
+                    1,
+                    inputs[0].shape[1],
+                    state.shape[1],
+                    state.shape[3],
+                )
+                assert values[0].dtype == inputs[0].dtype and values[1].dtype == conv.dtype
+                assert values[1].shape == conv.shape and values[2].shape == state.shape
+                assert values[2].dtype == torch.float32
+                assert all(bits_equal(a, b) for a, b in zip(inputs, before)), "Input mutation"
+                assert not any(torch._C._is_alias_of(x, y) for x in values for y in inputs), (
+                    "Output aliases input"
+                )
+                results[case["name"], step] = cpu_copy(values)
+                conv, state = values[1:]
     return results
 
 

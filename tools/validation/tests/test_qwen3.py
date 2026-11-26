@@ -170,7 +170,7 @@ class LiveHFReferences(unittest.TestCase):
         self.assertEqual(sum(map(len, boundary["steps"])), 1024)
 
     def test_hf_capacity_uses_explicit_or_state_bounds_before_model_default(self):
-        specs = [dict(shape=[1, 8, 1024, 128], update="inplace")]
+        specs = [dict(shape=[1, 8, 1024, 128])]
         with patch.object(
             model, "model_context_limit", side_effect=AssertionError("Unexpected model fallback")
         ) as ceiling:

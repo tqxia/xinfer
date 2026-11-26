@@ -33,11 +33,7 @@ class HFRuntime:
         self.specs = specs
         self.dynamic = dynamic
         if capacity is None:
-            capacity = next(
-                (spec["shape"][2] for spec in specs if spec["update"] == "inplace"), None
-            )
-            if capacity is None:
-                capacity = model_context_limit(model.config)
+            capacity = specs[0]["shape"][2] if specs else model_context_limit(model.config)
         self.capacity = capacity
         self.max_prefill = max_prefill
         self.vocab_size = model.config.vocab_size

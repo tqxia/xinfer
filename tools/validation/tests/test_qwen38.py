@@ -72,7 +72,8 @@ class Frontend(unittest.TestCase):
                 patch.object(validate, "read_package_metadata", return_value=meta),
                 patch.object(validate, "default_build_dir", return_value=build) as build_dir,
                 patch("tools.packages.validate_shared_weights"),
-                patch("tools.validation.common.attention.load_packaged_attention_ops"),
+                patch("tools.validation.common.operators.load_packaged_attention_ops"),
+                patch("tools.validation.common.operators.load_packaged_deltanet_ops"),
                 patch.object(model, "Suite", return_value=sentinel.suite) as suite,
                 patch.object(shared, "Suite") as unused,
             ):

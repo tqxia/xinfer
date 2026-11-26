@@ -71,7 +71,10 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
     )
     native = read_json(destination / "native.json")
     require(
-        native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"],
+        native["loader_pairs"] == 1
+        and native["no_python_library"]
+        and native["attention_library"]
+        and (model not in ("qwen35", "qwen38") or native.get("deltanet_library")),
         "Invalid native execution environment",
     )
     require(
@@ -94,11 +97,12 @@ def run_native(binary, packages, output, cases, chats, metadata, *, state_keys=N
             "Incorrect native dispatch counts",
         )
         require(
-            row["stable_kv_storage"]
+            row["stable_storage"]
+            and row["stable_kv_storage"]
             and row["write_region_checks"]
             and row["reset_check"]
-            and row["kv_write_regions_preserved"]
-            and row["non_kv_inputs_unchanged"],
+            and row["state_inputs_updated_in_place"]
+            and row["kv_write_regions_preserved"],
             "Native state contract failed",
         )
         if case.get("check_overflow"):

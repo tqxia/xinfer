@@ -2,9 +2,11 @@
 
 #include "spec.h"
 
+#include <cstdint>
+
 namespace xinfer {
 
-// Storage ownership comes from state metadata; output positions come from the ABI.
+// Caller-owned in-place state buffers for logits-only compiled packages.
 class StatePolicy {
 public:
   StatePolicy(const std::vector<StateSpec> &specs, c10::Device device,
@@ -20,11 +22,6 @@ public:
     for (const auto &item : specs_) {
       require(!item.shape.empty() && item.shape[0] == package_batch_size,
               "Inconsistent state batch size");
-      require(item.inplace || item.output_index.has_value(), "Replacement state must be returned");
-      if (item.output_index) {
-        require(*item.output_index == output_count_, "Invalid state output order");
-        ++output_count_;
-      }
     }
   }
 
@@ -40,13 +37,12 @@ public:
       shape[0] = allocated_batch_size_;
       auto &tensor = tensors_[i];
       const auto options = at::TensorOptions().device(device_).dtype(item.dtype);
-      if (item.inplace) {
-        if (!tensor.defined())
-          tensor = at::empty(shape, options);
-        tensor.fill_(fill);
-      } else {
-        tensor = at::zeros(shape, options);
-      }
+      if (!tensor.defined())
+        tensor = at::empty(shape, options);
+      // Keep base pointers 16-byte aligned so AOTI's alignment guards never clone in-place inputs.
+      require((reinterpret_cast<uintptr_t>(tensor.data_ptr()) & 15) == 0,
+              "State buffer must be 16-byte aligned");
+      tensor.fill_(item.is_kv() ? fill : 0);
     }
   }
 
@@ -54,39 +50,8 @@ public:
 
   void accept(const std::vector<at::Tensor> &outputs, int64_t batch_size) {
     require(!tensors_.empty(), "State must be reset before execution");
-    require(outputs.size() == output_count_, "Incorrect package output count");
+    require(outputs.size() == 1, "Incorrect package output count");
     require(batch_size >= 1 && batch_size <= allocated_batch_size_, "Invalid state batch size");
-
-    // Validate the complete return before replacing any functional state.
-    for (size_t i = 0; i < specs_.size(); ++i) {
-      const auto &item = specs_[i];
-      if (!item.output_index)
-        continue;
-
-      const auto &next = outputs[*item.output_index];
-      auto shape = item.shape;
-      shape[0] = batch_size;
-      require(next.defined() && next.sizes() == at::IntArrayRef(shape) &&
-                  next.scalar_type() == item.dtype && next.device() == device_ &&
-                  next.is_contiguous(),
-              "Incorrect state shape/dtype/device/layout");
-      if (item.inplace)
-        require(next.const_data_ptr() == tensors_[i].const_data_ptr() &&
-                    next.strides() == tensors_[i].strides(),
-                "KV outputs must alias caller-owned buffers");
-    }
-
-    for (size_t i = 0; i < specs_.size(); ++i) {
-      if (specs_[i].inplace)
-        continue;
-
-      const auto &next = outputs[*specs_[i].output_index];
-      const auto remaining = allocated_batch_size_ - batch_size;
-      // Preserve omitted rows and the original functional input. The full-batch
-      // path adopts the package output directly; smaller batches retain the tail.
-      tensors_[i] =
-          remaining ? at::cat({next, tensors_[i].narrow(0, batch_size, remaining)}, 0) : next;
-    }
   }
 
 private:
@@ -94,7 +59,6 @@ private:
   c10::Device device_;
   int64_t allocated_batch_size_ = 1;
   std::vector<at::Tensor> tensors_;
-  size_t output_count_ = 1;
 };
 
 } // namespace xinfer

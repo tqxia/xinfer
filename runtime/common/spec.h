@@ -152,7 +152,7 @@ inline void validate_metadata(const Json &metadata) {
   metadata_check(states.is_array() && !states.empty(), "state");
   std::unordered_set<std::string> names;
   for (const auto &item : states) {
-    metadata_check(metadata_keys(item, {"layer", "kind", "shape", "dtype", "update"}), "state");
+    metadata_check(metadata_keys(item, {"layer", "kind", "shape", "dtype"}), "state");
     metadata_check(item.at("kind").is_string() && metadata_integer(item.at("layer")), "state");
     const auto kind = item.at("kind").get<std::string>();
     const bool kv = kind == "key" || kind == "value";
@@ -171,7 +171,6 @@ inline void validate_metadata(const Json &metadata) {
     }
     metadata_check(shape[0] == kMaxBatchSize, "state");
     metadata_check(item.at("dtype") == (kind == "recurrent" ? "float32" : "bfloat16"), "state");
-    metadata_check(item.at("update") == (kv ? "inplace" : "replace"), "state");
     if (kv)
       metadata_check(shape[2] == m.at("cache_length"), "state");
   }
@@ -199,9 +198,8 @@ struct StateSpec {
   int64_t layer;
   std::vector<int64_t> shape, stride;
   at::ScalarType dtype;
-  bool inplace;
-  // Qwen3 returns logits only; Qwen3.5 and Qwen3.8 also return every state.
-  std::optional<size_t> output_index;
+
+  bool is_kv() const { return kind == "key" || kind == "value"; }
 };
 
 struct SpecBase {
@@ -245,11 +243,7 @@ struct SpecBase {
 
       state.push_back({"layer_" + std::to_string(layer) + "." + kind, kind, layer, std::move(shape),
                        std::move(stride),
-                       item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16,
-                       item.at("update") == "inplace",
-                       (model_type == ModelType::Qwen35 || model_type == ModelType::Qwen38)
-                           ? std::optional<size_t>(state.size() + 1)
-                           : std::nullopt});
+                       item.at("dtype") == "float32" ? at::kFloat : at::kBFloat16});
     }
   }
 

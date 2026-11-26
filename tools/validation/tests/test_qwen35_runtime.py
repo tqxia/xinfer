@@ -23,8 +23,8 @@ class AOTIRuntimeContract(unittest.TestCase):
 
     def metadata(self):
         state = [
-            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32"),
         ]
         value = make_metadata(
             model_type="qwen35",
@@ -113,20 +113,28 @@ class AOTIRuntimeContract(unittest.TestCase):
                 metadata[field] = False
                 self.reject(metadata, f"Unsupported package metadata: {field}")
 
-    def test_state_order_count_and_kv_shapes_are_checked_before_loading(self):
+    def test_state_order_count_schema_and_kv_shapes_are_checked_before_loading(self):
         def reverse_state(metadata):
             metadata["state"].reverse()
 
         def mismatched_kv_shapes(metadata):
             metadata["state"] = [
-                state_spec(0, "key", [8, 2, 1024, 256], "bfloat16", "inplace"),
-                state_spec(0, "value", [8, 3, 1024, 256], "bfloat16", "inplace"),
+                state_spec(0, "key", [8, 2, 1024, 256], "bfloat16"),
+                state_spec(0, "value", [8, 3, 1024, 256], "bfloat16"),
             ]
 
         for mutate, error in (
             (lambda m: m["state"].pop(), "Invalid state count"),
             (reverse_state, "Invalid state order or dtype"),
             (mismatched_kv_shapes, "K/V shapes differ"),
+            (
+                lambda m: m["state"][0].update(update="inplace"),
+                "Unsupported package metadata: state",
+            ),
+            (
+                lambda m: m["state"][0].update(update="replace"),
+                "Unsupported package metadata: state",
+            ),
             (
                 lambda m: [s.update(layer=1) for s in m["state"]],
                 "Invalid state order or dtype",

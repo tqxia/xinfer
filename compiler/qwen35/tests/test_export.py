@@ -18,11 +18,6 @@ from transformers.models.qwen3_5.modeling_qwen3_5 import (
 from compiler.qwen35 import export
 
 
-DELTA_OPERATORS = dict(
-    short="xinfer.delta_cond_short.default", long="xinfer.delta_cond_long.default"
-)
-
-
 class ExportContextLength(unittest.TestCase):
     def test_cli_preserves_default_and_optional_compilation_settings(self):
         with TemporaryDirectory() as temporary:
@@ -40,18 +35,31 @@ class ExportContextLength(unittest.TestCase):
                     patch.object(export, "configure"),
                     patch.object(export, "load_model"),
                     patch.object(export, "install_delta"),
-                    patch.object(export, "load_attention_ops"),
+                    patch.object(export, "load_attention_ops") as load_attn,
+                    patch.object(export, "load_deltanet_ops") as load_delta,
                     patch.object(export, "attention_library", return_value=root / "attention.so"),
-                    patch.object(export, "attention_c_shims", return_value={}),
+                    patch.object(export, "deltanet_library", return_value=root / "deltanet.so"),
+                    patch.object(export, "attention_c_shims", return_value={"attn": ["shim"]}),
+                    patch.object(export, "deltanet_c_shims", return_value={"delta": ["shim"]}),
                     patch.object(export, "compile_shared") as compile_pair,
                     redirect_stdout(io.StringIO()),
                 ):
                     export.main(argv)
+                load_attn.assert_called_once_with()
+                load_delta.assert_called_once_with()
                 compile_pair.assert_called_once()
                 options = {"emulate_precision_casts": True}
                 if optimize:
                     options.update(combo_kernels=True, benchmark_combo_kernel=True)
                 self.assertEqual(compile_pair.call_args.kwargs["inductor_configs"], options)
+                self.assertEqual(
+                    compile_pair.call_args.kwargs["native_libraries"],
+                    [root / "attention.so", root / "deltanet.so"],
+                )
+                self.assertEqual(
+                    compile_pair.call_args.kwargs["custom_op_shims"],
+                    {"attn": ["shim"], "delta": ["shim"]},
+                )
                 self.assertEqual(compile_pair.call_args.args[0], root / "bundle")
                 self.assertIs(
                     compile_pair.call_args.kwargs["metadata"].func, export.bundle_metadata
@@ -114,6 +122,8 @@ class ExportGraph(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         export.configure()
+        export.load_attention_ops()
+        export.load_deltanet_ops()
         torch.manual_seed(35)
         config = Qwen3_5TextConfig(
             vocab_size=128,
@@ -151,48 +161,32 @@ class ExportGraph(unittest.TestCase):
     def tearDownClass(cls):
         del cls.model
 
-    def assert_delta_dispatch(self, exported, kind):
-        counts = dict(cond=0, short=0, long=0)
-
-        def visit(module):
-            # Count call sites, even when multiple layers share a branch module.
-            for node in module.graph.nodes:
-                if node.target == torch.ops.higher_order.cond:
-                    predicate = node.args[0]
-                    self.assertIsInstance(predicate, torch.fx.Node)
-                    value = predicate.meta.get("val")
-                    self.assertIsInstance(value, torch.SymBool)
-                    self.assertNotIn(str(value), ("True", "False"))
-                    counts["cond"] += 1
-                    for branch in node.args[1:3]:
-                        visit(module.get_submodule(branch.target))
-                else:
-                    for branch, operator in DELTA_OPERATORS.items():
-                        counts[branch] += str(node.target) == operator
-
-        visit(exported.graph_module)
-        layers = self.model.config.layer_types.count("linear_attention")
-        conditions = layers if kind == "prefill" else 0
-        self.assertEqual(
-            sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), conditions
-        )
-        self.assertEqual(counts, dict(cond=conditions, short=layers, long=conditions))
-
     @torch.inference_mode()
-    def test_production_export_preserves_dispatch_attention_and_cache_updates(self):
+    def test_production_export_uses_native_deltanet_attention_and_inplace_state(self):
         for kind in ("prefill", "decode"):
             with self.subTest(kind=kind):
                 exported, packing = export.export_step(self.model, kind, capacity=512)
                 self.assertGreater(packing["saved_linears"], 0)
                 self.assertFalse(exported.graph_signature.buffers_to_mutate)
+                self.assertEqual(
+                    len(exported.run_decompositions({}).graph_signature.user_inputs_to_mutate),
+                    2 * self.model.config.num_hidden_layers,
+                )
                 targets = [
                     node.target for node in exported.graph.nodes if node.op == "call_function"
                 ]
-                layers = self.model.config.layer_types.count("full_attention")
+                attn_layers = self.model.config.layer_types.count("full_attention")
+                delta_layers = self.model.config.layer_types.count("linear_attention")
                 self.assertEqual(
-                    targets.count(torch.ops.xinfer.batched_flash_attention.default), layers
+                    targets.count(torch.ops.xinfer.batched_flash_attention.default), attn_layers
                 )
-                self.assertEqual(targets.count(torch.ops.xinfer.append_kv_batched.default), layers)
+                self.assertEqual(
+                    targets.count(torch.ops.xinfer.append_kv_batched.default), attn_layers
+                )
+                self.assertEqual(
+                    targets.count(torch.ops.xinfer.batched_deltanet.default), delta_layers
+                )
+                self.assertNotIn(torch.ops.higher_order.cond, targets)
                 self.assertNotIn(torch.ops.aten.index_copy.default, targets)
                 self.assertNotIn(torch.ops.aten.scaled_dot_product_attention.default, targets)
                 if kind == "decode":
@@ -202,7 +196,6 @@ class ExportGraph(unittest.TestCase):
                     )
                 else:
                     self.assertNotIn(torch.ops.xinfer.projection_gemv.default, targets)
-                self.assert_delta_dispatch(exported, kind)
                 executable = exported.module()
                 sample = exported.example_inputs[0]
                 for batch in (1, 8):
@@ -211,12 +204,16 @@ class ExportGraph(unittest.TestCase):
                         return tensor[:1].expand(batch, *tensor.shape[1:]).clone()
 
                     inputs = tuple(
-                        [resize(t) for t in value] if isinstance(value, list) else resize(value)
+                        tuple(resize(t) for t in value)
+                        if isinstance(value, (list, tuple))
+                        else resize(value)
                         for value in sample
                     )
-                    logits, *state = executable(*inputs)
+                    pointers = [t.data_ptr() for t in inputs[2]]
+                    logits = executable(*inputs)
+                    self.assertIsInstance(logits, torch.Tensor)
                     self.assertEqual(logits.shape, (batch, self.model.config.vocab_size))
-                    self.assertTrue(all(t.shape[0] == batch for t in state))
+                    self.assertEqual([t.data_ptr() for t in inputs[2]], pointers)
 
 
 if __name__ == "__main__":

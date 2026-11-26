@@ -115,6 +115,11 @@ def metadata_mutations():
             "Unsupported package metadata: state",
         ),
         (
+            "state_legacy_update",
+            lambda m: m["state"][0].update(update="inplace"),
+            "Unsupported package metadata: state",
+        ),
+        (
             "state_order",
             lambda m: m["state"].reverse(),
             "Invalid state order or dtype",
@@ -389,7 +394,7 @@ def check_native_parity(args, metadata, teacher, chats, keys, capital, expected)
         greedy_state_tensors=sum(len(value["state"]) for value in expected.greedy.values()),
         binary_sha256={p.name: sha256(p) for p in (args.binary, args.cli)},
         state_snapshot_policy=(
-            "complete functional state and populated KV prefix; future fill checked separately"
+            "complete non-KV state and populated KV prefix; future fill checked separately"
         ),
     )
     assert not report["failures"], report["failures"]

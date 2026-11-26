@@ -42,9 +42,7 @@ def validate_qwen3_metadata(metadata):
             and key["kind"] == "key"
             and value["kind"] == "value"
             and key["dtype"] == "bfloat16"
-            and value["dtype"] == "bfloat16"
-            and key["update"] == "inplace"
-            and value["update"] == "inplace",
+            and value["dtype"] == "bfloat16",
             "Unsupported package metadata: state",
         )
         require(key["shape"] == value["shape"], "K/V shapes differ")

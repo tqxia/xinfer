@@ -58,7 +58,7 @@ def bundle_metadata(model, checkpoint, capacity):
     config = model.config
     cache_shape = [MAX_BATCH_SIZE, config.num_key_value_heads, capacity, config.head_dim]
     state = [
-        state_spec(layer, name, cache_shape, "bfloat16", "inplace")
+        state_spec(layer, name, cache_shape, "bfloat16")
         for layer in range(config.num_hidden_layers)
         for name in ("key", "value")
     ]

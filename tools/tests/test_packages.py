@@ -15,7 +15,7 @@ from tools.packages import validate_model_metadata, validate_shared_weights
 
 def metadata(*, cache_length=1024):
     shape = [8, 8, cache_length, 128]
-    state = [state_spec(0, kind, shape, "bfloat16", "inplace") for kind in ("key", "value")]
+    state = [state_spec(0, kind, shape, "bfloat16") for kind in ("key", "value")]
     result = make_metadata(
         model_type="qwen3",
         checkpoint=dict(model="Qwen/Qwen3-0.6B", revision="pinned"),
@@ -83,11 +83,11 @@ class Qwen3PackageContract(unittest.TestCase):
                 item[field] = True
                 self.reject(item, f"Unsupported package metadata: {field}")
 
-    def test_qwen3_tag_does_not_accept_functional_deltanet_state(self):
+    def test_qwen3_tag_does_not_accept_deltanet_state(self):
         item = metadata()
         item["state"] = [
-            state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
-            state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
+            state_spec(0, "conv", [8, 6144, 4], "bfloat16"),
+            state_spec(0, "recurrent", [8, 16, 128, 128], "float32"),
         ]
         self.reject(item, "Unsupported package metadata: state")
 

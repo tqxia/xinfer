@@ -23,7 +23,9 @@ struct Spec : xinfer::SpecBase {
       const auto &second = state[i + 1];
       const bool linear = first.kind == "conv";
       require((linear || first.kind == "key") && second.kind == (linear ? "recurrent" : "value") &&
-                  first.layer == int64_t(i / 2) && second.layer == first.layer,
+                  first.layer == int64_t(i / 2) && second.layer == first.layer &&
+                  first.dtype == at::kBFloat16 &&
+                  second.dtype == (linear ? at::kFloat : at::kBFloat16),
               "Invalid state order or dtype");
       if (!linear)
         require(first.shape == second.shape, "K/V shapes differ");

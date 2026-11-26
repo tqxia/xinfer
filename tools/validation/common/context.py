@@ -1,12 +1,13 @@
 """Matched long-context fixtures and bounded state checkpoint capture."""
 
 from compiler.common.artifacts import require
+from compiler.common.metadata import is_kv_state
 from tools.common import prompt_chunks
 
 
 def state_shape(spec, position, compact):
     shape = list(spec["shape"])
-    if compact and spec["update"] == "inplace":
+    if compact and is_kv_state(spec):
         shape[2] = position
     return shape
 

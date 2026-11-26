@@ -21,8 +21,8 @@ from tools.validation.common.runner import (
 from tools.validation.common.pipeline import _greedy_anchors, validate_chain
 
 
-CONV = dict(layer=0, kind="conv", shape=[1, 2, 4], dtype="float32", update="replace")
-KEY = dict(layer=0, kind="key", shape=[1, 1, 8, 1], dtype="float32", update="inplace")
+CONV = dict(layer=0, kind="conv", shape=[1, 2, 4], dtype="float32")
+KEY = dict(layer=0, kind="key", shape=[1, 1, 8, 1], dtype="float32")
 CASE_KEY = ("case", 0)
 
 

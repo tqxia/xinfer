@@ -9,6 +9,7 @@ import subprocess
 import torch
 
 from compiler.common.artifacts import read_json, require, write_json
+from compiler.common.metadata import is_kv_state
 from tools.prepare.common import encode_prompt
 from tools.validation.common.runner import capture_state
 from tools.validation.common.validation import (
@@ -165,11 +166,7 @@ def collect_explicit(runtime, case):
         for rows in case["batch_steps"]
     ]
     state = [
-        (
-            tensor[row : row + 1, :, :position]
-            if spec["update"] == "inplace"
-            else tensor[row : row + 1]
-        ).cpu()
+        (tensor[row : row + 1, :, :position] if is_kv_state(spec) else tensor[row : row + 1]).cpu()
         for tensor, spec in zip(runtime.state, runtime.specs)
         for row, position in enumerate(runtime.positions[: max(map(len, case["batch_steps"]))])
     ]
@@ -442,7 +439,13 @@ def group_waves(specs, *, max_stage_bytes=WAVE_STAGE_BUDGET_BYTES):
 
 
 def validate_native(
-    args, groups, *, cases_name="cases.json", native_name="native", write_summary=True
+    args,
+    groups,
+    *,
+    cases_name="cases.json",
+    native_name="native",
+    write_summary=True,
+    model_type=None,
 ):
     cases = []
     for group in groups:
@@ -471,7 +474,10 @@ def validate_native(
     )
     native = read_json(native_dir / "native.json")
     require(
-        native["loader_pairs"] == 1 and native["no_python_library"] and native["attention_library"],
+        native["loader_pairs"] == 1
+        and native["no_python_library"]
+        and native["attention_library"]
+        and (model_type not in ("qwen35", "qwen38") or native.get("deltanet_library")),
         "Invalid native execution environment",
     )
     require(
@@ -513,10 +519,11 @@ def run_batch_waves(
 ):
     """Run Python and native validation in one pass or disk-bounded group waves."""
     waves = group_waves(meta["state"], max_stage_bytes=max_stage_bytes)
+    model_kwargs = dict(model_type=meta["model_type"]) if "model_type" in meta else {}
     if len(waves) == 1:
         groups = validate_python_fn(args, meta)
         _release_cuda()
-        return validate_native_fn(args, groups)
+        return validate_native_fn(args, groups, **model_kwargs)
 
     results, all_cases, native_cases, native_meta = {}, [], [], None
     for index, wave in enumerate(waves):
@@ -532,6 +539,7 @@ def run_batch_waves(
                 cases_name=cases_name,
                 native_name=native_name,
                 write_summary=False,
+                **model_kwargs,
             )
         )
         all_cases.extend(read_json(args.output / cases_name)["cases"])

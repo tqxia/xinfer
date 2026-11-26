@@ -26,15 +26,13 @@ class NativeTraceContracts(unittest.TestCase):
         packages.mkdir()
         if model == "qwen3":
             specs = [
-                dict(layer=0, kind=kind, shape=[1, 1, 4, 2], dtype="bfloat16", update="inplace")
+                dict(layer=0, kind=kind, shape=[1, 1, 4, 2], dtype="bfloat16")
                 for kind in ("key", "value")
             ]
         else:
             specs = [
-                dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16", update="replace"),
-                dict(
-                    layer=0, kind="recurrent", shape=[1, 1, 2, 2], dtype="float32", update="replace"
-                ),
+                dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16"),
+                dict(layer=0, kind="recurrent", shape=[1, 1, 2, 2], dtype="float32"),
             ]
         cases = [
             dict(name="teacher", steps=[[1, 0], [1]], order=1),
@@ -74,11 +72,12 @@ class NativeTraceContracts(unittest.TestCase):
                     position=sum(lengths),
                     prefill_calls=sum(length > 1 for length in lengths),
                     decode_calls=lengths.count(1),
+                    stable_storage=True,
                     stable_kv_storage=True,
                     write_region_checks=True,
                     reset_check=True,
+                    state_inputs_updated_in_place=True,
                     kv_write_regions_preserved=True,
-                    non_kv_inputs_unchanged=True,
                     overflow_rejected_without_mutation=True,
                 )
                 if model == "qwen3":
@@ -116,13 +115,15 @@ class NativeTraceContracts(unittest.TestCase):
                 attention_library=True,
                 cases=[rows[case["name"]] for case in order],
             )
-            if change_report:
+            if model in ("qwen35", "qwen38"):
+                report["deltanet_library"] = True
+            if change_report is not None:
                 change_report(report)
-            (destination / "native.json").write_text(json.dumps(report))
-            if damage:
+            if damage is not None:
                 name, transform = damage
                 path = destination / name
                 path.write_bytes(transform(path.read_bytes()))
+            (destination / "native.json").write_text(json.dumps(report))
             log.write_text("Native wire fixture\n")
 
         with patch("tools.validation.common.native.run", side_effect=native) as run:
@@ -169,6 +170,14 @@ class NativeTraceContracts(unittest.TestCase):
                 for actual, expected in zip(trace.greedy["chat"]["state"], states(9)):
                     self.assertTrue(bits_equal(actual, expected))
 
+    def test_qwen35_and_qwen38_require_deltanet_library_confirmation(self):
+        for model in ("qwen35", "qwen38"):
+            with (
+                self.subTest(model=model),
+                self.assertRaisesRegex(ValueError, "Invalid native execution environment"),
+            ):
+                self.fixture(model, change_report=lambda r: r.pop("deltanet_library"))
+
     def test_truncated_and_extra_trace_or_cache_bytes_are_rejected(self):
         for model, name in (
             ("qwen3", "teacher.f32"),
@@ -207,10 +216,8 @@ class SelectedNativeTrace(unittest.TestCase):
             output.mkdir()
             packages.mkdir()
             specs = [
-                dict(
-                    layer=0, kind="key", shape=[1, 1, 2048, 2], dtype="bfloat16", update="inplace"
-                ),
-                dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16", update="replace"),
+                dict(layer=0, kind="key", shape=[1, 1, 2048, 2], dtype="bfloat16"),
+                dict(layer=0, kind="conv", shape=[1, 2, 2], dtype="bfloat16"),
             ]
             metadata = dict(
                 model_type="qwen35",
@@ -239,11 +246,12 @@ class SelectedNativeTrace(unittest.TestCase):
                     position=3,
                     prefill_calls=1,
                     decode_calls=1,
+                    stable_storage=True,
                     stable_kv_storage=True,
                     write_region_checks=True,
                     reset_check=True,
+                    state_inputs_updated_in_place=True,
                     kv_write_regions_preserved=True,
-                    non_kv_inputs_unchanged=True,
                     state_steps=[1],
                     state_prefix=True,
                 )
@@ -253,6 +261,7 @@ class SelectedNativeTrace(unittest.TestCase):
                             loader_pairs=1,
                             no_python_library=True,
                             attention_library=True,
+                            deltanet_library=True,
                             cases=[row],
                         )
                     )

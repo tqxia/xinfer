@@ -1,1 +1,2 @@
 add_subdirectory(flash_attention)
+add_subdirectory(gated_delta_net)

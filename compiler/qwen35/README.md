@@ -15,8 +15,8 @@ native parity alone do not establish full-model numerical acceptance.
 
 ## Prepare and export
 
-Select `PY` using the environment guide and build `xinfer_attention_ops` plus
-the native executables in `build/`. The
+Select `PY` using the environment guide and build `xinfer_attention_ops`,
+`xinfer_deltanet_ops` and the native executables in `build/`. The
 [L20 Docker guide](../../environments/l20/docker/README.md) provides a
 containerized environment for full-model testing. Use sufficient GPU/host memory
 for ordinary export and the independent validation stages.
@@ -60,7 +60,8 @@ capacity for L20, such as the 1,024-slot validation profile.
 
 Export uses ordinary strict tracing, linear packing, BF16 cast emulation and
 TF32 disabled. `configure()` sets one CPU thread and disables TF32; export leaves
-SDPA backend selection unchanged and uses the explicit FlashAttention adapter.
+SDPA backend selection unchanged and uses the explicit FlashAttention and
+native DeltaNet adapters.
 `--enable-inductor-optimization` optionally enables
 `combo_kernels=True` and `benchmark_combo_kernel=True`; it is off by default.
 Resolved compiler options are recorded in export logs. Validate each new
@@ -71,8 +72,8 @@ eager-numerics selector.
 
 ## Model interface and state
 
-Both entries use the same explicit `ModelStep` interface:
-`step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits, *next_state`.
+Both entries use the same explicit logits-only `ModelStep` interface:
+`step(input_ids, cache_position, state, kv_lengths, query_lengths) -> last_logits`.
 One bundle supports dynamic B=1..8. Activations and main BF16 weights are BF16,
 with BF16 or FP8 projection storage according to the selected frontend;
 checkpoint-native FP32 parameters (`linear_attn.A_log`, `linear_attn.norm.weight`),
@@ -88,10 +89,10 @@ IDs and positions are CUDA int64 `[B,T]`; both length vectors are CPU int32
 `[B]`. Each row appends `query_lengths[row]` real tokens, ending at
 `kv_lengths[row]`. Inputs are right-padded. The runtime allocates `1..8` state
 rows (defaulting to 8; scalar CLI and benchmark allocate 1) and passes
-active-prefix views. KV updates only real appended positions; DeltaNet returns
-fresh convolution/recurrent state for active rows. Omitted rows retain their
-state. Logits select each row's last real token; inactive rows return zero
-logits and leave all state unchanged.
+active-prefix views (`narrow(0, 0, B)`). Both KV and DeltaNet convolution/recurrent
+state are updated in place on caller-owned buffers; omitted tail rows and
+inactive rows (`query_lengths[row] == 0`) remain unchanged. Logits select each
+row's last real token; inactive rows return zero logits.
 
 Prefill accepts padded widths 2–512; decode accepts width one. Scalar generation
 uses B=1 and chunks longer prompts, with prompt and output sharing capacity.
@@ -110,30 +111,30 @@ output gating around the shared read-only FlashAttention operator. Query/KV
 heads are 8/2 for 0.8B and 16/4 for 4B, with head dimension 256. Attention reads
 only the populated prefix and handles grouped heads without expansion. See the
 [shared attention guide](../../docs/flash-attention.md) for operator constraints
-and bundling; DeltaNet kernels are packaged by AOTInductor as well.
+and bundling; Qwen3.5 bundles `libxinfer_deltanet_ops.so` alongside
+`libxinfer_attention_ops.so` through the same AOTInductor C-shim packaging path.
 
 ## DeltaNet kernels
 
-One shape-based dispatcher selects fused recurrence for `T <= 97` and FP32
-chunked prefill for longer calls. Both branches remain in `torch.cond` through
-strict export and use `torch.library.triton_op` / `wrap_triton`, so AOTInductor
-packages their kernels without a separate CUDA-driver launcher or Python runtime.
-The threshold is provisional: an isolated-kernel crossover does not establish
-an optimal full-model threshold on every device.
+DeltaNet layers run through the native C++/CUDA custom operator
+`xinfer::batched_deltanet` (`compiler/common/kernels/gated_delta_net/`, compiled into
+`libxinfer_deltanet_ops.so` and invoked directly by AOTInductor through the C
+shim `aoti_torch_cuda_batched_deltanet`). Moving dispatch into C++/CUDA removes
+`torch.cond` from the exported graph and enables zero-copy in-place mutation of
+`conv` and `state` so Qwen3.5 shares Qwen3's logits-only runtime ABI.
 
-Shared Gated DeltaNet kernels live in `compiler/common/kernels/gated_delta_net/`.
-`compiler/common/adapters/gated_delta_net.py` connects them to the shared Qwen
-HF module layout and explicit cache interface used by Qwen3.5 and Qwen3.8.
-The operator is
-`fused(qkv, b, a, conv, state, weight, A_log, dt_bias, query_lengths=None)`
-returns `core, next_conv, next_recurrent`.
+`compiler/common/adapters/gated_delta_net.py` connects the shared operator to
+the Qwen HF module layout and explicit cache interface used by Qwen3.5 and
+Qwen3.8. The Python entry point is
+`batched_deltanet(qkv, b, a, conv, state, weight, A_log, dt_bias, cu_query=None, cuda_cu_query=None, *, query_lengths=None)`,
+which mutates `conv` and `state` in place and returns `core` (`[B,T,Hv,128]`).
 
-The standalone kernel supports dynamic B=1..8. Optional CUDA int32 `[B]`
-`query_lengths` supplies each row's valid prefix in 0..T; omission means all T
-inputs are real. Padding produces zero core outputs and does not advance
-convolution or recurrent state. Dispatch uses the padded width T, so shorter
-rows in a long batch also use the chunked path. Both state outputs are fresh;
-inputs remain unchanged. The full-model adapters supply these per-row lengths.
+The standalone operator supports dynamic B=1..8. `cu_query`/`cuda_cu_query`
+(or optional `query_lengths`) supplies each row's valid prefix in `0..T`;
+omission means all `T` inputs are real. Padding produces zero core outputs and
+does not advance convolution or recurrent state. Active-prefix views `[:B]`
+leave omitted tail rows untouched. The full-model adapter shares `HybridCache`'s
+cumulative length tensors across layers.
 
 All geometries use 16 key heads, key/value dimension 128 and width-four bias-free
 SiLU convolution. Value-head count is 16 for 0.8B, 32 for 4B and 48 for 27B-FP8:
@@ -151,18 +152,29 @@ SiLU convolution. Value-head count is 16 for 0.8B, 32 for 4B and 48 for 27B-FP8:
 Inputs/parameters support matching BF16 or FP32, with decay parameters (`A_log`,
 `dt_bias`) also accepted in FP32 and recurrent state always FP32. Gates and
 recurrent state belong to value heads; grouped value heads reuse Q/K in HF
-`repeat_interleave` order. One writer per Q/K group updates convolution history,
-avoiding duplicate writes for grouped value heads.
+`repeat_interleave` order.
 
-Fused recurrence combines convolution/history, SiLU, gate preparation, Q/K
-normalization, state update and output reduction. Each program owns one value
-head and 32 value columns. Long prefill prepares tokens/heads in parallel, then
-runs cumulative decay/triangular solve, U/W transforms, inter-chunk state
-propagation and parallel output kernels. Chunk size is 64; the U/W output tile
-is 32 while its dot reduction spans all 64 rows. Masked neutral tails preserve
-one dynamic package. Workspaces and matrix products use FP32 IEEE arithmetic;
-convolution/SiLU and beta retain input-dtype rounding. Only the long branch
-allocates chunk workspaces.
+Execution dispatches natively on the active stream using CPU `cu_query` lengths
+without device synchronization:
+- **Short BF16 rows (`1..15`), SM < 8.0 GPUs, and FP32 inputs** run
+  `deltanet_fused_kernel`, reading `conv` read-only and performing fused
+  width-4 causal convolution + SiLU (retaining input-dtype rounding for
+  convolution/SiLU and beta), gate preparation, Q/K L2 normalization, exact
+  FP32 state recurrence, and output reduction while updating `state` in place
+  (each `(32, 4)` thread block owns one `(batch, value_head, v_tile=32)` slice
+  with zero local spills).
+- **BF16 rows of length `>= 16` on SM 8.0+ GPUs** run
+  `deltanet_chunked_bf16_kernel` (`chunk_size = 32`, zero global workspace,
+  256 threads / 8 warps per `(batch, value_head)` CTA, zero local spills),
+  keeping `S^T` (`[128, 128]` FP32) resident in warp registers across chunks
+  while executing `BF16x3` split-precision Tensor Core MMAs (`m16n8k16` +
+  `ldmatrix`), parallel `uint4` staging, register-cached `bf16x2` conv/norm,
+  and 4-warp block-recursive exact FP32 triangular inversion. Mixed ragged
+  batches dispatch short (`< 16`) and long (`>= 16`) rows independently so
+  every row matches scalar `B=1` execution bit-for-bit.
+- A lightweight trailing `update_conv_inplace_kernel` then shifts the final 4
+  taps into `conv` after all blocks have finished reading it, eliminating
+  cross-block read-after-write hazards for grouped Q/K channels.
 
 Input projections, gated normalization and output projection remain outside the
 core. Kernel/block checks therefore remain necessary alongside full-model tests.
@@ -224,41 +236,41 @@ Benchmarks use the separate [shared tools](../../docs/development-tools.md#bench
 ## Focused tests
 
 After the shared [CPU tests](../../docs/development-tools.md#cpu-unit-tests), run
-these checks with CUDA visible and the native attention library built:
+these checks with CUDA visible and both `xinfer_attention_ops` and
+`xinfer_deltanet_ops` built:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' "$PY" -m unittest compiler.common.tests.test_projection_gemv
 "$PY" -m unittest compiler.common.tests.test_attention \
   compiler.common.tests.test_projection_gemv_cuda compiler.qwen35.tests.test_export
-"$PY" -m unittest compiler.qwen35.tests.test_delta \
+"$PY" -m unittest compiler.qwen35.tests.test_delta compiler.qwen35.tests.test_model \
   compiler.common.tests.gated_delta_net.test_recurrent \
-  compiler.common.tests.gated_delta_net.test_batch \
-  compiler.common.tests.gated_delta_net.test_chunked
+  compiler.common.tests.gated_delta_net.test_batch
 "$PY" -m unittest compiler.common.tests.gated_delta_net.test_aoti
 ```
 
 Kernel tests and tensor-level HF references live in
-`compiler/common/tests/gated_delta_net/`. Adapter installation and geometry
-contracts live in `compiler/common/tests/test_gated_delta_net_adapter.py`;
-HF/HybridCache integration stays in `compiler/qwen35/tests/test_delta.py`.
-Synthetic kernel tests cover all three geometries, BF16/FP32, carried/reset state,
-gate extremes, partitioning, dispatch boundaries, layouts and streams. Existing
+`compiler/common/tests/gated_delta_net/` so Qwen3.5 and Qwen3.8 share one suite
+covering all three value-head geometries (`16`, `32`, `48`).
+Synthetic kernel tests cover BF16/FP32, carried/reset state, gate extremes,
+partitioning, in-place buffer preservation, layouts and streams. Existing
 kernel limits are 1% BF16 and 0.01% FP32, with a 1e-7 FP32 absolute-roundoff
 allowance. Comparisons use matching input dtypes: BF16 kernel against HF BF16,
 and FP32 kernel against HF FP32. BF16 acceptance has no upcast FP32 control;
 recurrent state and internal FP32 accumulation remain as defined by the algorithm.
 Output and carried-state bounds remain required independently of full-model results.
 
-`test_export` checks the production graph and passes with a small random mixed
-model; it needs no checkpoint or full-model AOTI compilation.
-`test_aoti` compiles BF16/FP32 prefill/decode for all three geometries and
-requires exact direct-kernel/Python AOTI core/state parity, including canonical
-singleton strides and nondefault streams. Its batched 0.8B tests compile one
-prefill/decode pair per dtype for B=1..8, check the 97/98 dispatch boundary,
-carried/inactive rows, and reject B=0/9 with runtime input guards enabled.
-Temporary packages are cleaned up. Standalone C++ batching evidence is recorded
-in [validation status](../../docs/validation-status.md#current-validation);
-the native proof harness remains scratch code.
+`test_export` checks the production graph (including zero `torch.cond` nodes and
+in-place state mutation) and passes with a small random mixed model; it needs no
+checkpoint or full-model AOTI compilation.
+`test_aoti` compiles BF16/FP32 prefill/decode packages with bundled
+`libxinfer_deltanet_ops.so` for all three geometries and requires exact
+direct-kernel/Python AOTI core/state parity, including canonical singleton
+strides, nondefault streams and active-prefix `B=1..8` views over 8-row state
+buffers without modifying omitted tail rows. Temporary packages are cleaned up.
+Standalone C++ batching evidence is recorded in
+[validation status](../../docs/validation-status.md#current-validation); the
+native proof harness remains scratch code.
 GEMV's packaging tests have the separate FP32 fusion qualification in the case
 study. Run affected component tests separately from full-model validation.
 

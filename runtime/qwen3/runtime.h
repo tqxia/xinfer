@@ -24,8 +24,7 @@ struct Spec : xinfer::SpecBase {
       const auto &value = state[i + 1];
       xinfer::metadata_check(key.layer == int64_t(i / 2) && value.layer == key.layer &&
                                  key.kind == "key" && value.kind == "value" &&
-                                 key.dtype == at::kBFloat16 && value.dtype == at::kBFloat16 &&
-                                 key.inplace && value.inplace,
+                                 key.dtype == at::kBFloat16 && value.dtype == at::kBFloat16,
                              "state");
       require(key.shape == value.shape, "K/V shapes differ");
     }

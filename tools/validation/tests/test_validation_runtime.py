@@ -11,6 +11,7 @@ import torch
 
 from compiler.common.kernels.flash_attention import attention
 from compiler.common.metadata import METADATA_FILE, make_metadata, state_spec
+from compiler.common.kernels.gated_delta_net import deltanet
 from tools.validation.common import runner
 from tools.validation.common.pipeline import _contract_probes
 
@@ -23,14 +24,11 @@ class AOTIRuntimeLoading(unittest.TestCase):
 
     def metadata(self, model_type):
         states = (
-            [
-                state_spec(0, kind, [8, 8, 1024, 128], "bfloat16", "inplace")
-                for kind in ("key", "value")
-            ]
+            [state_spec(0, kind, [8, 8, 1024, 128], "bfloat16") for kind in ("key", "value")]
             if model_type == "qwen3"
             else [
-                state_spec(0, "conv", [8, 6144, 4], "bfloat16", "replace"),
-                state_spec(0, "recurrent", [8, 16, 128, 128], "float32", "replace"),
+                state_spec(0, "conv", [8, 6144, 4], "bfloat16"),
+                state_spec(0, "recurrent", [8, 16, 128, 128], "float32"),
             ]
         )
         entry = make_metadata(
@@ -81,8 +79,8 @@ class AOTIRuntimeLoading(unittest.TestCase):
                     self.assertEqual(runtime.specs, meta["state"])
                     self.assertEqual(runtime.vocab_size, 100)
                     self.assertEqual(runtime.capacity, 1024)
-                    self.assertEqual(runtime.logits_only, model_type == "qwen3")
-                    self.assertEqual(runtime.require_write, model_type == "qwen3")
+                    self.assertTrue(runtime.logits_only)
+                    self.assertTrue(runtime.require_write)
                     self.assertEqual(runtime.state, [])
                     runtime.close()
                     self.assertIsNone(runtime.owner)
@@ -101,19 +99,27 @@ class AOTIRuntimeLoading(unittest.TestCase):
 
     def test_factory_leaves_operator_loading_to_the_compiled_packages(self):
         meta = self.metadata("qwen35")
-        override = str(self.root / "unrelated-attention.so")
+        attn_override = str(self.root / "unrelated-attention.so")
+        delta_override = str(self.root / "unrelated-deltanet.so")
         with (
             patch.object(runner, "validate_shared_weights"),
             patch.object(runner, "SharedWeights") as weights,
-            patch.object(attention, "load_attention_ops") as load,
-            patch.dict(os.environ, XINFER_ATTENTION_OPS_LIBRARY=override),
+            patch.object(attention, "load_attention_ops") as load_attn,
+            patch.object(deltanet, "load_deltanet_ops") as load_delta,
+            patch.dict(
+                os.environ,
+                XINFER_ATTENTION_OPS_LIBRARY=attn_override,
+                XINFER_DELTANET_OPS_LIBRARY=delta_override,
+            ),
         ):
             runtime = runner.load_aoti_runtime(self.root, model_type="qwen35", specs=meta["state"])
-            load.assert_not_called()
+            load_attn.assert_not_called()
+            load_delta.assert_not_called()
             self.assertEqual(
                 weights.return_value.load.call_args_list, [call("prefill"), call("decode")]
             )
-            self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], override)
+            self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], attn_override)
+            self.assertEqual(os.environ["XINFER_DELTANET_OPS_LIBRARY"], delta_override)
             runtime.close()
 
 
@@ -147,7 +153,7 @@ class ReservedRows(unittest.TestCase):
         capacity = 8
 
         def __init__(self, corrupt_unused=False):
-            self.specs = [state_spec(0, "key", [8, 1, 8, 1], "bfloat16", "inplace")]
+            self.specs = [state_spec(0, "key", [8, 1, 8, 1], "bfloat16")]
             self.state = [torch.empty(self.specs[0]["shape"], dtype=torch.bfloat16)]
             self.corrupt_unused = corrupt_unused
 

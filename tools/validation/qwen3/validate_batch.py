@@ -11,7 +11,7 @@ from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import ModelStep, load_model
 from tools.packages import validate_model_metadata, validate_shared_weights
 from tools.prepare.common import load_tokenizer
-from tools.validation.common.attention import load_packaged_attention_ops
+from tools.validation.common.operators import load_packaged_attention_ops
 from tools.validation.common.runner import ExplicitRuntime, load_aoti_runtime
 from tools.validation.common.batch import (
     case_groups,

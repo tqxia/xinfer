@@ -80,8 +80,11 @@ class ExportFrontend(unittest.TestCase):
                     patch.object(shared, "install_delta"),
                     patch.object(shared, "bundle_metadata", return_value={}) as metadata,
                     patch.object(shared, "load_attention_ops") as attention,
+                    patch.object(shared, "load_deltanet_ops") as deltanet,
                     patch.object(shared, "attention_library", return_value=root / "attention.so"),
+                    patch.object(shared, "deltanet_library", return_value=root / "deltanet.so"),
                     patch.object(shared, "attention_c_shims", return_value={}),
+                    patch.object(shared, "deltanet_c_shims", return_value={}),
                     patch.object(
                         shared, "compile_shared", side_effect=compile_entries
                     ) as compile_pair,
@@ -99,6 +102,7 @@ class ExportFrontend(unittest.TestCase):
                 )
                 metadata.assert_called_once_with(model, checkpoint, 1024, "qwen38")
                 attention.assert_called_once_with()
+                deltanet.assert_called_once_with()
                 compile_pair.assert_called_once()
                 arguments, options = compile_pair.call_args
                 self.assertEqual(arguments[0], root / "bundle")
@@ -110,7 +114,9 @@ class ExportFrontend(unittest.TestCase):
                 if optimize:
                     expected.update(combo_kernels=True, benchmark_combo_kernel=True)
                 self.assertEqual(options["inductor_configs"], expected)
-                self.assertEqual(options["native_libraries"], [root / "attention.so"])
+                self.assertEqual(
+                    options["native_libraries"], [root / "attention.so", root / "deltanet.so"]
+                )
 
     def test_invalid_capacity_is_rejected_before_gpu_loading(self):
         with TemporaryDirectory() as temporary:

@@ -1,4 +1,4 @@
-"""CPU regression for full-attention cache updates after symbolic DeltaNet dispatch."""
+"""CPU checks for Qwen3.5 HybridCache metadata and in-place KV updates under export."""
 
 import unittest
 from unittest.mock import patch
@@ -31,10 +31,10 @@ class StateCapacity(unittest.TestCase):
         self.assertEqual(baseline[2]["shape"], [1, 4, 1024, 256])
         self.assertEqual(scaled[2]["shape"], [1, 4, 16384, 256])
         self.assertEqual(scaled[2]["shape"], scaled[3]["shape"])
+        self.assertTrue(all(set(spec) == {"layer", "kind", "shape", "dtype"} for spec in baseline))
         batched = state_specs(config, capacity=1024, batch_size=2)
         for single, batch in zip(baseline, batched):
             self.assertEqual(batch["shape"], [2, *single["shape"][1:]])
-            self.assertEqual(batch["update"], single["update"])
 
 
 class AttentionUpdate(torch.nn.Module):
@@ -42,14 +42,12 @@ class AttentionUpdate(torch.nn.Module):
         return cache.update(key, key + 10, 0)
 
 
-class CacheAfterCond(torch.nn.Module):
+class CacheStep(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.attention = AttentionUpdate()
 
     def forward(self, key, positions, state):
-        # The cache must exist before cond, as it does before the first
-        # DeltaNet layer in ModelStep. Creating it afterwards misses the bug.
         cache = HybridCache(
             ["full_attention"],
             positions,
@@ -57,31 +55,29 @@ class CacheAfterCond(torch.nn.Module):
             torch.full((1,), key.shape[2] + 1, dtype=torch.int32),
             torch.full((1,), key.shape[2], dtype=torch.int32),
         )
-        key = torch.cond(key.shape[2] <= 3, lambda x: x + 1, lambda x: x + 2, (key,))
         attended_key, attended_value = self.attention(key, cache)
-        return attended_key, attended_value, *cache.tensors()
+        return attended_key + attended_value
 
 
 class HybridCacheExportContract(unittest.TestCase):
     @staticmethod
     def append_reference(key, value, positions, cu_query, cache_key, cache_value):
-        # CPU stand-in for the CUDA writer: this test isolates cache bookkeeping
-        # across torch.cond. GPU tests cover the writer's lengths and masks.
+        # CPU stand-in for the CUDA writer: GPU tests cover lengths and masks.
         indices = positions[:, None, :, None].expand_as(key)
         cache_key.scatter_(2, indices, key)
         cache_value.scatter_(2, indices, value)
 
     @torch.inference_mode()
-    def test_updates_survive_cond_and_mutate_only_cache_rows(self):
+    def test_inplace_kv_updates_survive_strict_export(self):
         writer = patch("compiler.qwen35.model.append_kv_batched", self.append_reference)
         writer.start()
         self.addCleanup(writer.stop)
-        model = CacheAfterCond().eval()
+        model = CacheStep().eval()
 
         def inputs(tokens):
             key = torch.arange(2 * tokens * 3, dtype=torch.float32).reshape(1, 2, tokens, 3)
             positions = torch.arange(1, tokens + 1)[None, :]
-            state = [torch.full((1, 2, 8, 3), fill) for fill in (-3.0, -7.0)]
+            state = tuple(torch.full((1, 2, 8, 3), fill) for fill in (-3.0, -7.0))
             return key, positions, state
 
         tokens = torch.export.Dim("tokens", min=2, max=6)
@@ -89,13 +85,16 @@ class HybridCacheExportContract(unittest.TestCase):
             model,
             inputs(2),
             strict=True,
-            dynamic_shapes=({2: tokens}, {1: tokens}, [None, None]),
+            dynamic_shapes=({2: tokens}, {1: tokens}, (None, None)),
         )
         self.assertEqual(
-            sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), 1
+            sum(n.target == torch.ops.higher_order.cond for n in exported.graph.nodes), 0
         )
         updates = sum(n.target == torch.ops.aten.scatter_.src for n in exported.graph.nodes)
         self.assertEqual(updates, 2)
+        self.assertEqual(
+            len(exported.run_decompositions({}).graph_signature.user_inputs_to_mutate), 2
+        )
         compiled_graph = exported.module()
         for length in (2, 3, 4, 6):
             with self.subTest(tokens=length):
@@ -103,21 +102,19 @@ class HybridCacheExportContract(unittest.TestCase):
                     key, positions, state = inputs(length)
                     before = [t.clone() for t in (key, positions, *state)]
                     pointers = [t.data_ptr() for t in state]
-                    updated_key = key + (1 if length <= 3 else 2)
-                    expected_key = state[0].index_copy(2, positions.flatten(), updated_key)
-                    expected_value = state[1].index_copy(2, positions.flatten(), updated_key + 10)
-                    expected = (expected_key, expected_value, expected_key, expected_value)
+                    expected_key = state[0].index_copy(2, positions.flatten(), key)
+                    expected_value = state[1].index_copy(2, positions.flatten(), key + 10)
                     actual = function(key, positions, state)
-                    self.assertEqual(len(actual), len(expected))
-                    for result, reference in zip(actual, expected):
-                        torch.testing.assert_close(result, reference, rtol=0, atol=0)
+                    torch.testing.assert_close(
+                        actual, expected_key + expected_value, rtol=0, atol=0
+                    )
                     for result, reference in zip((key, positions), before):
                         torch.testing.assert_close(result, reference, rtol=0, atol=0)
-                    for i, (result, reference) in enumerate(zip(state, expected[:2])):
+                    for i, (result, reference) in enumerate(
+                        zip(state, (expected_key, expected_value))
+                    ):
                         self.assertEqual(result.data_ptr(), pointers[i])
                         torch.testing.assert_close(result, reference, rtol=0, atol=0)
-                        self.assertEqual(actual[i].data_ptr(), pointers[i])
-                        self.assertEqual(actual[i + 2].data_ptr(), pointers[i])
 
 
 if __name__ == "__main__":

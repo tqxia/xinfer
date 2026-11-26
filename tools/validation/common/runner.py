@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 import torch
 
 from compiler.common.artifacts import require
-from compiler.common.metadata import read_package_metadata
+from compiler.common.metadata import is_kv_state, read_package_metadata
 from compiler.common.tests.tensors import bits_equal, cpu_copy
 from tools.validation.common.validation import disk_snapshot
 from compiler.common.weights import SharedWeights
@@ -30,7 +30,7 @@ class Stage:
 
 
 class ExplicitRuntime:
-    """Normalize logits-only and returned-state entry points using package metadata."""
+    """Execute logits-only in-place entry points using package state metadata."""
 
     def __init__(
         self,
@@ -39,16 +39,17 @@ class ExplicitRuntime:
         vocab_size,
         capacity,
         *,
-        logits_only=False,
+        logits_only=True,
         owner=None,
         require_write=False,
         max_prefill=512,
     ):
+        require(logits_only, "Only the unified logits-only in-place ABI is supported")
         self.functions = functions
         self.specs = specs
         self.vocab_size = vocab_size
         self.capacity = capacity
-        self.logits_only = logits_only
+        self.logits_only = True
         self.owner = owner
         self.require_write = require_write
         self.max_prefill = max_prefill
@@ -64,7 +65,7 @@ class ExplicitRuntime:
             ]
         for tensor, spec in zip(self.state, self.specs):
             value = fill.get(spec["kind"], 0) if isinstance(fill, dict) else fill
-            tensor.fill_(value if spec["update"] == "inplace" else 0)
+            tensor.fill_(value if is_kv_state(spec) else 0)
         self.position = 0
         self.positions = [0] * self.specs[0]["shape"][0]
 
@@ -101,19 +102,14 @@ class ExplicitRuntime:
         )
         before = tuple(t.clone() for t in (ids, positions, *self.state))
         pointers = [t.data_ptr() for t in self.state]
-        result = self.functions["decode" if length == 1 else "prefill"](
+        logits = self.functions["decode" if length == 1 else "prefill"](
             ids,
             positions,
-            tuple(t[:batch_size] for t in self.state)
-            if self.logits_only
-            else [t[:batch_size] for t in self.state],
+            tuple(t[:batch_size] for t in self.state),
             *attention_inputs,
         )
-        if self.logits_only:
-            logits, state = result, [t[:batch_size] for t in self.state]
-        else:
-            require(len(result) == len(self.specs) + 1, "Incorrect output/state count")
-            logits, state = result[0], list(result[1:])
+        require(isinstance(logits, torch.Tensor), "Expected logits-only output tensor")
+        state = [t[:batch_size] for t in self.state]
         require(logits.shape == (batch_size, self.vocab_size), "Incorrect logit shape")
         require(logits.dtype == torch.bfloat16, "Incorrect logit dtype")
         require(
@@ -129,15 +125,15 @@ class ExplicitRuntime:
             require(
                 output.device == incoming.device and output.is_contiguous(), "Invalid state layout"
             )
-            if spec["update"] == "inplace":
-                require(
-                    output.data_ptr() == pointers[index] and output.stride() == incoming.stride(),
-                    "KV output lost caller-owned storage",
-                )
-                require(
-                    bits_equal(incoming[batch_size:], original[batch_size:]),
-                    "Unused state row overwritten",
-                )
+            require(
+                output.data_ptr() == pointers[index] and output.stride() == incoming.stride(),
+                "State output lost caller-owned storage",
+            )
+            require(
+                bits_equal(incoming[batch_size:], original[batch_size:]),
+                "Unused state row overwritten",
+            )
+            if is_kv_state(spec):
                 for row, (start, end) in enumerate(zip(self.positions, ends)):
                     require(
                         bits_equal(output[row, :, :start], original[row, :, :start]),
@@ -152,25 +148,17 @@ class ExplicitRuntime:
                             not bits_equal(output[row, :, start:end], original[row, :, start:end]),
                             "Cache update missing",
                         )
-                state[index] = incoming
-            else:
-                require(bits_equal(incoming, original), "Functional input state mutated")
-                require(output.data_ptr() != incoming.data_ptr(), "Functional output aliases input")
-                state[index] = (
-                    torch.cat((output, incoming[batch_size:]), dim=0)
-                    if batch_size < incoming.shape[0]
-                    else output
-                )
             for row, count in enumerate(counts):
                 if count == 0:
-                    require(bits_equal(state[index][row], original[row]), "Inactive state changed")
+                    require(bits_equal(incoming[row], original[row]), "Inactive state changed")
         for row, count in enumerate(counts):
             if count == 0:
                 require(
                     torch.count_nonzero(logits[row]).item() == 0, "Inactive logits must be zero"
                 )
-        require(all(bool(torch.isfinite(t).all()) for t in (logits, *state)), "Nonfinite output")
-        self.state = list(state)
+        require(
+            all(bool(torch.isfinite(t).all()) for t in (logits, *self.state)), "Nonfinite output"
+        )
         self.positions[:batch_size] = ends
         self.position = max(self.positions)
         return logits
@@ -193,9 +181,9 @@ def load_aoti_runtime(packages, *, model_type, specs):
         specs,
         metadata["vocab_size"],
         metadata["cache_length"],
-        logits_only=model_type == "qwen3",
+        logits_only=True,
         owner=weights,
-        require_write=model_type == "qwen3",
+        require_write=True,
         max_prefill=metadata["max_prefill_tokens"],
     )
 
@@ -216,7 +204,7 @@ def capture_state(runtime, specs, fill=0):
     for tensor, spec in zip(runtime.state, specs):
         require(list(tensor.shape) == spec["shape"], "Incorrect state shape")
         require(bool(torch.isfinite(tensor).all()), "Nonfinite state")
-        if compact and spec["update"] == "inplace":
+        if compact and is_kv_state(spec):
             future = tensor[:, :, runtime.position :]
             value = fill.get(spec["kind"], 0) if isinstance(fill, dict) else fill
             require(bits_equal(future, torch.full_like(future, value)), "Future KV overwritten")
@@ -272,7 +260,7 @@ def teacher_trace(runtime, cases, specs, capture_states, *, state_directory=None
                     for actual, expected, spec in zip(
                         result.states[key], result.states[original], specs
                     ):
-                        if spec["update"] == "inplace":
+                        if is_kv_state(spec):
                             require(
                                 bits_equal(actual[:1, :, :position], expected[:1, :, :position]),
                                 "Reset/poison changed valid KV",
@@ -288,7 +276,7 @@ def teacher_trace(runtime, cases, specs, capture_states, *, state_directory=None
                         else:
                             require(
                                 bits_equal(actual, expected),
-                                "Reset/poison changed functional state",
+                                "Reset/poison changed non-KV state",
                             )
         if case.get("check_overflow"):
             before = _snapshot(runtime, specs)

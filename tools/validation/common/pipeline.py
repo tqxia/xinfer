@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 
 from compiler.common.artifacts import require, sha256
+from compiler.common.metadata import is_kv_state
 from compiler.common.tests.tensors import bits_equal, cpu_copy
 from tools.validation.common.chain import Policy, compare_traces
 from tools.validation.common.native import run_native
@@ -38,7 +39,7 @@ def _contract_probes(runtime, specs, seed, lengths):
         require(bits_equal(logits.cpu(), clean[0]), "Future cache affects logits")
         for actual, expected, spec in zip(runtime.state, clean[1:], specs):
             actual = actual.cpu()
-            if spec["update"] == "inplace":
+            if is_kv_state(spec):
                 require(
                     bits_equal(actual[:1, :, :length], expected[:1, :, :length]),
                     "Poison changes valid KV",
@@ -47,7 +48,7 @@ def _contract_probes(runtime, specs, seed, lengths):
                 require(bool((actual[:, :, length:] == fill).all()), "Future KV overwritten")
                 require(bool((actual[1:, :, :length] == fill).all()), "Unused KV row overwritten")
             else:
-                require(bits_equal(actual, expected), "Poison changes functional state")
+                require(bits_equal(actual, expected), "Poison changes non-KV state")
         runtime.step([tokens[0]])
     return dict(lengths=list(lengths), poisoned_future_ignored=True, write_regions_preserved=True)
 
@@ -100,7 +101,7 @@ def _describe_validation(suite, policy, native, report):
         kv="populated prefix; unused future fill checked independently on capture"
         if suite.capacity > 1024
         else "full cache",
-        functional_states="complete",
+        non_kv_states="complete",
         long_context="completed prompt and final request checkpoints; every logit retained",
         native_write_and_ownership_checks="every call",
     )

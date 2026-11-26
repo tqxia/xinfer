@@ -1,4 +1,4 @@
-"""HF text model with caller-owned KV buffers and functional DeltaNet state."""
+"""HF text model with caller-owned in-place KV and DeltaNet state."""
 
 import json
 from pathlib import Path
@@ -68,37 +68,29 @@ def state_specs(config, capacity=None, *, batch_size=1):
             tensors = (("key", kv_shape, "bfloat16"), ("value", kv_shape, "bfloat16"))
         else:
             raise ValueError(f"Unsupported layer type: {kind}")
-        specs.extend(
-            state_spec(
-                layer, name, shape, dtype, "inplace" if kind == "full_attention" else "replace"
-            )
-            for name, shape, dtype in tensors
-        )
+        specs.extend(state_spec(layer, name, shape, dtype) for name, shape, dtype in tensors)
     return specs
 
 
 def zero_state(config, capacity=None, *, batch_size=1):
-    return [
+    return tuple(
         torch.zeros(s["shape"], device="cuda", dtype=getattr(torch, s["dtype"]))
         for s in state_specs(config, capacity, batch_size=batch_size)
-    ]
+    )
 
 
 class LayerState:
     def __init__(self, kind, a, b):
         if kind == "linear_attention":
-            # DeltaNet reads caller state and returns fresh replacement tensors.
             self.conv_states = [a]
             self.recurrent_states = [b]
             self.record_past = False
         else:
-            # Keep updates in list slots, as for DeltaNet state. Torch 2.13
-            # export can lose attribute assignments after a symbolic cond.
             self.kv = [a, b]
 
 
 class HybridCache:
-    """Caller-owned KV buffers and replacement DeltaNet state."""
+    """Caller-owned in-place KV and DeltaNet state buffers."""
 
     def __init__(self, kinds, position, state, kv_lengths, query_lengths):
         self.position = position
@@ -114,16 +106,6 @@ class HybridCache:
 
     def has_previous_state(self, layer_idx, state_idx=0):
         return True
-
-    def update_conv_state(self, value, layer_idx, conv_kernel_size):
-        layer = self.layers[layer_idx]
-        combined = torch.cat((layer.conv_states[0], value), dim=-1)
-        layer.conv_states[0] = combined[..., -conv_kernel_size:].contiguous()
-        return combined
-
-    def update_recurrent_state(self, value, layer_idx):
-        self.layers[layer_idx].recurrent_states[0] = value
-        return value
 
     def update(self, key, value, layer_idx):
         layer = self.layers[layer_idx]
@@ -180,4 +162,4 @@ class ModelStep(torch.nn.Module):
         indices = (counts - 1).clamp_min(0)
         last = hidden.gather(1, indices[:, None, None].expand(-1, 1, hidden.shape[-1]))
         logits = self.original.lm_head(last)[:, 0, :]
-        return (logits.masked_fill(counts[:, None] == 0, 0), *cache.tensors())
+        return logits.masked_fill(counts[:, None] == 0, 0)

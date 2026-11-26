@@ -1,4 +1,4 @@
-"""AOT-compile Qwen3.5 text: dynamic prefill and decode with packaged Triton GDN."""
+"""AOT-compile Qwen3.5 text: dynamic prefill and decode with bundled native ops."""
 
 from functools import partial
 import json
@@ -25,6 +25,11 @@ from compiler.common.export import (
     prepare_export,
 )
 from compiler.common.metadata import make_metadata
+from compiler.common.kernels.gated_delta_net.deltanet import (
+    deltanet_c_shims,
+    deltanet_library,
+    load_deltanet_ops,
+)
 from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
 from compiler.common.adapters.gated_delta_net import install_delta
 
@@ -47,8 +52,14 @@ def export_step(model, kind, capacity=None):
     token_shape = {0: batch}
     if dynamic:
         token_shape[1] = torch.export.Dim("tokens", min=2, max=MAX_PREFILL)
-    shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
-    # Retain the singleton batch in AOTI guards, including the torch.cond branches.
+    shapes = (
+        token_shape,
+        token_shape,
+        tuple({0: batch} for _ in inputs[2]),
+        {0: batch},
+        {0: batch},
+    )
+    # Keep B=1 inside the symbolic range used by AOTI's input guards.
     with symbolic_config.patch(backed_size_oblivious=True), cleanup_export_globals():
         exported = torch.export.export(ModelStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
@@ -121,6 +132,7 @@ def export_model(
     )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
         load_attention_ops()
+        load_deltanet_ops()
         compile_shared(
             output,
             prepare_entry,
@@ -129,8 +141,8 @@ def export_model(
             ),
             inductor_configs=options,
             metadata=partial(bundle_metadata, model, checkpoint, capacity, model_type),
-            native_libraries=[attention_library()],
-            custom_op_shims=attention_c_shims(),
+            native_libraries=[attention_library(), deltanet_library()],
+            custom_op_shims={**attention_c_shims(), **deltanet_c_shims()},
         )
     print(f"Saved prefill/decode bundle to {output}", flush=True)
 

@@ -16,10 +16,7 @@ from tools.validation.qwen35 import model, validate_batch
 
 class HFCacheProtocol(unittest.TestCase):
     def specs(self):
-        return [
-            dict(kind=kind, shape=[8], update="inplace" if kind in ("key", "value") else "replace")
-            for kind in ("conv", "recurrent", "key", "value")
-        ]
+        return [dict(kind=kind, shape=[8]) for kind in ("conv", "recurrent", "key", "value")]
 
     def original(self, dtype=torch.bfloat16):
         original = Mock()
@@ -267,6 +264,7 @@ class ValidationStages(unittest.TestCase):
             self.suite.specs,
             self.suite.vocab_size,
             self.suite.capacity,
+            logits_only=True,
             owner=self.original,
             max_prefill=512,
         )
@@ -357,6 +355,7 @@ class BatchFrontend(unittest.TestCase):
                 self.subTest(model=model_type),
                 patch.object(validate_batch, "configure"),
                 patch.object(validate_batch, "load_packaged_attention_ops"),
+                patch.object(validate_batch, "load_packaged_deltanet_ops"),
                 patch.object(validate_batch, "load_tokenizer"),
                 patch.object(
                     validate_batch,
@@ -405,7 +404,7 @@ class BatchFrontend(unittest.TestCase):
                     runtime = SimpleNamespace(
                         vocab_size=4,
                         position=1,
-                        specs=[dict(update="inplace")],
+                        specs=[dict(kind="key")],
                         state=[torch.zeros(1, 1, 2, 2, dtype=torch.bfloat16)],
                     )
                     runtime.reset = lambda: None

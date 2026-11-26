@@ -25,16 +25,8 @@ struct Bundle {
     require(xinfer::fs::create_directory(directory), "Cannot create test metadata directory");
 
     const Json state = Json::array({
-        {{"layer", 0},
-         {"kind", "key"},
-         {"shape", {8, 8, capacity, 128}},
-         {"dtype", "bfloat16"},
-         {"update", "inplace"}},
-        {{"layer", 0},
-         {"kind", "value"},
-         {"shape", {8, 8, capacity, 128}},
-         {"dtype", "bfloat16"},
-         {"update", "inplace"}},
+        {{"layer", 0}, {"kind", "key"}, {"shape", {8, 8, capacity, 128}}, {"dtype", "bfloat16"}},
+        {{"layer", 0}, {"kind", "value"}, {"shape", {8, 8, capacity, 128}}, {"dtype", "bfloat16"}},
     });
     Json metadata = {
         {"model_type", model_type},
@@ -173,8 +165,6 @@ int main() {
           const Json identity = {{"model", type == "qwen38" ? "qwen3.8" : "qwen3.5"}};
           require(xinfer::model_from_identity(identity) == selected.model_type,
                   "Weight identity selected another model type");
-          for (size_t i = 0; i < selected.state.size(); ++i)
-            require(selected.state[i].output_index == i + 1, "Hybrid state output index missing");
         });
         const Json other_identity = {{"model", type == "qwen38" ? "qwen3.5" : "qwen3.8"}};
         require(xinfer::model_from_identity(other_identity) != xinfer::parse_model_type(type),
