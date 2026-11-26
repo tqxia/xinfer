@@ -7,15 +7,15 @@ Usage: environments/build.sh [options]
 
 Configure and build xinfer compiler kernels and native executables.
 
-  --target l20|gb10    Target profile (default: auto-detected from uname -m)
-  --python PATH        Venv Python providing Torch/CMake/Ninja (default: work/<target>/venv/bin/python)
-  --build PATH         CMake build directory (default: build)
-  --nvcc PATH          CUDA compiler (default: $CUDA_HOME/bin/nvcc or /usr/local/cuda/bin/nvcc)
-  --jobs N             Parallel build jobs (default: 2)
-  --targets LIST       Comma-separated CMake targets (default: all enabled targets)
-  --no-validation      Configure with -DXINFER_BUILD_VALIDATION=OFF
-  --no-benchmark       Configure with -DXINFER_BUILD_BENCHMARK=OFF
-  -h, --help           Show this help
+  --target l20|pro5000|gb10  Target profile (default: auto-detected from CPU/GPU)
+  --python PATH              Venv Python providing Torch/CMake/Ninja (default: work/<target>/venv/bin/python)
+  --build PATH               CMake build directory (default: build)
+  --nvcc PATH                CUDA compiler (default: $CUDA_HOME/bin/nvcc or /usr/local/cuda/bin/nvcc)
+  --jobs N                   Parallel build jobs (default: 2)
+  --targets LIST             Comma-separated CMake targets (default: all enabled targets)
+  --no-validation            Configure with -DXINFER_BUILD_VALIDATION=OFF
+  --no-benchmark             Configure with -DXINFER_BUILD_BENCHMARK=OFF
+  -h, --help                 Show this help
 
 Relative paths are resolved from the repository root. When
 FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON is set in the environment, CMake is
@@ -30,9 +30,19 @@ fail() {
 
 detect_target() {
   case "$(uname -m)" in
-    x86_64|amd64) printf 'l20\n' ;;
     aarch64|arm64) printf 'gb10\n' ;;
-    *) fail "Unsupported host architecture $(uname -m); pass --target l20 or gb10" ;;
+    x86_64|amd64)
+      local caps=""
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr -d ' \r' | sort -u)"
+      fi
+      case "$caps" in
+        8.9) printf 'l20\n' ;;
+        12.0) printf 'pro5000\n' ;;
+        *) fail "Cannot auto-detect x86_64 target from GPU; pass --target l20 or pro5000" ;;
+      esac
+      ;;
+    *) fail "Unsupported host architecture $(uname -m); pass --target l20, pro5000 or gb10" ;;
   esac
 }
 
@@ -82,8 +92,8 @@ if [[ -z "$target" ]]; then
   target="$(detect_target)"
 fi
 case "$target" in
-  l20|gb10) ;;
-  *) usage >&2; fail "Select --target l20 or gb10" ;;
+  l20|pro5000|gb10) ;;
+  *) usage >&2; fail "Select --target l20, pro5000 or gb10" ;;
 esac
 [[ "$jobs" =~ ^[1-9][0-9]*$ ]] || fail "--jobs must be a positive integer: $jobs"
 
@@ -111,6 +121,7 @@ else
   if [[ -z "$cuda_arch" ]]; then
     case "$target" in
       l20) cuda_arch="8.9" ;;
+      pro5000) cuda_arch="12.0" ;;
       gb10) cuda_arch="12.1" ;;
     esac
   fi

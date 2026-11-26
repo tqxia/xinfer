@@ -54,7 +54,7 @@ class FreshTargetSetup(unittest.TestCase):
         shutil.copy2(ENVIRONMENTS / "setup.sh", self.scripts / "setup.sh")
         shutil.copy2(ENVIRONMENTS / "requirements.txt", self.scripts / "requirements.txt")
         shutil.copy2(REPO_ROOT / "requirements-dev.txt", self.root / "requirements-dev.txt")
-        for target in ("l20", "gb10"):
+        for target in ("l20", "pro5000", "gb10"):
             (self.scripts / target).mkdir()
             shutil.copy2(
                 ENVIRONMENTS / target / "requirements.txt",
@@ -93,7 +93,7 @@ class FreshTargetSetup(unittest.TestCase):
         return [json.loads(line) for line in self.record.read_text().splitlines()]
 
     def test_each_target_installs_into_uniform_default_venv(self):
-        for target in ("l20", "gb10"):
+        for target in ("l20", "pro5000", "gb10"):
             with self.subTest(target=target):
                 self.record.unlink(missing_ok=True)
                 result = self.run_setup("--target", target)

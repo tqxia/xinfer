@@ -86,15 +86,19 @@ class EnvironmentContract(unittest.TestCase):
             "huggingface-hub",
             "kernels",
         }
-        l20 = environment.target_requirements("l20")
-        gb10 = environment.target_requirements("gb10")
-        for target, requirements in (("l20", l20), ("gb10", gb10)):
+        targets = {
+            name: environment.target_requirements(name) for name in ("l20", "pro5000", "gb10")
+        }
+        for target, requirements in targets.items():
             with self.subTest(target=target):
                 self.assertTrue(expected <= requirements.keys())
-        self.assertEqual(
-            {k: v for k, v in l20.items() if k != "torch"},
-            {k: v for k, v in gb10.items() if k != "torch"},
-        )
+        shared_l20 = {k: v for k, v in targets["l20"].items() if k != "torch"}
+        for target in ("pro5000", "gb10"):
+            self.assertEqual(
+                shared_l20,
+                {k: v for k, v in targets[target].items() if k != "torch"},
+            )
+            self.assertEqual(targets[target]["torch"], "2.13.0+cu130")
         dev = environment.target_requirements("l20", include_dev=True)
         self.assertTrue({"ruff", "clang-format"} <= dev.keys())
 
@@ -150,17 +154,24 @@ class EnvironmentContract(unittest.TestCase):
             environment.validate(actual, PROFILE, REQUIREMENTS), ["CUDA device 0 is unavailable"]
         )
 
-    def test_normalized_cpu_names_and_gb10_requirements(self):
+    def test_normalized_cpu_names_and_blackwell_targets(self):
         actual = observed()
         actual["platform"]["machine"] = "AMD64"
         self.assertEqual(environment.validate(actual, PROFILE, REQUIREMENTS), [])
-        profile = dict(PROFILE, machine="aarch64", sm=[12, 1])
-        requirements = REQUIREMENTS | {"torch": "2.13.0+cu130"}
-        actual["platform"]["machine"] = "arm64"
+        cu130 = REQUIREMENTS | {"torch": "2.13.0+cu130"}
+        pro5000_profile = dict(PROFILE, machine="x86_64", sm=[12, 0])
+        actual["platform"]["machine"] = "x86_64"
         actual["torch"].update(runtime_version="2.13.0+cu130", cuda="13.0")
+        actual["gpu"] = dict(name="NVIDIA RTX PRO 5000 72GB Blackwell", capability=[12, 0])
+        self.assertEqual(environment.validate(actual, pro5000_profile, cu130), [])
+        gb10_profile = dict(PROFILE, machine="aarch64", sm=[12, 1])
+        actual["platform"]["machine"] = "arm64"
         actual["gpu"] = dict(name="GB10", capability=[12, 1])
-        self.assertEqual(environment.validate(actual, profile, requirements), [])
-        self.assertEqual(environment.default_target("AMD64"), "l20")
+        self.assertEqual(environment.validate(actual, gb10_profile, cu130), [])
+        self.assertEqual(environment.default_target("AMD64", sm=[8, 9]), "l20")
+        self.assertEqual(environment.default_target("x86_64", sm=[12, 0]), "pro5000")
+        with patch.object(environment, "detect_gpu_sm", return_value=None):
+            self.assertIsNone(environment.default_target("x86_64"))
         self.assertEqual(environment.default_target("arm64"), "gb10")
         self.assertIsNone(environment.default_target("riscv64"))
 

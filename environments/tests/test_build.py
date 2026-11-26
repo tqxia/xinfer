@@ -58,18 +58,13 @@ class NativeBuildWrapper(unittest.TestCase):
         self.record = self.base / "cmake.jsonl"
         self.driver = self.base / "py_driver.py"
         self.driver.write_text(PY_DRIVER)
-        self.venv_bin = self.root / "work/l20/venv/bin"
-        self.venv_bin.mkdir(parents=True)
-        for name, body in (("python", PYTHON_STUB), ("cmake", CMAKE_STUB)):
-            path = self.venv_bin / name
-            path.write_text(body)
-            path.chmod(0o755)
-        self.gb10_bin = self.root / "work/gb10/venv/bin"
-        self.gb10_bin.mkdir(parents=True)
-        for name, body in (("python", PYTHON_STUB), ("cmake", CMAKE_STUB)):
-            path = self.gb10_bin / name
-            path.write_text(body)
-            path.chmod(0o755)
+        for target in ("l20", "pro5000", "gb10"):
+            venv_bin = self.root / "work" / target / "venv/bin"
+            venv_bin.mkdir(parents=True)
+            for name, body in (("python", PYTHON_STUB), ("cmake", CMAKE_STUB)):
+                path = venv_bin / name
+                path.write_text(body)
+                path.chmod(0o755)
         self.env = dict(
             os.environ,
             STUB_REAL_PYTHON=sys.executable,
@@ -151,6 +146,13 @@ class NativeBuildWrapper(unittest.TestCase):
                 "xinfer_aoti",
             ],
         )
+
+    def test_pro5000_build_uses_sm120_and_omits_l20_cudart(self):
+        result = self.run_build("--target", "pro5000")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        configure, _ = self.calls()
+        self.assertIn("-DTORCH_CUDA_ARCH_LIST=12.0", configure["args"])
+        self.assertFalse(any("CUDA_cudart_LIBRARY" in arg for arg in configure["args"]))
 
     def test_usage_errors_fail_before_invoking_cmake(self):
         help_result = self.run_build("--help")

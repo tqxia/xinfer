@@ -10,7 +10,7 @@ The model frontends cover [Qwen3-0.6B / 1.7B](compiler/qwen3/README.md),
 [Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) and
 [Qwen3.8-27B-FP8](compiler/qwen38/README.md) (text only).
 Device-specific setup and validation status are documented for
-[L20 and GB10](environments/README.md).
+[L20, PRO 5000 and GB10](environments/README.md).
 Numerical acceptance depends on the model, package and workload; see
 [validation and limitations](#validation-and-limitations).
 

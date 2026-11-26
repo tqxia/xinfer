@@ -14,6 +14,7 @@ from environments import ROOT
 
 TARGETS = {
     "l20": dict(system="Linux", machine="x86_64", python="3.12", sm=[8, 9]),
+    "pro5000": dict(system="Linux", machine="x86_64", python="3.12", sm=[12, 0]),
     "gb10": dict(system="Linux", machine="aarch64", python="3.12", sm=[12, 1]),
 }
 
@@ -148,10 +149,43 @@ def normalized_machine(value):
     return {"amd64": "x86_64", "arm64": "aarch64"}.get(value.lower(), value.lower())
 
 
-def default_target(machine=None):
-    return {"x86_64": "l20", "aarch64": "gb10"}.get(
-        normalized_machine(machine or platform.machine())
-    )
+def detect_gpu_sm():
+    """Return the unique [major, minor] GPU compute capability when detectable, else None."""
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return None
+    try:
+        process = subprocess.run(
+            [nvidia_smi, "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if process.returncode != 0:
+        return None
+    caps = {line.strip() for line in process.stdout.splitlines() if line.strip()}
+    if len(caps) != 1:
+        return None
+    major, sep, minor = next(iter(caps)).partition(".")
+    if not sep or not major.isdecimal() or not minor.isdecimal():
+        return None
+    return [int(major), int(minor)]
+
+
+def default_target(machine=None, sm=None):
+    arch = normalized_machine(machine or platform.machine())
+    candidates = [name for name, profile in TARGETS.items() if profile["machine"] == arch]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        return None
+    observed_sm = detect_gpu_sm() if sm is None else list(sm)
+    if observed_sm is None:
+        return None
+    matches = [name for name in candidates if TARGETS[name]["sm"] == observed_sm]
+    return matches[0] if len(matches) == 1 else None
 
 
 def validate(actual, profile, requirements):
@@ -211,8 +245,8 @@ def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",
-        choices=("l20", "gb10"),
-        help="Target profile (default: auto-detected from CPU architecture)",
+        choices=tuple(TARGETS),
+        help="Target profile (default: auto-detected from CPU/GPU)",
     )
     parser.add_argument(
         "--dev",
@@ -249,8 +283,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     target = args.target or default_target()
     if target is None:
+        choices = "|".join(TARGETS)
         parser.error(
-            f"Unsupported host architecture {platform.machine()!r}; pass --target l20 or gb10"
+            f"Cannot auto-detect target for {platform.machine()!r}; pass --target {choices}"
         )
     report = check_environment(target, args.build, include_dev=args.dev)
     text = json.dumps(report, indent=2) + "\n"

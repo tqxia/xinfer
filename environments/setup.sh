@@ -7,12 +7,12 @@ Usage: environments/setup.sh [options]
 
 Create a fresh Python 3.12 virtual environment for this target.
 
-  --target l20|gb10   Target profile (default: auto-detected from uname -m)
-  --python PATH       Python 3.12 executable (default: python3.12)
-  --venv PATH         Fresh venv directory (default: work/<target>/venv)
-  --torch-wheel PATH  Install a local Torch wheel instead of downloading it
-  --dev               Also install formatting tools from requirements-dev.txt
-  -h, --help          Show this help
+  --target l20|pro5000|gb10  Target profile (default: auto-detected from CPU/GPU)
+  --python PATH              Python 3.12 executable (default: python3.12)
+  --venv PATH                Fresh venv directory (default: work/<target>/venv)
+  --torch-wheel PATH         Install a local Torch wheel instead of downloading it
+  --dev                      Also install formatting tools from requirements-dev.txt
+  -h, --help                 Show this help
 
 Relative paths are resolved from the repository root. The host must already
 provide a C++ compiler, CUDA toolkit and NVIDIA driver. GPU checks are separate.
@@ -26,9 +26,19 @@ fail() {
 
 detect_target() {
   case "$(uname -m)" in
-    x86_64|amd64) printf 'l20\n' ;;
     aarch64|arm64) printf 'gb10\n' ;;
-    *) fail "Unsupported host architecture $(uname -m); pass --target l20 or gb10" ;;
+    x86_64|amd64)
+      local caps=""
+      if command -v nvidia-smi >/dev/null 2>&1; then
+        caps="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr -d ' \r' | sort -u)"
+      fi
+      case "$caps" in
+        8.9) printf 'l20\n' ;;
+        12.0) printf 'pro5000\n' ;;
+        *) fail "Cannot auto-detect x86_64 target from GPU; pass --target l20 or pro5000" ;;
+      esac
+      ;;
+    *) fail "Unsupported host architecture $(uname -m); pass --target l20, pro5000 or gb10" ;;
   esac
 }
 
@@ -92,8 +102,8 @@ if [[ -z "$target" ]]; then
   target="$(detect_target)"
 fi
 case "$target" in
-  l20|gb10) ;;
-  *) usage >&2; fail "Select --target l20 or gb10" ;;
+  l20|pro5000|gb10) ;;
+  *) usage >&2; fail "Select --target l20, pro5000 or gb10" ;;
 esac
 
 cd "$repo_root"

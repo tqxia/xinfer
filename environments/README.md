@@ -1,4 +1,4 @@
-# L20 and GB10 environments
+# Target environments (L20, PRO 5000 and GB10)
 
 This guide owns native setup, environment checks, builds and installation.
 Use the model guides for [Qwen3](../compiler/qwen3/README.md),
@@ -19,17 +19,20 @@ export linker path uses Linux GCC.
 | Target | CPU architecture | Torch runtime | Torch CUDA | GPU capability |
 | --- | --- | --- | --- | --- |
 | L20 | x86-64 | 2.13.0+cu126 | 12.6 | 8.9 |
+| PRO 5000 | x86-64 | 2.13.0+cu130 | 13.0 | 12.0 |
 | GB10 | ARM64 | 2.13.0+cu130 | 13.0 | 12.1 |
 
 The authoritative pins live in [requirements.txt](requirements.txt) (shared
 Triton, CMake, Ninja, Transformers `5.20.2` and `kernels` pins), included by
-[L20 requirements](l20/requirements.txt) and
+[L20 requirements](l20/requirements.txt),
+[PRO 5000 requirements](pro5000/requirements.txt) and
 [GB10 requirements](gb10/requirements.txt) for each target's Torch/CUDA build.
 Setup and checking read the same file. Target host checks (OS, CPU
 architecture, Python 3.12 and GPU capability) live in [check.py](check.py).
 Setup uses official wheels by default and accepts a local Torch
-wheel override. For a containerized L20 setup on the official NVIDIA CUDA 12.6
-image, use the [L20 Docker workflow](l20/docker/README.md).
+wheel override. For containerized setups on official NVIDIA CUDA images, use
+the [L20 Docker workflow](l20/docker/README.md) or
+[PRO 5000 Docker workflow](pro5000/docker/README.md).
 
 ## Create target environment
 
@@ -37,7 +40,7 @@ Run these Bash commands from the repository root. Setup can also be called from
 elsewhere; relative options resolve against the repository root.
 
 ```bash
-TARGET=l20                         # or gb10 (auto-detected if omitted)
+TARGET=l20                         # l20, pro5000, or gb10 (auto-detected if omitted)
 RUN=baseline-001                   # fresh report directory
 
 bash environments/setup.sh --target "$TARGET"
@@ -46,11 +49,12 @@ PY="$PWD/work/$TARGET/venv/bin/python"
   --output "artifacts/$TARGET/$RUN/environment.json"
 ```
 
-`environments/setup.sh` auto-detects `l20` (`x86_64`) or `gb10` (`aarch64`) when
-`--target` is omitted. It creates a fresh independent venv at
+`environments/setup.sh` auto-detects `gb10` (`aarch64`), `l20` (`x86_64`, SM 8.9)
+or `pro5000` (`x86_64`, SM 12.0) when `--target` is omitted (pass `--target`
+explicitly on CPU-only `x86_64` hosts). It creates a fresh independent venv at
 `work/<target>/venv`, installs the target's requirements, runs `pip check`, and
 removes the partial venv if installation fails. Existing destinations are
-refused and preserved. Supported options are `--target l20|gb10`,
+refused and preserved. Supported options are `--target l20|pro5000|gb10`,
 `--python PATH` (default `python3.12`), `--venv PATH`, `--torch-wheel PATH`
 (replaces only `torch==`), and `--dev` (also installs `requirements-dev.txt`).
 Setup does not require a GPU.
@@ -77,7 +81,7 @@ bash environments/build.sh --target "$TARGET" --python "$PY"
 
 `environments/build.sh` resolves `torch.utils.cmake_prefix_path`, CUDA
 architecture (live GPU capability, `TORCH_CUDA_ARCH_LIST`, or the target
-default `8.9`/`12.1`), L20's Torch-supplied `libcudart.so.12` link flags, and
+default `8.9`/`12.0`/`12.1`), L20's Torch-supplied `libcudart.so.12` link flags, and
 offline `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` automatically, printing the
 exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
 `--nvcc PATH`, `--jobs N` (default `2`), `--targets LIST` (comma-separated
@@ -107,8 +111,8 @@ those packages and do not link or install a separate copy.
 
 For L20, `build.sh` passes `-DCUDA_cudart_LIBRARY` and `-DCUDA_CUDART_LIBRARY`
 pointing to Torch's CUDA 12.6 runtime so host toolchains with an older CUDA
-minor version do not leave unresolved runtime symbols. GB10 uses its CUDA 13.0
-runtime selection directly.
+minor version do not leave unresolved runtime symbols. PRO 5000 and GB10 use
+their CUDA 13.0 runtime selection directly.
 
 ## Prepare inputs and export
 
@@ -184,7 +188,8 @@ binary checksums. Record new results by model, device and capacity in
 [validation status](../docs/validation-status.md), without treating older results
 as a pass for a new build.
 
-The [L20 Docker image](l20/docker/README.md) builds directly from
-`environments/l20/requirements.txt` and `requirements-dev.txt` on
-`nvidia/cuda:12.6.3-devel-ubuntu24.04` with a single `/opt/xinfer/venv` (`$PY`)
-and preinstalled `nlohmann-json3-dev`.
+The [L20 Docker image](l20/docker/README.md) (`nvidia/cuda:12.6.3-devel-ubuntu24.04`)
+and [PRO 5000 Docker image](pro5000/docker/README.md)
+(`nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`) build directly from their
+target `requirements.txt` and `requirements-dev.txt` with a single
+`/opt/xinfer/venv` (`$PY`) and preinstalled `nlohmann-json3-dev`.

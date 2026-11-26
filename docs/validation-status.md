@@ -1,6 +1,6 @@
 # Validation status and known issues
 
-Updated November 24, 2026. Results apply to the bundles and workloads below.
+Updated November 26, 2026. Results apply to the bundles and workloads below.
 The [shared numerical policy](development-tools.md#shared-numerical-policy) requires
 matched-input logit relative L2 and peak-relative error within 5%, native/Python
 bitwise parity and state/runtime contracts. HF state and token differences are
@@ -52,6 +52,18 @@ Additional coverage:
   48-head DeltaNet component/AOTI checks also passed in the earlier component run.
 - DeltaNet BF16 component output/carried-state tests passed against HF BF16
   tensor operations. Standalone AOTI/C++ parity passed all 90 BF16/FP32 calls.
+- **PRO 5000 (`sm_120`, Torch 2.13.0+cu130, 1,024-token capacity):**
+  - `Qwen3.5-0.8B` passed the full scalar validation suite (`0 / 1,174` required
+    numerical failures, worst AOTI/HF relative L2 `3.7865%`, `19,216 / 19,216`
+    bitwise native comparisons) and `validate_runtime` (`5,243` teacher tensors,
+    `28` greedy logit rows, `288` greedy state tensors, rejection checks).
+  - `Qwen3-0.6B` passed `validate_runtime` and all `250 / 250` bitwise native
+    comparisons in scalar validation (`worst AOTI/HF relative L2 4.8870%`), with
+    `1 / 517` required numerical failure (`eager_vs_hf` on `forced_tokens`
+    step 2, relative L2 `5.2020%`).
+  - Attention/compile (`13/13`), DeltaNet AOTI (`17/17`), C++ contract tests and
+    CPU unit tests (`404 OK`) passed. Dynamic-batch validation and larger models
+    on PRO 5000 remain untested.
 
 ## Open numerical issues
 
