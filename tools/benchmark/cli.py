@@ -44,7 +44,7 @@ def run(args):
     for directory in packages.values():
         validate_model_metadata(read_package_metadata(directory, model_type=model_type))
     args.model_dir = args.model_dir or hooks.default_model_dir(metadata)
-    args.native = args.native or default_build_dir(model_type) / "xinfer_benchmark"
+    args.native = args.native or default_build_dir() / "xinfer_benchmark"
 
     def compare(profiles, weights):
         validate_comparison(

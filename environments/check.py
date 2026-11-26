@@ -1,4 +1,4 @@
-"""Check a tested native stack and model environment before build or export."""
+"""Check a tested native stack and target environment before build or export."""
 
 import argparse
 import importlib.metadata
@@ -12,23 +12,48 @@ from pathlib import Path
 
 from environments import ROOT
 
+TARGETS = {
+    "l20": dict(system="Linux", machine="x86_64", python="3.12", sm=[8, 9]),
+    "gb10": dict(system="Linux", machine="aarch64", python="3.12", sm=[12, 1]),
+}
 
-def read_requirements(path):
-    """Read exact package pins, leaving pip index options to the installer."""
+
+def read_requirements(path, *, _seen=None):
+    """Read exact package pins recursively, leaving pip index options to the installer."""
+    path = Path(path).resolve()
+    seen = set() if _seen is None else _seen
+    if path in seen:
+        raise ValueError(f"Circular requirement include: {path}")
+    seen.add(path)
     result = {}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
-        if not line or line.startswith("-"):
+        if not line:
+            continue
+        if line.startswith(("-r ", "--requirement ")):
+            included = line.split(None, 1)[1].strip()
+            for name, version in read_requirements(path.parent / included, _seen=seen).items():
+                if name in result and result[name] != version:
+                    raise ValueError(f"Conflicting pin for {name} in {path}")
+                result[name] = version
+            continue
+        if line.startswith("-"):
             continue
         name, separator, version = line.partition("==")
         if not separator or not name.strip() or not version.strip():
             raise ValueError(f"Expected an exact package pin in {path}: {line}")
-        result[name.strip()] = version.strip()
+        name, version = name.strip(), version.strip()
+        if name in result and result[name] != version:
+            raise ValueError(f"Conflicting pin for {name} in {path}")
+        result[name] = version
     return result
 
 
-def model_requirements(target, model):
-    return read_requirements(ROOT / "environments" / target / f"{model}_requirements.txt")
+def target_requirements(target, *, include_dev=False):
+    requirements = read_requirements(ROOT / "environments" / target / "requirements.txt")
+    if include_dev:
+        requirements.update(read_requirements(ROOT / "requirements-dev.txt"))
+    return requirements
 
 
 def torch_cuda_version(version):
@@ -123,6 +148,12 @@ def normalized_machine(value):
     return {"amd64": "x86_64", "arm64": "aarch64"}.get(value.lower(), value.lower())
 
 
+def default_target(machine=None):
+    return {"x86_64": "l20", "aarch64": "gb10"}.get(
+        normalized_machine(machine or platform.machine())
+    )
+
+
 def validate(actual, profile, requirements):
     """Return actionable issues without importing Torch or initializing CUDA."""
     issues = []
@@ -135,6 +166,17 @@ def validate(actual, profile, requirements):
     expect(
         "CPU architecture", normalized_machine(actual["platform"]["machine"]), profile["machine"]
     )
+    expected_python = profile.get("python")
+    if expected_python:
+        observed_python = ".".join(actual["python"]["version"].split(".")[:2])
+        expect("Python version", observed_python, expected_python)
+    for name, info in actual.get("native_tools", {}).items():
+        if not info.get("path"):
+            issues.append(f"Native tool {name!r} is missing from PATH")
+        elif "error" in info:
+            issues.append(f"Native tool {name!r} failed: {info['error']}")
+        elif info.get("exit_code") != 0:
+            issues.append(f"Native tool {name!r} exited with {info.get('exit_code')}")
     for name, version in requirements.items():
         if name != "torch":
             expect(name, actual["packages"].get(name), version)
@@ -167,8 +209,16 @@ def validate(actual, profile, requirements):
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("l20", "gb10"), required=True)
-    parser.add_argument("--model", choices=("qwen3", "qwen35", "qwen38"), required=True)
+    parser.add_argument(
+        "--target",
+        choices=("l20", "gb10"),
+        help="Target profile (default: auto-detected from CPU architecture)",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Also verify formatting tools pinned in requirements-dev.txt",
+    )
     parser.add_argument(
         "--build", type=Path, help="Also check this configured CMake build's Torch_DIR"
     )
@@ -178,15 +228,14 @@ def build_parser():
     return parser
 
 
-def check_environment(target, model, build=None):
+def check_environment(target, build=None, *, include_dev=False):
     """Collect and check the selected environment, returning its complete report."""
-    profile = json.loads((ROOT / "environments" / target / "profile.json").read_text())
-    requirements = model_requirements(target, model)
+    profile = TARGETS[target]
+    requirements = target_requirements(target, include_dev=include_dev)
     actual = collect(requirements, build)
     issues = validate(actual, profile, requirements)
     return dict(
         target=target,
-        model=model,
         expected=profile,
         requirements=requirements,
         actual=actual,
@@ -196,8 +245,14 @@ def check_environment(target, model, build=None):
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
-    report = check_environment(args.target, args.model, args.build)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    target = args.target or default_target()
+    if target is None:
+        parser.error(
+            f"Unsupported host architecture {platform.machine()!r}; pass --target l20 or gb10"
+        )
+    report = check_environment(target, args.build, include_dev=args.dev)
     text = json.dumps(report, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

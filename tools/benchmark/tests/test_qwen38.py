@@ -88,5 +88,5 @@ class Frontend(unittest.TestCase):
                 directory = TEXT_DIR if model_type == "qwen38" else Path("checkpoint")
                 tokens.assert_called_once_with(directory)
                 self.assertEqual(args.model_dir, directory)
-                self.assertEqual(args.native, default_build_dir(model_type) / "xinfer_benchmark")
+                self.assertEqual(args.native, default_build_dir() / "xinfer_benchmark")
                 self.assertEqual(run.call_args.kwargs["model_type"], model_type)

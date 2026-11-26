@@ -1,7 +1,7 @@
 # Development tools
 
-Run commands from the repository root with the matching model interpreter.
-Select `Q3_PY`, `Q35_PY`, `Q38_PY` and the native build through the
+Run commands from the repository root with the target interpreter `PY`
+(`work/<target>/venv/bin/python`) and `build/` configured through the
 [environment guide](../environments/README.md). Build the attention library before
 export or standalone attention tests. Full-model tools require complete exported
 bundles; use fresh output paths. The [model guides](../README.md#getting-started)
@@ -13,7 +13,8 @@ benchmark reports remain independent of accuracy validation.
 
 ## Formatting
 
-Use Python 3.12 to install the pinned formatters in an isolated environment:
+Use `bash environments/setup.sh --dev` to include the pinned formatters in the
+target venv, or install them in a standalone environment:
 
 ```bash
 python3.12 -m venv work/format-venv
@@ -51,12 +52,12 @@ binaries or GPU. Most use temporary fixtures and mocks; `test_weights` compiles
 tiny CPU AOTI packages and requires a working C++ toolchain.
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest discover
+CUDA_VISIBLE_DEVICES='' "$PY" -m unittest discover
 ```
 
-All three model environments pin the same Transformers `5.20.2` stack, so
-`unittest discover` from the repository root runs every `test_*.py` module under
-`compiler/`, `environments/` and `tools/` in `Q3_PY`, `Q35_PY` or `Q38_PY`. With
+All supported models share one target environment, so `unittest discover` from
+the repository root runs every `test_*.py` module under `compiler/`,
+`environments/` and `tools/`. With
 `CUDA_VISIBLE_DEVICES=''`, CUDA-only tests inside discovered modules skip cleanly
 while their CPU contract tests still execute. GPU operator and kernel-AOTI tests
 are listed in the model guides; full-model accuracy checks remain separate
@@ -76,11 +77,11 @@ the selected model's Python environment before enabling `HF_HUB_OFFLINE` or
 `TRANSFORMERS_OFFLINE`:
 
 ```bash
-"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
-"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
-"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
-"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
-"$Q38_PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
+"$PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
+"$PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
+"$PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
+"$PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
+"$PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
 ```
 
 These use fixed revisions and default to `work/models/qwen3-0.6b`,
@@ -102,15 +103,14 @@ generation do not repeat it. Verification and token commands infer the model
 frontend from that manifest and use only local files:
 
 ```bash
-"$Q3_PY" -m tools.prepare verify --model-dir work/models/qwen3-0.6b
-"$Q3_PY" -m tools.prepare encode --model-dir work/models/qwen3-0.6b \
+"$PY" -m tools.prepare verify --model-dir work/models/qwen3-0.6b
+"$PY" -m tools.prepare encode --model-dir work/models/qwen3-0.6b \
   --prompt "What is the capital of France?" --output work/prompt.ids
-"$Q3_PY" -m tools.prepare decode --model-dir work/models/qwen3-0.6b \
+"$PY" -m tools.prepare decode --model-dir work/models/qwen3-0.6b \
   --input work/generated.ids
 ```
 
-Use the same commands with the matching Qwen3.5 environment and prepared text
-directory. Tokenization keeps the official non-thinking chat template; encoding
+Use the same commands with any prepared model directory. Tokenization keeps the official non-thinking chat template; encoding
 checks the encoded token count against the model's declared context ceiling.
 The native package's selected capacity and requested
 output budget are checked again during generation. Encoding refuses an existing
@@ -119,10 +119,10 @@ execution; the full-model acquisition and token CLIs live in `tools/prepare/`.
 
 ## Shared native executables
 
-Both model builds provide `xinfer_aoti` (greedy generation), `xinfer_benchmark`
+The unified `build/` provides `xinfer_aoti` (greedy generation), `xinfer_benchmark`
 (fixed-token measurements) and `xinfer_validate` (logit/state traces and runtime
 checks). Metadata selects the model ABI; native-path options override each tool's
-`build/<model>/` default. The common runner owns loading, state, positions,
+`build/` default. The common runner owns loading, state, positions,
 prompt chunking and dispatch. The [package contract](package-metadata.md)
 defines integrity checks, state ownership and compatibility.
 
@@ -143,8 +143,8 @@ With `XINFER_BUILD_VALIDATION=ON`, these native CPU contracts need neither model
 packages nor a GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' build/qwen3/xinfer_state_contract
-CUDA_VISIBLE_DEVICES='' build/qwen3/xinfer_generation_contract
+CUDA_VISIBLE_DEVICES='' build/xinfer_state_contract
+CUDA_VISIBLE_DEVICES='' build/xinfer_generation_contract
 ```
 
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)
@@ -158,7 +158,7 @@ some integrity checks. First-use and steady-state timings remain separate.
 One command runs the numerical chain for either family, selected from metadata:
 
 ```bash
-"$Q35_PY" -m tools.validation.validate \
+"$PY" -m tools.validation.validate \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation-new
 ```
 
@@ -192,9 +192,9 @@ implementation; native/package execution uses standard AOTI loading. See
 For the dynamic batch matrix, use the matching model's `validate_batch` entry:
 
 ```bash
-"$Q35_PY" -m tools.validation.qwen35.validate_batch \
+"$PY" -m tools.validation.qwen35.validate_batch \
   --packages artifacts/qwen35/0.8b/text --model-dir work/qwen35/0.8b/text \
-  --native build/qwen35/xinfer_validate --output artifacts/qwen35/0.8b/batch-validation
+  --output artifacts/qwen35/0.8b/batch-validation
 ```
 
 Qwen3 uses `tools.validation.qwen3.validate_batch`; Qwen3.8 uses
@@ -212,15 +212,15 @@ checks; a passing native comparison does not resolve them.
 The runtime-contract tools separately exercise shipping CLIs and deployment:
 
 ```bash
-"$Q3_PY" -m tools.validation.qwen3.validate_runtime \
+"$PY" -m tools.validation.qwen3.validate_runtime \
   --packages artifacts/qwen3-flash --output artifacts/qwen3-runtime-new
-"$Q35_PY" -m tools.validation.qwen35.validate_runtime \
+"$PY" -m tools.validation.qwen35.validate_runtime \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/runtime-new
 ```
 
 Qwen3's `--native` selects the generation binary. Qwen3.5's `--binary` and `--cli`
-select the validation and generation binaries. Both tools default to matching
-model build directories and prepared checkpoints. Inspect complete reports even
+select the validation and generation binaries. Both tools default to `build/`
+and the model's prepared checkpoint. Inspect complete reports even
 when a command exits nonzero; do not assume every failure is a known numerical
 issue. Package and native-binary identities accompany runtime/numerical reports.
 
@@ -313,13 +313,13 @@ capital-of-France prompt/continuation tokens and does not consume validation
 reports. Use the matching model environment:
 
 ```bash
-"$Q3_PY" -m tools.benchmark run \
+"$PY" -m tools.benchmark run \
   --packages artifacts/qwen3-flash --output artifacts/benchmark-new
 ```
 
 `run` compares unchanged HF with its dynamic cache (`hf`) against one compiled
 pair (`cpp_aoti`). `--model-dir` and `--native` override the inferred checkpoint
-and `build/<model>/xinfer_benchmark`. Each worker receives identical prompts and
+and `build/xinfer_benchmark`. Each worker receives identical prompts and
 forced decode tokens, so differing predictions do not shorten the workload.
 HF reset discards its cache and first prefill includes allocation. HF receives
 the whole prompt in one call; native prefill includes every compiled chunk.
@@ -339,7 +339,7 @@ idle checks and telemetry use that same UUID as logical CUDA device zero.
 The standalone idle check needs no model or packages:
 
 ```bash
-"$Q3_PY" -m tools.benchmark check-idle --output artifacts/idle.json
+"$PY" -m tools.benchmark check-idle --output artifacts/idle.json
 ```
 
 It samples GPU/memory activity once per second, requiring five consecutive
@@ -366,7 +366,7 @@ are shared under `tools/benchmark/`, with small model hooks.
 ## Compare two compiled profiles
 
 ```bash
-"$Q3_PY" -m tools.benchmark compare \
+"$PY" -m tools.benchmark compare \
   --baseline-packages artifacts/aoti-baseline \
   --candidate-packages artifacts/aoti-candidate \
   --baseline-label baseline --candidate-label candidate \

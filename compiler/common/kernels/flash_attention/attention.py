@@ -30,15 +30,13 @@ def batched_attention_metadata(kv_lengths, query_lengths, device):
     return offsets, offsets.to(device), blocks
 
 
-def load_attention_ops(library=None, *, model=None):
+def load_attention_ops(library=None):
     global _loaded
     if library is None and _loaded is not None:
         return
     selected = library or os.environ.get("XINFER_ATTENTION_OPS_LIBRARY")
     if not selected:
-        if model is None:
-            raise ValueError("Select a model to locate its default native attention library")
-        selected = default_build_dir(model) / ATTENTION_LIBRARY
+        selected = default_build_dir() / ATTENTION_LIBRARY
     library = Path(selected).resolve()
     if _loaded is not None:
         if _loaded != library:

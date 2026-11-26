@@ -60,8 +60,9 @@ Native execution requires LibTorch/CUDA but loads neither Python nor
 ## Getting started
 
 1. Follow the [environment guide](environments/README.md) to create a fresh
-   model venv and build compiler kernels and native executables in `build/<model>/`.
-   Dependency pins live in `environments/<target>/<model>_requirements.txt`.
+   target venv (`environments/setup.sh`) and build compiler kernels and native
+   executables (`environments/build.sh`). Dependency pins live in
+   `environments/requirements.txt` and `environments/<target>/requirements.txt`.
 2. Follow the [Qwen3](compiler/qwen3/README.md),
    [Qwen3.5](compiler/qwen35/README.md) or [Qwen3.8](compiler/qwen38/README.md) guide
    to prepare a checkpoint, export a bundle, encode a prompt and run native
@@ -70,11 +71,11 @@ Native execution requires LibTorch/CUDA but loads neither Python nor
    for each new bundle, then measure it with the
    [benchmark tools](docs/development-tools.md#benchmark-hf-and-native-aoti).
 
-Run Python commands as modules from the repository root, using the environment
-for that model. For example, after setting up Qwen3 on L20:
+Run Python commands as modules from the repository root, using the target
+environment. For example, on L20:
 
 ```bash
-PY=work/l20/qwen3-torch213-venv/bin/python
+PY=work/l20/venv/bin/python
 "$PY" -m tools.prepare --help
 "$PY" -m compiler.qwen3.export --help
 "$PY" -m tools.validation.validate --help
@@ -129,7 +130,7 @@ Use idle-GPU checks and repeated measurements for performance conclusions.
 | [`plugins/xinfer-perf/`](plugins/xinfer-perf/README.md) | Fusion and kernel optimization workflows for GB10 in Codex and Claude Code. |
 | [`docs/`](docs/) | [Development and tests](docs/development-tools.md), [metadata/ABI](docs/package-metadata.md), [attention](docs/flash-attention.md), [validation status](docs/validation-status.md) and the [GEMV case study](docs/experiments/qwen35-gemv-2026-11-13.md). |
 
-Tests follow the code they cover. Generated builds go in `build/<model>/`,
+Tests follow the code they cover. Generated builds go in `build/`,
 packages/results in `artifacts/`, and venvs/scratch files in `work/`; these paths
 are ignored. See [AGENTS.md](AGENTS.md) for contribution rules and
 [PLAN.md](PLAN.md) for planned work.

@@ -19,7 +19,7 @@ MODEL_ID = "Qwen/Qwen3.8-27B-FP8"
 
 
 class ExportFrontend(unittest.TestCase):
-    def test_defaults_select_qwen38_checkpoint_output_and_build(self):
+    def test_defaults_select_qwen38_checkpoint_and_output(self):
         with patch.object(shared, "export_model") as compile_model:
             export.main([])
         compile_model.assert_called_once_with(
@@ -27,13 +27,12 @@ class ExportFrontend(unittest.TestCase):
             output=Path("artifacts/qwen38/27b-fp8/text"),
             max_context_length=None,
             enable_inductor_optimization=False,
-            build_model="qwen38",
             model_type="qwen38",
             model_loader=export.load_model,
             step_exporter=export.export_step,
         )
 
-    def test_overrides_reach_shared_compiler_and_select_qwen38_attention(self):
+    def test_overrides_reach_shared_compiler_and_load_attention(self):
         with TemporaryDirectory() as temporary:
             root = Path(temporary)
             checkpoint = dict(model=MODEL_ID, revision="fixture")
@@ -49,8 +48,7 @@ class ExportFrontend(unittest.TestCase):
                 exported.graph_module.print_readable.return_value = "graph"
                 packing = dict(groups=[], linear_calls_before=0, linear_calls_after=0)
 
-                def export_graph(adapted, kind, capacity, *, build_model=None):
-                    self.assertEqual(build_model, "qwen38")
+                def export_graph(adapted, kind, capacity):
                     self.assertIs(adapted, model)
                     self.assertIs(type(adapted[0]), FP8Linear)
                     self.assertIs(adapted[0].weight, original.weight)
@@ -95,12 +93,12 @@ class ExportFrontend(unittest.TestCase):
                 self.assertEqual(
                     step.call_args_list,
                     [
-                        call(model, "prefill", 1024, build_model="qwen38"),
-                        call(model, "decode", 1024, build_model="qwen38"),
+                        call(model, "prefill", 1024),
+                        call(model, "decode", 1024),
                     ],
                 )
                 metadata.assert_called_once_with(model, checkpoint, 1024, "qwen38")
-                attention.assert_called_once_with(model="qwen38")
+                attention.assert_called_once_with()
                 compile_pair.assert_called_once()
                 arguments, options = compile_pair.call_args
                 self.assertEqual(arguments[0], root / "bundle")

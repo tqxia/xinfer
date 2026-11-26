@@ -1,0 +1,4 @@
+# Complete xinfer environment for L20 (x86_64, CUDA 12.6).
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.13.0+cu126
+-r ../requirements.txt

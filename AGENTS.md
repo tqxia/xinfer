@@ -19,7 +19,7 @@ histories in local artifacts).
 - `tools/` owns preparation, validation and benchmarking, with native C++
   drivers under `tools/{benchmark,validation}/native/`. Production compiler code
   must not depend on tooling.
-- `environments/` owns setup, device/model requirements and hardware profiles.
+- `environments/` owns setup, target requirements, native builds and environment checks.
 - `plugins/` owns coding-agent skills that reuse project tools; keep
   model-specific details in model guides.
 - Tests follow the code they cover: module/operator/kernel checks belong in unit
@@ -38,20 +38,21 @@ histories in local artifacts).
 
 ## Environment and builds
 
-Use `environments/<target>/<model>_requirements.txt` as the dependency source
-for each environment; keep package pins out of setup scripts and hardware
-profiles. Keep shared Python dependency pins aligned across models (updating
-Docker lockfiles and `SHA256SUMS` together) unless a verified incompatibility
-requires divergence. Create fresh independent venvs with the device's setup
-script (use `--venv` for another destination; preserve existing environments).
+Use `environments/requirements.txt` and `environments/<target>/requirements.txt`
+as the dependency source for each target; keep package pins out of setup scripts.
+Keep shared Python dependency pins aligned across targets.
+Create fresh independent venvs with `environments/setup.sh` (use `--venv` for
+another destination; preserve existing environments) and build native targets
+with `environments/build.sh`.
 
-Run Python tools as modules from the repository root with the matching model
+Run Python tools as modules from the repository root with the target
 interpreter, and build native code against that interpreter's LibTorch in
-`build/<model>/`. Build `xinfer_attention_ops` before export or standalone
+`build/`. Build `xinfer_attention_ops` before export or standalone
 attention tests; runtime targets build independently and consume packaged
 kernels. Enforce C++20 as the minimum native standard, avoid deprecated
 serialization (`torch.jit`) and extra native runtime dependencies (e.g.,
-OpenSSL, Python), and use environment checking to verify the stack and build.
+OpenSSL, Python), and use `python -m environments.check` to verify the stack
+and build.
 
 Keep compiler dependency workarounds in version-specific `compiler/patches/`
 directories with applicability checks, focused tests and documentation. Do not

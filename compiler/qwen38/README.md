@@ -32,17 +32,17 @@ required limits. See [validation status](../../docs/validation-status.md).
 
 ## Prepare and export
 
-Select the independent `qwen38` environment and `build/qwen38/` using the
+Select `PY` and build `build/` using the
 [environment guide](../../environments/README.md), then prepare and export with
 the Qwen3.8 entry point:
 
 ```bash
-"$Q38_PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
-"$Q38_PY" -m compiler.qwen38.export --max-context-length 1024
+"$PY" -m tools.prepare download --model Qwen/Qwen3.8-27B-FP8
+"$PY" -m compiler.qwen38.export --max-context-length 1024
 ```
 
 The defaults are `work/qwen38/27b-fp8/text` for prepared weights,
-`artifacts/qwen38/27b-fp8/text` for exported packages, and `build/qwen38/` for
+`artifacts/qwen38/27b-fp8/text` for exported packages, and `build/` for
 native compiler kernels. The preparation command selects the same checkpoint
 directory. `--model-dir` and `--output` override the paths; existing checkpoints
 prepared elsewhere can be reused with `--model-dir`.
@@ -75,7 +75,7 @@ kernel cache for the pinned revision:
 
 ```bash
 export KERNELS_CACHE="$PWD/work/qwen38/kernel-cache"
-"$Q38_PY" - <<'PY'
+"$PY" - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
@@ -110,41 +110,39 @@ See [validation status](../../docs/validation-status.md) for tested full-model s
 The [shared architecture guide](../qwen35/README.md#model-interface-and-state)
 owns tensor/state interfaces and attention/DeltaNet implementation details.
 
-Use `Q38_PY` from the environment guide. CPU frontend checks and GPU FP8
+Use `PY` from the environment guide. CPU frontend checks and GPU FP8
 projection/AOTI checks run separately:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q38_PY" -m unittest \
+CUDA_VISIBLE_DEVICES='' "$PY" -m unittest \
   compiler.qwen38.tests.test_model compiler.qwen38.tests.test_export \
   tools.prepare.tests.test_common tools.prepare.tests.test_qwen38 \
   tools.validation.tests.test_qwen38 tools.benchmark.tests.test_qwen38
-"$Q38_PY" -m unittest \
+"$PY" -m unittest \
   compiler.qwen38.tests.test_model.QuantizedCheckpoint compiler.common.tests.test_finegrained_fp8_adapter
 ```
 
 Shared architecture tests use the Qwen3.5 modules. DeltaNet kernel tests live in
 `compiler/common/tests/gated_delta_net/`, including the 27B classes in
 `test_recurrent` and `test_aoti`; see the
-[focused test commands](../qwen35/README.md#focused-tests). Set
-`XINFER_ATTENTION_OPS_LIBRARY="$Q38_BUILD/libxinfer_attention_ops.so"` when running
-standalone attention and model export tests with the Qwen3.8 build.
+[focused test commands](../qwen35/README.md#focused-tests).
 
 Full-model tools select the Qwen3.8 frontend from `model_type="qwen38"` and
-default to native executables in `build/qwen38/`, with the shared Qwen3.5 calling
+default to native executables in `build/`, with the shared Qwen3.5 calling
 convention:
 
 ```bash
-"$Q38_PY" -m tools.validation.validate \
+"$PY" -m tools.validation.validate \
   --packages artifacts/qwen38/27b-fp8/text \
   --model-dir work/qwen38/27b-fp8/text \
   --output artifacts/qwen38/27b-fp8/validation-new
-"$Q38_PY" -m tools.validation.qwen38.validate_batch \
+"$PY" -m tools.validation.qwen38.validate_batch \
   --packages artifacts/qwen38/27b-fp8/text \
   --model-dir work/qwen38/27b-fp8/text \
   --output artifacts/qwen38/27b-fp8/batch-validation-new
-"$Q38_PY" -m tools.validation.qwen38.validate_runtime \
+"$PY" -m tools.validation.qwen38.validate_runtime \
   --output artifacts/qwen38/27b-fp8/runtime-new
-"$Q38_PY" -m tools.benchmark run \
+"$PY" -m tools.benchmark run \
   --packages artifacts/qwen38/27b-fp8/text \
   --output artifacts/qwen38/27b-fp8/benchmark-new
 ```

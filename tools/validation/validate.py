@@ -28,7 +28,7 @@ def prepare_validation(packages, model_dir, native):
 
     metadata = read_package_metadata(packages)
     model_type = metadata["model_type"]
-    native = native or default_build_dir(model_type) / "xinfer_validate"
+    native = native or default_build_dir() / "xinfer_validate"
     require(native.is_file(), "Build xinfer_validate with XINFER_BUILD_VALIDATION=ON first")
     validate_model_metadata(metadata)
     validate_shared_weights(packages, metadata)

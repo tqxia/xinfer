@@ -137,7 +137,7 @@ def validate(args, *, expected_model_type=None):
     require(meta["model_type"] in allowed, "Unsupported model type")
     validate_model_metadata(meta)
     validate_shared_weights(args.packages, meta)
-    args.native = args.native or default_build_dir(meta["model_type"]) / "xinfer_validate"
+    args.native = args.native or default_build_dir() / "xinfer_validate"
     require(
         meta["checkpoint"] == read_json(args.model_dir / "model_manifest.json"),
         "Checkpoint manifest differs",

@@ -29,7 +29,7 @@ from compiler.qwen35.model import ModelStep, load_model, state_specs, zero_state
 from compiler.common.adapters.gated_delta_net import install_delta
 
 
-def export_step(model, kind, capacity=None, *, build_model="qwen35"):
+def export_step(model, kind, capacity=None):
     """Create the packed graph used by compilation and eager validation."""
     capacity = resolve_context_length(model.config, capacity)
     dynamic = kind == "prefill"
@@ -50,9 +50,7 @@ def export_step(model, kind, capacity=None, *, build_model="qwen35"):
     shapes = (token_shape, token_shape, [{0: batch}] * len(inputs[2]), {0: batch}, {0: batch})
     # Retain the singleton batch in AOTI guards, including the torch.cond branches.
     with symbolic_config.patch(backed_size_oblivious=True), cleanup_export_globals():
-        exported = torch.export.export(
-            ModelStep(model, build_model=build_model), inputs, strict=True, dynamic_shapes=shapes
-        )
+        exported = torch.export.export(ModelStep(model), inputs, strict=True, dynamic_shapes=shapes)
     exported.validate()
     packing = pack_linears(exported)
     if kind == "decode":
@@ -101,7 +99,6 @@ def export_model(
     output,
     max_context_length=None,
     enable_inductor_optimization=False,
-    build_model="qwen35",
     model_type="qwen35",
     model_loader=None,
     step_exporter=None,
@@ -123,7 +120,7 @@ def export_model(
         step_exporter=export_step if step_exporter is None else step_exporter,
     )
     with torch.inference_mode(), symbolic_config.patch(backed_size_oblivious=True):
-        load_attention_ops(model=build_model)
+        load_attention_ops()
         compile_shared(
             output,
             prepare_entry,
@@ -144,7 +141,6 @@ def main(
     description=__doc__,
     model_dir=TEXT_DIR,
     output=ARTIFACT_DIR / "text",
-    build_model="qwen35",
     model_type="qwen35",
     model_loader=None,
     step_exporter=None,
@@ -159,7 +155,6 @@ def main(
     try:
         export_model(
             **vars(args),
-            build_model=build_model,
             model_type=model_type,
             model_loader=model_loader,
             step_exporter=step_exporter,

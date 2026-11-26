@@ -742,7 +742,7 @@ class ControllerContract(unittest.TestCase):
                     self.run_controller(args, library, model_type)
                 default.assert_called_once()
                 self.assertEqual(default.call_args.args[0]["model_type"], model_type)
-                build.assert_called_once_with(model_type)
+                build.assert_called_once_with()
                 self.assertEqual(args.model_dir, expected_model)
                 self.assertEqual(args.native, expected_native)
 

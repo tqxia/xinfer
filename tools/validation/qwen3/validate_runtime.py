@@ -35,7 +35,7 @@ from tools.validation.common.runner import ExplicitRuntime
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--native", type=Path, default=default_build_dir("qwen3") / "xinfer_aoti")
+    parser.add_argument("--native", type=Path, default=default_build_dir() / "xinfer_aoti")
     parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL)
     parser.add_argument("--packages", type=Path, default=Path("artifacts/aoti"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/native-smoke"))

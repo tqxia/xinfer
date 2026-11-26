@@ -70,7 +70,7 @@ class PrefixFlashAdapter(unittest.TestCase):
         torch.set_num_threads(1)
         torch.manual_seed(42)
         torch.backends.cuda.matmul.allow_tf32 = False
-        load_attention_ops(model="qwen3")
+        load_attention_ops()
         cls.config = Qwen3Config(
             hidden_size=1024,
             intermediate_size=3072,

@@ -12,9 +12,9 @@ from unittest.mock import patch
 from environments import check as environment
 
 
-PROFILE = dict(system="Linux", machine="x86_64", sm=[8, 9])
+PROFILE = dict(system="Linux", machine="x86_64", python="3.12", sm=[8, 9])
 NATIVE_REQUIREMENTS = dict(torch="2.13.0+cu126", triton="3.7.1", cmake="4.3.4", ninja="1.13.2")
-MODEL_REQUIREMENTS = {"transformers": "5.20.2"}
+MODEL_REQUIREMENTS = {"transformers": "5.20.2", "kernels": "0.17.2"}
 REQUIREMENTS = MODEL_REQUIREMENTS | NATIVE_REQUIREMENTS
 
 
@@ -22,6 +22,10 @@ def observed():
     return dict(
         platform=dict(system="Linux", machine="x86_64"),
         python=dict(version="3.12.13", executable="/env/bin/python"),
+        native_tools={
+            "c++": dict(path="/usr/bin/c++", version="g++ 11.2", exit_code=0),
+            "nvcc": dict(path="/usr/local/cuda/bin/nvcc", version="nvcc 12.6", exit_code=0),
+        },
         torch=dict(
             runtime_version="2.13.0+cu126",
             distribution_version="2.13.0",
@@ -34,25 +38,44 @@ def observed():
 
 
 class EnvironmentContract(unittest.TestCase):
-    def test_requirement_reader_reads_flat_pins_and_ignores_pip_options(self):
+    def test_requirement_reader_resolves_includes_and_rejects_cycles_and_conflicts(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "qwen35_requirements.txt"
-            path.write_text(
-                "# Complete model environment\n"
-                "--extra-index-url https://download.pytorch.org/whl/cu130\n\n"
-                "torch==2.13.0+cu130\n"
+            root = Path(tmp)
+            shared = root / "requirements.txt"
+            shared.write_text(
+                "# Shared pins\n"
                 "triton==3.7.1 # Compiler\n"
                 "cmake==4.3.4\n"
                 "ninja==1.13.2\n"
                 "transformers==5.20.2\n"
+                "kernels==0.17.2\n"
+            )
+            target = root / "gb10" / "requirements.txt"
+            target.parent.mkdir()
+            target.write_text(
+                "--extra-index-url https://download.pytorch.org/whl/cu130\n"
+                "torch==2.13.0+cu130\n"
+                "-r ../requirements.txt\n"
             )
             self.assertEqual(
-                environment.read_requirements(path),
+                environment.read_requirements(target),
                 REQUIREMENTS | {"torch": "2.13.0+cu130"},
             )
+            # Conflict detection.
+            conflict = root / "gb10" / "conflict.txt"
+            conflict.write_text("triton==3.7.0\n-r ../requirements.txt\n")
+            with self.assertRaisesRegex(ValueError, "Conflicting pin"):
+                environment.read_requirements(conflict)
+            # Cycle detection.
+            cycle_a = root / "a.txt"
+            cycle_b = root / "b.txt"
+            cycle_a.write_text("-r b.txt\n")
+            cycle_b.write_text("-r a.txt\n")
+            with self.assertRaisesRegex(ValueError, "Circular requirement"):
+                environment.read_requirements(cycle_a)
 
-    def test_each_device_model_file_contains_complete_dependencies(self):
-        packages = {
+    def test_each_target_file_contains_complete_aligned_dependencies(self):
+        expected = {
             "torch",
             "triton",
             "cmake",
@@ -61,14 +84,19 @@ class EnvironmentContract(unittest.TestCase):
             "tokenizers",
             "safetensors",
             "huggingface-hub",
+            "kernels",
         }
-        for target in ("l20", "gb10"):
-            for model in ("qwen3", "qwen35", "qwen38"):
-                with self.subTest(target=target, model=model):
-                    requirements = environment.model_requirements(target, model)
-                    self.assertTrue(packages <= requirements.keys())
-                    if model == "qwen38":
-                        self.assertIn("kernels", requirements)
+        l20 = environment.target_requirements("l20")
+        gb10 = environment.target_requirements("gb10")
+        for target, requirements in (("l20", l20), ("gb10", gb10)):
+            with self.subTest(target=target):
+                self.assertTrue(expected <= requirements.keys())
+        self.assertEqual(
+            {k: v for k, v in l20.items() if k != "torch"},
+            {k: v for k, v in gb10.items() if k != "torch"},
+        )
+        dev = environment.target_requirements("l20", include_dev=True)
+        self.assertTrue({"ruff", "clang-format"} <= dev.keys())
 
     def test_collection_records_all_requested_native_and_model_packages(self):
         with (
@@ -81,6 +109,17 @@ class EnvironmentContract(unittest.TestCase):
 
     def test_matching_stack_and_distribution_version_without_cuda_suffix(self):
         self.assertEqual(environment.validate(observed(), PROFILE, REQUIREMENTS), [])
+
+    def test_python_version_and_native_tools_are_validated(self):
+        actual = observed()
+        actual["python"]["version"] = "3.11.9"
+        actual["native_tools"]["c++"] = dict(path=None)
+        actual["native_tools"]["nvcc"] = dict(path="/usr/local/cuda/bin/nvcc", exit_code=127)
+        issues = environment.validate(actual, PROFILE, REQUIREMENTS)
+        self.assertEqual(len(issues), 3)
+        self.assertTrue(any("Python version" in s for s in issues))
+        self.assertTrue(any("'c++' is missing" in s for s in issues))
+        self.assertTrue(any("'nvcc' exited with 127" in s for s in issues))
 
     def test_same_release_different_cuda_and_missing_dependency_are_rejected(self):
         actual = observed()
@@ -121,6 +160,9 @@ class EnvironmentContract(unittest.TestCase):
         actual["torch"].update(runtime_version="2.13.0+cu130", cuda="13.0")
         actual["gpu"] = dict(name="GB10", capability=[12, 1])
         self.assertEqual(environment.validate(actual, profile, requirements), [])
+        self.assertEqual(environment.default_target("AMD64"), "l20")
+        self.assertEqual(environment.default_target("arm64"), "gb10")
+        self.assertIsNone(environment.default_target("riscv64"))
 
     def test_build_torch_dir_resolves_symlinks_and_rejects_a_different_stack(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,69 +194,46 @@ class EnvironmentContract(unittest.TestCase):
                 any("configure" in s for s in environment.validate(actual, PROFILE, REQUIREMENTS))
             )
 
-    def write_requirements(self, root, model="qwen35"):
-        device = root / "environments/l20"
+    def write_requirements(self, root, target="l20"):
+        device = root / "environments" / target
         device.mkdir(parents=True, exist_ok=True)
-        (device / "profile.json").write_text(json.dumps(PROFILE))
-        requirements = device / f"{model}_requirements.txt"
-        requirements.write_text(
-            "\n".join(f"{name}=={version}" for name, version in REQUIREMENTS.items())
+        shared = root / "environments/requirements.txt"
+        shared.write_text(
+            "\n".join(
+                f"{name}=={version}" for name, version in REQUIREMENTS.items() if name != "torch"
+            )
+            + "\n"
         )
-        return requirements
+        requirements = device / "requirements.txt"
+        requirements.write_text(f"torch=={REQUIREMENTS['torch']}\n-r ../requirements.txt\n")
+        (root / "requirements-dev.txt").write_text("ruff==0.17.3\nclang-format==23.1.3\n")
+        return shared
 
-    def test_cli_reads_pins_through_the_same_model_entrypoint_as_setup(self):
+    def test_cli_reads_shared_pins_auto_detects_target_and_supports_dev_flag(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            requirements = self.write_requirements(root, "qwen38")
+            shared = self.write_requirements(root, "l20")
             with (
                 patch.object(environment, "ROOT", root),
+                patch.object(environment, "default_target", return_value="l20"),
                 patch.object(environment, "collect", return_value=observed()) as collect,
                 redirect_stdout(io.StringIO()) as stdout,
             ):
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen38"]), 0)
+                self.assertEqual(environment.main([]), 0)
                 first = json.loads(stdout.getvalue())
+                self.assertEqual(first["target"], "l20")
                 self.assertEqual(first["requirements"], REQUIREMENTS)
                 self.assertEqual(first["expected"], PROFILE)
                 collect.assert_called_once_with(REQUIREMENTS, None)
-                requirements.write_text(
-                    requirements.read_text().replace("cmake==4.3.4", "cmake==4.4.0")
-                )
+                shared.write_text(shared.read_text().replace("cmake==4.3.4", "cmake==4.4.0"))
                 stdout.seek(0)
                 stdout.truncate(0)
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen38"]), 1)
+                self.assertEqual(environment.main(["--target", "l20", "--dev"]), 1)
                 second = json.loads(stdout.getvalue())
                 self.assertEqual(second["requirements"]["cmake"], "4.4.0")
-                self.assertEqual(len(second["issues"]), 1)
-                self.assertTrue(second["issues"][0].startswith("cmake:"))
-
-    def test_models_on_one_device_can_select_different_torch_and_cuda_builds(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            qwen3 = self.write_requirements(root, "qwen3")
-            self.write_requirements(root, "qwen35")
-            qwen3.write_text(
-                qwen3.read_text().replace("torch==2.13.0+cu126", "torch==2.13.0+cu130")
-            )
-            with (
-                patch.object(environment, "ROOT", root),
-                patch.object(environment, "collect", return_value=observed()) as collect,
-                redirect_stdout(io.StringIO()) as stdout,
-            ):
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen3"]), 1)
-                changed = json.loads(stdout.getvalue())
-                self.assertEqual(changed["requirements"]["torch"], "2.13.0+cu130")
-                self.assertEqual(len(changed["issues"]), 2)
-                self.assertTrue(any("Torch runtime" in issue for issue in changed["issues"]))
-                self.assertTrue(any("Torch CUDA build" in issue for issue in changed["issues"]))
-                stdout.seek(0)
-                stdout.truncate(0)
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen35"]), 0)
-                unchanged = json.loads(stdout.getvalue())
-                self.assertEqual(unchanged["requirements"]["torch"], "2.13.0+cu126")
-                collect.return_value["torch"].update(runtime_version="2.13.0+cu130", cuda="13.0")
-                stdout.seek(0)
-                stdout.truncate(0)
-                self.assertEqual(environment.main(["--target", "l20", "--model", "qwen3"]), 0)
+                self.assertEqual(second["requirements"]["ruff"], "0.17.3")
+                self.assertTrue(any(issue.startswith("cmake:") for issue in second["issues"]))
+                self.assertTrue(any(issue.startswith("ruff:") for issue in second["issues"]))
 
     def test_failed_cli_still_writes_machine_readable_report(self):
         actual = observed()
@@ -228,9 +247,7 @@ class EnvironmentContract(unittest.TestCase):
                 patch.object(environment, "collect", return_value=copy.deepcopy(actual)),
                 redirect_stdout(io.StringIO()) as stdout,
             ):
-                code = environment.main(
-                    ["--target", "l20", "--model", "qwen35", "--output", str(output)]
-                )
+                code = environment.main(["--target", "l20", "--output", str(output)])
             report = json.loads(output.read_text())
             self.assertEqual(code, 1)
             self.assertFalse(report["passed"])

@@ -39,7 +39,7 @@ class FrontendDispatch(unittest.TestCase):
                 self.assertIs(actual, sentinel.suite)
                 self.assertIs(actual_metadata, bundle)
                 self.assertEqual(native, binary)
-                build.assert_called_once_with(model_type)
+                build.assert_called_once_with()
                 suite.assert_called_once_with(Path("checkpoint"), bundle)
 
 

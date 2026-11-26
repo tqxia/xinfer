@@ -53,10 +53,6 @@ This file lists unfinished work, not completed refactors or experiment logs.
 
 ## Environment and plugin follow-up
 
-- Revisit the L20 image using an NVIDIA official base. Preserve the pinned model
-  environments and validate AOTI export, C++ execution and profiling from clean
-  shells. Until then, keep the documented Nsight library-path correction as a
-  running-container workaround; leave the Dockerfile unchanged.
 - Add CodeBuddy packaging and verify discovery when that integration is taken up.
   The current plugin supports Codex and Claude Code. Grow GB10 hardware notes and
   kernel examples in `plugins/xinfer-perf/` from actual investigations.

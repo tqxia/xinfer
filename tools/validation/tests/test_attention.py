@@ -96,8 +96,7 @@ class PackagedAttentionSelection(unittest.TestCase):
         os.environ["XINFER_ATTENTION_OPS_LIBRARY"] = stale
         with patch.dict("sys.modules", {"torch": self.torch}):
             library = packaged_attention.load_packaged_attention_ops(packages).resolve()
-            attention.load_attention_ops(model="qwen3")
-            attention.load_attention_ops(model="qwen35")
+            attention.load_attention_ops()
             self.assertEqual(attention.attention_library(), library)
         self.torch.ops.load_library.assert_called_once_with(str(library))
         self.assertEqual(os.environ["XINFER_ATTENTION_OPS_LIBRARY"], stale)

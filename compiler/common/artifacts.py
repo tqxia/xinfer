@@ -8,9 +8,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MODEL_MANIFEST_NAME = "model_manifest.json"
 
 
-def default_build_dir(model):
-    """Locate the model's native build independently of the working directory."""
-    return ROOT / "build" / model
+def default_build_dir():
+    """Locate the native build directory independently of the working directory."""
+    return ROOT / "build"
 
 
 def canonical_json(value):

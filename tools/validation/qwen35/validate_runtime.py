@@ -246,16 +246,12 @@ def reject_invalid(args, env, metadata):
     return passed
 
 
-def build_parser(
-    *, model_dir=TEXT_DIR, artifact_dir=ARTIFACT_DIR, build_model="qwen35", description=__doc__
-):
+def build_parser(*, model_dir=TEXT_DIR, artifact_dir=ARTIFACT_DIR, description=__doc__):
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--model-dir", type=Path, default=model_dir)
     parser.add_argument("--packages", type=Path, default=artifact_dir / "text")
-    parser.add_argument(
-        "--binary", type=Path, default=default_build_dir(build_model) / "xinfer_validate"
-    )
-    parser.add_argument("--cli", type=Path, default=default_build_dir(build_model) / "xinfer_aoti")
+    parser.add_argument("--binary", type=Path, default=default_build_dir() / "xinfer_validate")
+    parser.add_argument("--cli", type=Path, default=default_build_dir() / "xinfer_aoti")
     parser.add_argument("--output", type=Path, default=artifact_dir / "runtime-validation")
     return parser
 

@@ -9,7 +9,6 @@ def main(argv=None):
         argv,
         model_dir=TEXT_DIR,
         artifact_dir=ARTIFACT_DIR,
-        build_model="qwen38",
         expected_model_type="qwen38",
         description=__doc__,
     )

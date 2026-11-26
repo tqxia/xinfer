@@ -1,144 +1,60 @@
 # L20 Docker testing environment
 
-This image provides Python 3.12.13, Torch `2.13.0+cu126`, Triton `3.7.1`, the
-native build tools and separate Qwen3 / Qwen3.5 model dependencies. The pinned
-TencentOS 3.2 base supplies GCC 11.2 and CUDA 12.4.131. Native builds explicitly
-link the CUDA 12.6 runtime supplied with Torch.
+This image builds directly from `nvidia/cuda:12.6.3-devel-ubuntu24.04` (CUDA
+12.6.3 toolkit, `nvcc` 12.6.85, GCC 13.2, `ncu`) with Python 3.12,
+`nlohmann-json3-dev` (`3.11.3`), and a single virtual environment at
+`/opt/xinfer/venv` (`$PY`, first on `PATH`). Python and build dependencies come
+straight from [environments/l20/requirements.txt](../requirements.txt) (which
+includes [environments/requirements.txt](../../requirements.txt)) and
+[requirements-dev.txt](../../../requirements-dev.txt)—no separate Docker lock
+files are maintained.
 
-`XINFER_CUDA_LIBS` selects the CUDA libraries installed with the pinned Torch
-stack before the older SDK libraries. `LD_LIBRARY_PATH` applies that selection
-when programs run, and `LDFLAGS` supplies the same directories through
-`-rpath-link` when native programs link. This also selects CUDA 12.6 CUPTI, whose
-newer entry points are required by LibTorch. NVCC and headers remain from the
-12.4 SDK; the container runtime supplies the host GPU driver.
-
-The pinned base's `/root/.bashrc` globally prepends Nsight's `host-linux-x64`
-directory to `LD_LIBRARY_PATH`. That selects its private `libstdc++` for PyTorch
-and causes AOTI loader TLS destructors to crash at process exit with both retained
-and larger-context packages. The Dockerfile remains unchanged; use the temporary
-running-container workaround below.
-
-Run scripted jobs directly through `docker exec`, or use non-login `bash -c`
-when shell redirection is needed. These preserve the image's intended library
-environment without sourcing the inherited login setup. If a login shell is
-required, first make a task-specific backup of `/root/.bashrc` in the running
-test container, then remove only this global export from that file:
-
-```text
-export LD_LIBRARY_PATH=/opt/nvidia/nsight-systems/2024.2.3/host-linux-x64/:$LD_LIBRARY_PATH
-```
-
-Keep Nsight installed and preserve the Torch CUDA paths and other startup
-settings. Start a fresh `docker exec` after correction; editing `.bashrc` does
-not repair a shell's already inherited environment. Do not clear
-`LD_LIBRARY_PATH` wholesale, since that also removes the selected Torch CUDA
-libraries. Do not add the profiler's private library directory around
-`nsys profile`: the profiled child can inherit that override.
-
-Use the installed `/opt/nvidia/nsight-systems/2024.2.3/bin/nsys` launcher by
-absolute path. The CUDA SDK's `nsys` wrapper refers to an absent older Nsight
-installation. The installed launcher works with the normal image library
-environment; no global library override or image `PATH` change is needed for
-this workaround.
-
-The running-container workaround remains temporary. Revisiting an NVIDIA
-official base image is deferred in [the project plan](../../../PLAN.md);
-the maintained Dockerfile still uses the pinned base described here.
-
-Project source, model checkpoints, generated packages and reports live in host
-bind mounts. The final image contains the installed environment and the small
-build recipe; wheel archives remain in the offline build context and build cache.
-
-## Prepare and transfer the offline context
-
-Prepare the following files on a machine that can obtain the required packages:
-
-```text
-Dockerfile
-.dockerignore
-README.md
-launch.sh
-native.lock
-qwen3.lock
-qwen35.lock
-SHA256SUMS
-payload/
-  python-runtime.tar.gz
-  nlohmann-json.tar.xz
-  wheels/*.whl
-```
-
-`python-runtime.tar.gz` contains the standalone CPython 3.12.13 installation
-under one top-level directory. The build strips that directory and creates a
-clean native package installation under `/opt/xinfer/native`.
-
-`native.lock` records the tested Torch, Triton and CUDA package closure plus
-CMake `4.3.4`, Ninja `1.13.2`, Ruff `0.17.3` and clang-format `23.1.3`.
-`qwen3.lock` and `qwen35.lock` record each model environment's complete package
-freeze. Their native packages must match `native.lock`; model installation uses
-that file as constraints. Download Linux x86-64 CPython 3.12 wheels for every
-required dependency. The model environments share the controlled native prefix
-through `--system-site-packages` and keep their HF packages isolated.
-
-Use nlohmann/json `3.11.3`'s `json.tar.xz`, with SHA-256
-`d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d`.
-Its source tree is installed in `/opt/xinfer/deps/nlohmann_json` for offline
-CMake configuration.
-
-Generate `SHA256SUMS` over the three lock files and all payload files, using
-paths relative to this context directory. Keep recipe files outside this
-manifest so documentation and final image settings can change without
-invalidating the installed dependency layers.
-The Docker build verifies the complete manifest before unpacking or installing.
-
-Transfer the context archive directly to the target host. When access goes
-through a jump host, stream the transfer to the target without staging files
-on the jump host. Keep host addresses and access instructions outside the
-repository.
+Project source, model checkpoints, caches and reports live in host bind mounts.
 
 ## Build and launch
 
-The pinned base must already be present in Docker's local image store. Transfer
-and load it separately if needed; `docker build --network=none` controls build
-steps, so checking the base first also avoids an implicit registry lookup.
-Set `XINFER_BASE_IMAGE` to a locally available image reference pinned by digest.
-The tested TencentOS 3.2 / CUDA 12.4.131 base has digest
-`sha256:e399ac1af0550a0330783c933f1ebbf46fffc4ef92b302671a76f1d882ddebaa`.
-Keep registry addresses and host-specific settings outside the repository.
+Run `docker build` from the repository root so Docker can read the shared
+requirements files (root `.dockerignore` excludes `.git`, `work`, `build` and
+`artifacts`):
 
 ```bash
-cd /data/xinfer-l20/image
-: "${XINFER_BASE_IMAGE:?Set a local base image reference pinned by digest}"
-docker image inspect "$XINFER_BASE_IMAGE"
-sha256sum -c SHA256SUMS
-docker build --network=none --pull=false \
-  --build-arg XINFER_BASE_IMAGE="$XINFER_BASE_IMAGE" \
+docker build -f environments/l20/docker/Dockerfile \
   -t xinfer/l20:torch2.13-cu126 .
+```
+
+Pass `--build-arg PIP_INDEX_URL=<index-url>` at build time if you want pip to
+use a regional PyPI mirror; the Torch/CUDA index remains
+`https://download.pytorch.org/whl/cu126` from `environments/l20/requirements.txt`,
+and build arguments are not persisted into the final image.
+
+Launch a container pinned to a single L20 GPU UUID:
+
+```bash
 nvidia-smi --query-gpu=index,uuid,name,memory.total --format=csv
-# Set XINFER_GPU_UUID to the selected device before launch.
 : "${XINFER_GPU_UUID:?Select a GPU UUID}"
-XINFER_GPU_UUID="$XINFER_GPU_UUID" bash launch.sh
+XINFER_GPU_UUID="$XINFER_GPU_UUID" bash environments/l20/docker/launch.sh
 docker exec -it xinfer-l20 bash
 ```
 
-Run the host commands as root or through sudo. The launcher requires an explicit
-GPU UUID; that single device appears as CUDA device 0 inside the container.
-It leaves CPU and RAM limits unset and provides 16 GiB shared memory, unlimited locked memory and
-a 64 MiB stack. It requires no privileged container. Networking uses Docker's
-bridge; pip and Hugging Face default to offline operation.
+Run host Docker commands as root or through `sudo`. The launcher requires an
+explicit GPU UUID (exposed as CUDA device 0 inside the container), leaves CPU
+and RAM limits unset, configures 16 GiB shared memory, unlimited locked memory
+and a 64 MiB stack, and needs no privileged container. The image sets
+`NVIDIA_VISIBLE_DEVICES=void` by default so ad-hoc `docker run` calls do not
+accidentally expose all host GPUs.
 
-The launcher accepts environment overrides:
+`launch.sh` accepts environment overrides:
 
 ```bash
 XINFER_IMAGE=xinfer/l20:torch2.13-cu126 \
 XINFER_CONTAINER=xinfer-l20 \
 XINFER_HOST_ROOT=/data/xinfer-l20 \
 XINFER_GPU_UUID="$XINFER_GPU_UUID" \
-  bash launch.sh
+  bash environments/l20/docker/launch.sh
 ```
 
-It refuses to replace an existing container. Use `docker start xinfer-l20` and
-`docker exec` to resume it. Persistent paths are:
+It refuses to replace an existing container; use `docker start xinfer-l20` and
+`docker exec` to resume it. Persistent host bind mounts are:
 
 | Host path below `XINFER_HOST_ROOT` | Container path |
 | --- | --- |
@@ -147,48 +63,33 @@ It refuses to replace an existing container. Use `docker start xinfer-l20` and
 | `cache` | `/cache` |
 | `reports` | `/reports` |
 
-Place the repository in `workspace/xinfer`. The image does not start an SSH
-server; execute commands through Docker on the host.
+Place the repository in `workspace/xinfer`. The image does not run an SSH
+server; execute commands through `docker exec`.
 
 ## Check and build the mounted project
 
-Inside the running container, `python` defaults to Qwen3.5. Use `$Q3_PY` or
-`$Q35_PY` explicitly for each model and `$NATIVE_PY` for native-stack checks.
-The base image's Python 3.9 and user site packages are outside these environments.
+Inside the running container, `python` and `$PY` point to
+`/opt/xinfer/venv/bin/python` (serving Qwen3, Qwen3.5, Qwen3.8, native CMake/Ninja
+builds, `ruff` and `clang-format`):
 
 ```bash
 nvidia-smi
-"$NATIVE_PY" -c 'import torch; print(torch.__version__, torch.version.cuda); print(torch.cuda.get_device_name()); print(torch.cuda.mem_get_info())'
-bash environments/check.sh --python "$Q3_PY" --target l20 --model qwen3 \
-  --output /reports/qwen3-environment.json
-bash environments/check.sh --python "$Q35_PY" --target l20 --model qwen35 \
-  --output /reports/qwen35-environment.json
+"$PY" -c 'import torch; print(torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0), torch.cuda.mem_get_info())'
+"$PY" -m environments.check --target l20 --dev \
+  --output /reports/l20-environment.json
 
-TORCH_PREFIX=$("$NATIVE_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
-CUDA_RUNTIME=$("$NATIVE_PY" -c 'from pathlib import Path; import torch; print(Path(torch.__file__).resolve().parent.parent / "nvidia/cuda_runtime/lib/libcudart.so.12")')
-for MODEL in qwen3 qwen35; do
-  "$CMAKE" -S . -B "build/$MODEL" -G Ninja \
-    -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" \
-    -DCMAKE_CUDA_COMPILER="$CUDA_HOME/bin/nvcc" \
-    -DCUDA_cudart_LIBRARY="$CUDA_RUNTIME" \
-    -DCUDA_CUDART_LIBRARY="$CUDA_RUNTIME" \
-    -DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON="$FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON" \
-    -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
-    -DTORCH_CUDA_ARCH_LIST=8.9 \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
-  "$CMAKE" --build "build/$MODEL" -j2
-done
+bash environments/build.sh --target l20 --python "$PY"
+"$PY" -m environments.check --target l20 --dev --build build
 ```
 
-CMake requires the explicit `-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` argument;
-the matching environment variable is provided for that command. Freshly build
-the native targets and model packages on the target host rather than copying generated
-SO files from a host with different CPU instructions.
+`nlohmann-json3-dev` (`3.11.3`) is preinstalled in the image, so CMake resolves
+`nlohmann_json` via `find_package` without network access. Set
+`HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` when running against
+pre-downloaded checkpoints under `/models`. Freshly build native targets and
+model packages on the target host rather than copying generated `.so` files
+across hosts with different CPU instruction sets.
 
 After launch, validate actual Triton GPU compilation/execution, AOTI packaging,
-Python/native execution and shared-weight loading. Build-time CPU imports and
-dependency checks do not establish GPU compatibility. Record CUDA's reported
-memory capacity and the container's memory configuration with those checks.
-Use the [shared validation tools](../../../docs/development-tools.md#python-validation-tools)
-and record the tested profile in [validation status](../../../docs/validation-status.md).
+Python/native execution and shared-weight loading using the
+[shared validation tools](../../../docs/development-tools.md#python-validation-tools)
+and record tested profiles in [validation status](../../../docs/validation-status.md).

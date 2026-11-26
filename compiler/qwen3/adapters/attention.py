@@ -78,6 +78,6 @@ def install_attention(model):
             # Inherit the wrapped layer's mode so eval models stay eval and train mode still fails.
             replacement.train(layer.self_attn.training)
             replacements.append((layer, replacement))
-    load_attention_ops(model="qwen3")
+    load_attention_ops()
     for layer, attention in replacements:
         layer.self_attn = attention

@@ -10,178 +10,131 @@ actually been tested; a supported environment is not a blanket model-acceptance 
 
 ## Requirements and targets
 
-Each model has an independent Python environment, native build and compiled
-packages. Compile on the target host against that model's selected LibTorch.
-The host needs Python 3.12, Linux with glibc 2.28 or newer, a C++ compiler,
-a compatible CUDA toolkit and NVIDIA driver. The export linker path uses Linux GCC.
+All supported models (Qwen3, Qwen3.5 and Qwen3.8) share one Python 3.12 virtual
+environment per target host. Compile native code on the target host against that
+environment's LibTorch. The host needs Python 3.12, Linux with glibc 2.28 or
+newer, a C++ compiler, a compatible CUDA toolkit and an NVIDIA driver. The
+export linker path uses Linux GCC.
 
 | Target | CPU architecture | Torch runtime | Torch CUDA | GPU capability |
 | --- | --- | --- | --- | --- |
 | L20 | x86-64 | 2.13.0+cu126 | 12.6 | 8.9 |
 | GB10 | ARM64 | 2.13.0+cu130 | 13.0 | 12.1 |
 
-The authoritative pins are the self-contained
-[L20 Qwen3](l20/qwen3_requirements.txt), [L20 Qwen3.5](l20/qwen35_requirements.txt),
-[L20 Qwen3.8](l20/qwen38_requirements.txt), [GB10 Qwen3](gb10/qwen3_requirements.txt),
-[GB10 Qwen3.5](gb10/qwen35_requirements.txt) and [GB10 Qwen3.8](gb10/qwen38_requirements.txt)
-requirements files. Setup and checking read the same selected file, including
-the PyTorch index, Torch, Triton, CMake, Ninja and model dependencies. Versions
-can differ between models. JSON profiles contain OS, CPU architecture and GPU
-capability checks; they do not duplicate package pins.
+The authoritative pins live in [requirements.txt](requirements.txt) (shared
+Triton, CMake, Ninja, Transformers `5.20.2` and `kernels` pins), included by
+[L20 requirements](l20/requirements.txt) and
+[GB10 requirements](gb10/requirements.txt) for each target's Torch/CUDA build.
+Setup and checking read the same file. Target host checks (OS, CPU
+architecture, Python 3.12 and GPU capability) live in [check.py](check.py).
+Setup uses official wheels by default and accepts a local Torch
+wheel override. For a containerized L20 setup on the official NVIDIA CUDA 12.6
+image, use the [L20 Docker workflow](l20/docker/README.md).
 
-Qwen3, Qwen3.5 and Qwen3.8 currently pin the same Transformers `5.20.2` stack
-while retaining per-model environment and build entry points. Qwen3.8's profile
-includes the `kernels` dependency for FP8 and uses the shared Qwen3.5
-compiler/runtime. Setup uses official matching wheels by default and permits a
-local Torch wheel override. For an offline image, use the distinct
-[L20 Docker workflow](l20/docker/README.md).
+## Create target environment
 
-## Create model environments
-
-Run these Bash commands from the repository root. Setup itself can be called
-from elsewhere; relative options resolve against the repository root.
+Run these Bash commands from the repository root. Setup can also be called from
+elsewhere; relative options resolve against the repository root.
 
 ```bash
-TARGET=l20                         # or gb10
-ENV_SUFFIX=-venv
-if [ "$TARGET" = l20 ]; then
-  ENV_SUFFIX=-torch213-venv
-fi
-RUN=baseline-001                    # fresh report directory
+TARGET=l20                         # or gb10 (auto-detected if omitted)
+RUN=baseline-001                   # fresh report directory
 
-for MODEL in qwen3 qwen35 qwen38; do
-  MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
-  bash "environments/$TARGET/setup.sh" --model "$MODEL" --venv "$MODEL_ENV"
-  bash environments/check.sh --python "$MODEL_ENV/bin/python" \
-    --target "$TARGET" --model "$MODEL" \
-    --output "artifacts/$TARGET/$MODEL/$RUN/environment.json"
-done
+bash environments/setup.sh --target "$TARGET"
+PY="$PWD/work/$TARGET/venv/bin/python"
+"$PY" -m environments.check --target "$TARGET" \
+  --output "artifacts/$TARGET/$RUN/environment.json"
 ```
 
-Setup always creates a fresh independent venv and refuses an existing destination.
-It installs the selected requirements, then runs `pip check`; it neither links
-nor inherits packages from a system installation. Setup does not require a GPU.
-Both target scripts accept `--model qwen3|qwen35|qwen38`, `--python PATH` (default
-`python3.12`), `--venv PATH` and `--torch-wheel PATH`. A local wheel replaces only
-the Torch requirement. Default venvs are `work/l20/<model>-torch213-venv` and
-`work/gb10/<model>-venv`.
+`environments/setup.sh` auto-detects `l20` (`x86_64`) or `gb10` (`aarch64`) when
+`--target` is omitted. It creates a fresh independent venv at
+`work/<target>/venv`, installs the target's requirements, runs `pip check`, and
+removes the partial venv if installation fails. Existing destinations are
+refused and preserved. Supported options are `--target l20|gb10`,
+`--python PATH` (default `python3.12`), `--venv PATH`, `--torch-wheel PATH`
+(replaces only `torch==`), and `--dev` (also installs `requirements-dev.txt`).
+Setup does not require a GPU.
 
-For `check.sh`, put `--python PATH` first. The checker verifies installed packages
-against requirements, the hardware profile, Torch CUDA build and C++ ABI, and
-records compiler/runtime versions. `--build` also checks CMake's selected
-LibTorch. Failure reports are written before a nonzero exit. Keep the environment
-report with package/build evidence.
+`python -m environments.check` verifies installed packages against the target
+requirements, Python 3.12, OS/architecture, native tools (`c++`, `nvcc`), Torch
+CUDA build, C++ ABI and GPU capability. Pass `--dev` to also check formatting
+tools, and `--build PATH` to verify CMake's `Torch_DIR`. Failure reports are
+written before exiting nonzero.
 
-## Build compiler kernels and native runtimes for each model
+## Build compiler kernels and native runtimes
 
-Each model's native build uses LibTorch from that model's Python environment.
-Build directories are `build/qwen3/`, `build/qwen35/` and `build/qwen38/`. CMake derives the C++
-standard from the selected Torch build. Use a fresh build directory when
-changing Torch installations. CMake and Ninja are installed in each model
-venv's `bin/`; the C++ compiler and CUDA toolkit remain host prerequisites.
+Use `environments/build.sh` to configure and build `xinfer_attention_ops`,
+`xinfer_aoti`, `xinfer_validate`, `xinfer_benchmark` and the native contract
+tests into `build/` against the active venv's LibTorch:
 
 ```bash
-Q3_PY="$PWD/work/$TARGET/qwen3$ENV_SUFFIX/bin/python"
-Q35_PY="$PWD/work/$TARGET/qwen35$ENV_SUFFIX/bin/python"
-Q38_PY="$PWD/work/$TARGET/qwen38$ENV_SUFFIX/bin/python"
-Q3_BUILD="$PWD/build/qwen3"
-Q35_BUILD="$PWD/build/qwen35"
-Q38_BUILD="$PWD/build/qwen38"
-NVCC=/usr/local/cuda/bin/nvcc         # compatible toolkit used for this build
+PY="$PWD/work/$TARGET/venv/bin/python"
 
-for MODEL in qwen3 qwen35 qwen38; do
-  MODEL_ENV="$PWD/work/$TARGET/$MODEL$ENV_SUFFIX"
-  MODEL_PY="$MODEL_ENV/bin/python"
-  CMAKE="$MODEL_ENV/bin/cmake"
-  BUILD="$PWD/build/$MODEL"
-  TORCH_PREFIX=$("$MODEL_PY" -c 'import torch; print(torch.utils.cmake_prefix_path)')
-  CUDA_ARCH=$("$MODEL_PY" -c 'import torch; print("%d.%d" % torch.cuda.get_device_capability())')
-  CUDA_RUNTIME_FLAGS=()
-  if [ "$TARGET" = l20 ]; then
-    CUDA_RUNTIME=$("$MODEL_PY" -c 'from pathlib import Path; import torch; p = Path(torch.__file__).resolve().parent.parent / "nvidia/cuda_runtime/lib/libcudart.so.12"; assert p.is_file(), p; print(p)')
-    CUDA_RUNTIME_FLAGS=("-DCUDA_cudart_LIBRARY=$CUDA_RUNTIME" "-DCUDA_CUDART_LIBRARY=$CUDA_RUNTIME")
-  fi
-  PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" -S . -B "$BUILD" -G Ninja \
-    -DCMAKE_PREFIX_PATH="$TORCH_PREFIX" -DCMAKE_CUDA_COMPILER="$NVCC" \
-    "${CUDA_RUNTIME_FLAGS[@]}" \
-    -DTORCH_CUDA_ARCH_LIST="$CUDA_ARCH" -DCMAKE_BUILD_TYPE=Release \
-    -DXINFER_BUILD_VALIDATION=ON -DXINFER_BUILD_BENCHMARK=ON
-  PATH="$MODEL_ENV/bin:$PATH" "$CMAKE" --build "$BUILD" --target \
-    xinfer_attention_ops xinfer_aoti xinfer_validate xinfer_benchmark \
-    qwen_runtime_contract xinfer_state_contract xinfer_generation_contract -j2
-  bash environments/check.sh --python "$MODEL_PY" \
-    --target "$TARGET" --model "$MODEL" --build "$BUILD" \
-    --output "artifacts/$TARGET/$MODEL/$RUN/build-environment.json"
-done
+bash environments/build.sh --target "$TARGET" --python "$PY"
+"$PY" -m environments.check --target "$TARGET" --build build \
+  --output "artifacts/$TARGET/$RUN/build-environment.json"
 ```
+
+`environments/build.sh` resolves `torch.utils.cmake_prefix_path`, CUDA
+architecture (live GPU capability, `TORCH_CUDA_ARCH_LIST`, or the target
+default `8.9`/`12.1`), L20's Torch-supplied `libcudart.so.12` link flags, and
+offline `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` automatically, printing the
+exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
+`--nvcc PATH`, `--jobs N` (default `2`), `--targets LIST` (comma-separated
+subset), `--no-validation`, `--no-benchmark`.
 
 The compiler owns the `xinfer_attention_ops` target and its native sources in
-`compiler/common/kernels/`. It writes `libxinfer_attention_ops.so` into the same
-`build/<model>/` directory used by export and standalone operator tests.
+`compiler/common/kernels/`. It writes `libxinfer_attention_ops.so` into `build/`
+for export and standalone operator tests.
 The root build produces `xinfer_aoti` and, when enabled, the tooling workers
-`xinfer_benchmark` and `xinfer_validate` for both model families. The default
-build includes compiler kernels and the generation CLI. Selecting an explicit
-native target builds it independently; build `xinfer_attention_ops` separately
-before export or standalone attention tests. Model selection comes from package
-metadata; there is no separate full-model build switch. Kernel export/AOTI checks run
-through `compiler.common.tests.gated_delta_net.test_aoti`; they need no native kernel
+`xinfer_benchmark` and `xinfer_validate` for all model families. Model selection
+comes from package metadata; there is no separate model build switch.
+Kernel export/AOTI checks run through
+`compiler.common.tests.gated_delta_net.test_aoti`; they need no native kernel
 runner.
-Export entry points select the attention library from their own `build/<model>/`
-directory (`qwen3`, `qwen35` or `qwen38`), or `XINFER_ATTENTION_OPS_LIBRARY`.
-Numerical validation and benchmark tools select native executables by package
-`model_type` (`qwen3`, `qwen35` or `qwen38`); native-path options select another runtime.
-Qwen3.8 packages use `model_type="qwen38"` with the shared Qwen3.5 runtime and
-calling convention. Its runtime-check entry point is
-`tools.validation.qwen38.validate_runtime` and defaults to `build/qwen38/`.
 
-For Qwen3.8, use `Q38_PY` with `compiler.qwen38.export`,
-`tools.validation.qwen38.{validate_batch,validate_runtime}`, and the shared
-`tools.validation.validate` / `tools.benchmark` entry points; they default to
-`build/qwen38/` for `model_type="qwen38"` packages. Pass `--native`, `--binary`
-or `--cli` only when overriding that build directory, and set
-`XINFER_ATTENTION_OPS_LIBRARY="$Q38_BUILD/libxinfer_attention_ops.so"` when
-running shared Qwen3.5 standalone attention tests against the Qwen3.8 build.
+Export entry points load `build/libxinfer_attention_ops.so` by default (or
+`XINFER_ATTENTION_OPS_LIBRARY`). Numerical validation and benchmark tools
+default to native executables in `build/` and dispatch by package `model_type`
+(`qwen3`, `qwen35` or `qwen38`); native-path options (`--native`, `--binary`,
+`--cli`) select another build directory. Qwen3.8 packages use
+`model_type="qwen38"` with the shared Qwen3.5 runtime and calling convention.
 
-`--build` verifies that CMake selected the active environment's LibTorch. Build
-`xinfer_attention_ops` before either full-model export so Python can register
-the shared native FlashAttention operator. Both exporters embed
-`libxinfer_attention_ops.so` in each `.pt2`. The native executables load it through those packages and do not
-link or install a separate copy. Qwen3.5 also packages its GDN kernels.
+Build `xinfer_attention_ops` before full-model export so Python can register the
+shared native FlashAttention operator. Exporters embed
+`libxinfer_attention_ops.so` in each `.pt2`; native executables load it through
+those packages and do not link or install a separate copy.
 
-For L20, the two CMake runtime variables select CUDA 12.6 from the model
-installation for both Torch and CUDA discovery. This also supports a host
-compiler with an older compatible CUDA minor version; linking Torch 2.13 to an
-older host `libcudart` can leave unresolved runtime symbols. GB10 uses its CUDA
-13.0 runtime selection; the extra argument array is empty there.
+For L20, `build.sh` passes `-DCUDA_cudart_LIBRARY` and `-DCUDA_CUDART_LIBRARY`
+pointing to Torch's CUDA 12.6 runtime so host toolchains with an older CUDA
+minor version do not leave unresolved runtime symbols. GB10 uses its CUDA 13.0
+runtime selection directly.
 
 ## Prepare inputs and export
 
-After building, follow the [Qwen3](../compiler/qwen3/README.md#prepare-and-export)
-or [Qwen3.5](../compiler/qwen35/README.md#prepare-and-export) guide with `Q3_PY` or
-`Q35_PY` from the build section, or the
-[Qwen3.8 guide](../compiler/qwen38/README.md) with `Q38_PY`.
-Download once before enabling offline mode;
-export both entries into a fresh directory. The shared
+After building, follow the [Qwen3](../compiler/qwen3/README.md#prepare-and-export),
+[Qwen3.5](../compiler/qwen35/README.md#prepare-and-export) or
+[Qwen3.8](../compiler/qwen38/README.md) guide with `PY` from above.
+Download once before enabling offline mode; export both entries into a fresh
+directory. The shared
 [preparation tool](../docs/development-tools.md#checkpoint-preparation-and-tokenization)
 owns download, verification and token IDs. Current packaging uses a bundled
 native attention dependency; see the [contract](../docs/flash-attention.md#build-and-deployment).
 
 ## Install and relocate the runtime
 
-After building, install the project's runtime component into a fresh prefix.
-Either model's build contains the shared executables supporting both models;
-the example below installs from `build/qwen3/`.
+After building, install the project's runtime component from `build/` into a
+fresh prefix. The executables support all model families.
 GNUInstallDirs selects the executable directory, typically `bin/`.
 `xinfer_aoti` is always included; `xinfer_benchmark` and `xinfer_validate` are
 included when their build options are enabled. The focused
 `qwen_runtime_contract` helper remains a build-only target. The attention library
 is carried by each model package and is not installed in this prefix.
 `CMAKE_INSTALL_BINDIR` can customize the executable layout and must be relative.
-The following commands use the default `bin/` directory.
 
 ```bash
-CMAKE="$(dirname "$Q3_PY")/cmake"
-BUILD="$Q3_BUILD"
+CMAKE="$(dirname "$PY")/cmake"
+BUILD="$PWD/build"
 Q3_MODEL=work/models/qwen3-0.6b
 Q3_PACKAGES=artifacts/qwen3-flash
 Q3_ROOT="$PWD/work/$TARGET"
@@ -191,7 +144,7 @@ MOVED_PREFIX="$PWD/work/$TARGET/runtime-relocated"
 mv "$PREFIX" "$MOVED_PREFIX"
 "$MOVED_PREFIX/bin/xinfer_aoti" --help
 
-"$Q3_PY" -m tools.prepare encode --model-dir "$Q3_MODEL" \
+"$PY" -m tools.prepare encode --model-dir "$Q3_MODEL" \
   --prompt "What is the capital of France?" --output "$Q3_ROOT/install-prompt.ids"
 "$MOVED_PREFIX/bin/xinfer_aoti" "$Q3_PACKAGES" \
   "$Q3_ROOT/install-prompt.ids" "$Q3_ROOT/install-generated.ids" --max-output-tokens 8
@@ -217,10 +170,11 @@ destination host; moving an install prefix does not change the wrapper's ISA.
 
 ## Verify a new environment or bundle
 
-Run the [CPU checks](../docs/development-tools.md#cpu-unit-tests) with each model's
-interpreter, then its affected GPU operator/export/AOTI tests. CPU imports and
-build success alone do not establish GPU compatibility. Full-model checks use
-the shared [numerical chain and runtime tools](../docs/development-tools.md#python-validation-tools).
+Run the [CPU checks](../docs/development-tools.md#cpu-unit-tests) with the
+target interpreter, then the affected GPU operator/export/AOTI tests. CPU
+imports and build success alone do not establish GPU compatibility. Full-model
+checks use the shared
+[numerical chain and runtime tools](../docs/development-tools.md#python-validation-tools).
 Keep native/Python bitwise parity, structural state checks and the shared
 numerical limits strict; no cross-target bitwise equality is implied.
 
@@ -230,8 +184,7 @@ binary checksums. Record new results by model, device and capacity in
 [validation status](../docs/validation-status.md), without treating older results
 as a pass for a new build.
 
-The Docker lock files are complete resolved snapshots for the offline image,
-including image-specific tools. Refresh them and the wheel payload from the
-per-device/model requirements when changing pins; native setup does not regenerate
-Docker locks. See the [Docker guide](l20/docker/README.md) for offline transfer,
-launch and the temporary Nsight library-path workaround.
+The [L20 Docker image](l20/docker/README.md) builds directly from
+`environments/l20/requirements.txt` and `requirements-dev.txt` on
+`nvidia/cuda:12.6.3-devel-ubuntu24.04` with a single `/opt/xinfer/venv` (`$PY`)
+and preinstalled `nlohmann-json3-dev`.

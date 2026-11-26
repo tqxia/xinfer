@@ -244,7 +244,7 @@ class PackagePreflight(unittest.TestCase):
 class BundledAttention(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        load_attention_ops(model="qwen3")
+        load_attention_ops()
         cls.library = attention_library()
         temporary = tempfile.TemporaryDirectory()
         cls.addClassCleanup(temporary.cleanup)

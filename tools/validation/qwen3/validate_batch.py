@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from transformers import DynamicCache
 
-from compiler.common.artifacts import read_json, require
+from compiler.common.artifacts import default_build_dir, read_json, require
 from compiler.common.metadata import read_package_metadata
 from compiler.qwen3.model import ModelStep, load_model
 from tools.packages import validate_model_metadata, validate_shared_weights
@@ -113,7 +113,7 @@ def main():
     parser.add_argument("--packages", type=Path, required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--native", type=Path, default=Path("build/qwen3/xinfer_validate"))
+    parser.add_argument("--native", type=Path, default=default_build_dir() / "xinfer_validate")
     args = parser.parse_args()
     results = validate(args)
     raise SystemExit(any(item["required_failures"] for item in results.values()))

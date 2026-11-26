@@ -15,23 +15,23 @@ native parity alone do not establish full-model numerical acceptance.
 
 ## Prepare and export
 
-Select `Q35_PY` using the environment guide and build `xinfer_attention_ops` plus
-the native executables in `build/qwen35/`. The
-[L20 Docker guide](../../environments/l20/docker/README.md) provides an offline
-environment for full-model testing. Use sufficient GPU/host memory for ordinary
-export and the independent validation stages.
+Select `PY` using the environment guide and build `xinfer_attention_ops` plus
+the native executables in `build/`. The
+[L20 Docker guide](../../environments/l20/docker/README.md) provides a
+containerized environment for full-model testing. Use sufficient GPU/host memory
+for ordinary export and the independent validation stages.
 
 ```bash
-"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
-"$Q35_PY" -m compiler.qwen35.export \
+"$PY" -m tools.prepare download --model Qwen/Qwen3.5-0.8B
+"$PY" -m compiler.qwen35.export \
   --model-dir work/qwen35/0.8b/text --output artifacts/qwen35/0.8b/text
 ```
 
 For 4B, keep the prepared checkpoint and compiled bundle separate:
 
 ```bash
-"$Q35_PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
-"$Q35_PY" -m compiler.qwen35.export \
+"$PY" -m tools.prepare download --model Qwen/Qwen3.5-4B
+"$PY" -m compiler.qwen35.export \
   --model-dir work/qwen35/4b/text --output artifacts/qwen35/4b/text
 ```
 
@@ -201,19 +201,19 @@ The commands below use 0.8B. For 4B, substitute its model and package directorie
 consistently; validation infers the prepared model from package identity.
 
 ```bash
-"$Q35_PY" -m tools.prepare encode --model-dir work/qwen35/0.8b/text \
+"$PY" -m tools.prepare encode --model-dir work/qwen35/0.8b/text \
   --prompt "What is the capital of France?" --output work/qwen35-prompt.ids
-build/qwen35/xinfer_aoti artifacts/qwen35/0.8b/text \
+build/xinfer_aoti artifacts/qwen35/0.8b/text \
   work/qwen35-prompt.ids work/qwen35-generated.ids --max-output-tokens 64
-"$Q35_PY" -m tools.prepare decode --model-dir work/qwen35/0.8b/text \
+"$PY" -m tools.prepare decode --model-dir work/qwen35/0.8b/text \
   --input work/qwen35-generated.ids
 
-"$Q35_PY" -m tools.validation.validate \
+"$PY" -m tools.validation.validate \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/validation-new
-"$Q35_PY" -m tools.validation.qwen35.validate_batch \
+"$PY" -m tools.validation.qwen35.validate_batch \
   --packages artifacts/qwen35/0.8b/text --model-dir work/qwen35/0.8b/text \
   --output artifacts/qwen35/0.8b/batch-validation-new
-"$Q35_PY" -m tools.validation.qwen35.validate_runtime \
+"$PY" -m tools.validation.qwen35.validate_runtime \
   --packages artifacts/qwen35/0.8b/text --output artifacts/qwen35/0.8b/runtime-new
 ```
 
@@ -227,14 +227,14 @@ After the shared [CPU tests](../../docs/development-tools.md#cpu-unit-tests), ru
 these checks with CUDA visible and the native attention library built:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' "$Q35_PY" -m unittest compiler.common.tests.test_projection_gemv
-"$Q35_PY" -m unittest compiler.common.tests.test_attention \
+CUDA_VISIBLE_DEVICES='' "$PY" -m unittest compiler.common.tests.test_projection_gemv
+"$PY" -m unittest compiler.common.tests.test_attention \
   compiler.common.tests.test_projection_gemv_cuda compiler.qwen35.tests.test_export
-"$Q35_PY" -m unittest compiler.qwen35.tests.test_delta \
+"$PY" -m unittest compiler.qwen35.tests.test_delta \
   compiler.common.tests.gated_delta_net.test_recurrent \
   compiler.common.tests.gated_delta_net.test_batch \
   compiler.common.tests.gated_delta_net.test_chunked
-"$Q35_PY" -m unittest compiler.common.tests.gated_delta_net.test_aoti
+"$PY" -m unittest compiler.common.tests.gated_delta_net.test_aoti
 ```
 
 Kernel tests and tensor-level HF references live in

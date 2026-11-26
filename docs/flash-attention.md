@@ -59,7 +59,7 @@ not been measured for this implementation.
 Build the compiler-owned `xinfer_attention_ops` CMake target before export or
 standalone attention tests, using the selected model's LibTorch/CUDA stack and
 [environment build commands](../environments/README.md#build-compiler-kernels-and-native-runtimes-for-each-model).
-It writes `libxinfer_attention_ops.so` to `build/qwen3/` or `build/qwen35/`.
+It writes `libxinfer_attention_ops.so` to `build/`.
 `XINFER_ATTENTION_OPS_LIBRARY` selects another build-time library.
 Runtime executable targets build independently.
 

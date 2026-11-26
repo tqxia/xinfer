@@ -34,11 +34,11 @@ Context capacity is per row. At capacity 1,024 the eight-row allocation is
 buffers. The scalar generation and benchmark CLIs use B=1 from this same bundle.
 
 ```bash
-"$Q3_PY" -m compiler.qwen3.export --model-dir work/models/qwen3-0.6b \
+"$PY" -m compiler.qwen3.export --model-dir work/models/qwen3-0.6b \
   --max-context-length 1024 --output artifacts/qwen3-batched
-"$Q3_PY" -m tools.validation.qwen3.validate_batch \
+"$PY" -m tools.validation.qwen3.validate_batch \
   --model-dir work/models/qwen3-0.6b --packages artifacts/qwen3-batched \
-  --native build/qwen3/xinfer_validate --output artifacts/validation-batched
+  --output artifacts/validation-batched
 ```
 
 The batch validator exercises every B=1..8 on that bundle, comparing distinct
@@ -59,16 +59,16 @@ HF state differences remain diagnostic. See
 
 ## Prepare and export
 
-Run from the repository root with `Q3_PY` selected through the environment guide.
-Build `xinfer_attention_ops` and the native executables in `build/qwen3/` before
+Run from the repository root with `PY` selected through the environment guide.
+Build `xinfer_attention_ops` and the native executables in `build/` before
 export. Export-time Torch and native LibTorch must come from the same installation.
-Dependency pins live in the per-device
+Dependency pins live in the target
 [requirements files](../../environments/README.md#requirements-and-targets).
 
 ```bash
-"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
-"$Q3_PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
-"$Q3_PY" -m compiler.qwen3.export \
+"$PY" -m tools.prepare download --model Qwen/Qwen3-0.6B
+"$PY" -m tools.prepare download --model Qwen/Qwen3-1.7B
+"$PY" -m compiler.qwen3.export \
   --model-dir work/models/qwen3-0.6b --output artifacts/qwen3-flash
 ```
 
@@ -143,16 +143,16 @@ and generation live in `runtime/common/`.
 ## Generate and validate
 
 ```bash
-"$Q3_PY" -m tools.prepare encode --model-dir work/models/qwen3-0.6b \
+"$PY" -m tools.prepare encode --model-dir work/models/qwen3-0.6b \
   --prompt "What is the capital of France?" --output work/qwen3-prompt.ids
-build/qwen3/xinfer_aoti artifacts/qwen3-flash \
+build/xinfer_aoti artifacts/qwen3-flash \
   work/qwen3-prompt.ids work/qwen3-generated.ids --max-output-tokens 64
-"$Q3_PY" -m tools.prepare decode --model-dir work/models/qwen3-0.6b \
+"$PY" -m tools.prepare decode --model-dir work/models/qwen3-0.6b \
   --input work/qwen3-generated.ids
 
-AOTI_RUNTIME_CHECK_INPUTS=1 "$Q3_PY" -m tools.validation.validate \
+AOTI_RUNTIME_CHECK_INPUTS=1 "$PY" -m tools.validation.validate \
   --packages artifacts/qwen3-flash --output artifacts/qwen3-validation-new
-"$Q3_PY" -m tools.validation.qwen3.validate_runtime \
+"$PY" -m tools.validation.qwen3.validate_runtime \
   --packages artifacts/qwen3-flash --output artifacts/qwen3-runtime-new
 ```
 
@@ -170,7 +170,7 @@ Run the [CPU tests](../../docs/development-tools.md#cpu-unit-tests) in the match
 model environment. With CUDA visible and the attention library built:
 
 ```bash
-"$Q3_PY" -m unittest compiler.common.tests.test_attention \
+"$PY" -m unittest compiler.common.tests.test_attention \
   compiler.qwen3.tests.test_attention compiler.qwen3.tests.test_export
 ```
 

@@ -80,7 +80,7 @@ class Frontend(unittest.TestCase):
             self.assertIs(actual, sentinel.suite)
             self.assertIs(metadata, meta)
             self.assertEqual(native, binary)
-            build_dir.assert_called_once_with("qwen38")
+            build_dir.assert_called_once_with()
             suite.assert_called_once_with(TEXT_DIR, meta)
             unused.assert_not_called()
 
@@ -122,13 +122,11 @@ class Frontend(unittest.TestCase):
                 )
                 self.assertEqual(
                     args.binary,
-                    Path("custom/validate")
-                    if argv
-                    else default_build_dir("qwen38") / "xinfer_validate",
+                    Path("custom/validate") if argv else default_build_dir() / "xinfer_validate",
                 )
                 self.assertEqual(
                     args.cli,
-                    Path("custom/aoti") if argv else default_build_dir("qwen38") / "xinfer_aoti",
+                    Path("custom/aoti") if argv else default_build_dir() / "xinfer_aoti",
                 )
                 self.assertEqual(
                     args.output, Path("custom/out") if argv else ARTIFACT_DIR / "runtime-validation"
@@ -162,9 +160,7 @@ class Frontend(unittest.TestCase):
                 self.assertEqual(groups, ["fixture"])
                 self.assertEqual(
                     args.native,
-                    Path("custom/native")
-                    if explicit
-                    else default_build_dir("qwen38") / "xinfer_validate",
+                    Path("custom/native") if explicit else default_build_dir() / "xinfer_validate",
                 )
 
     def test_qwen38_entry_points_reject_qwen35_packages_and_forward_model_prompts(self):

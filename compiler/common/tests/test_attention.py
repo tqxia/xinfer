@@ -18,7 +18,7 @@ from compiler.common.tests.tensors import row_errors
 class PrefixFlash(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        load_attention_ops(model="qwen3")
+        load_attention_ops()
         cls.op = torch.ops.xinfer.batched_flash_attention.default
 
     def inputs(self, heads, kv_heads, dim, tokens, feature_stride=1, capacity=1024, batch_size=1):
