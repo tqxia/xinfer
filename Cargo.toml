@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "runtime",
-    "engine",
-    "server",
+    "runtime/core",
+    "runtime/engine",
+    "runtime/server",
     "tools/validation/native",
     "tools/benchmark/native",
 ]

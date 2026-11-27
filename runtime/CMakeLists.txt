@@ -21,7 +21,7 @@ set(XINFER_INSTALL_RUNTIME_DIRS "${XINFER_DEFAULT_INSTALL_RUNTIME_DIRS}" CACHE S
 
 function(xinfer_add_rust_shim target source)
   add_library(${target} STATIC ${source})
-  target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/runtime")
+  target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/runtime/core")
   target_compile_features(${target} PRIVATE cxx_std_${XINFER_CXX_STANDARD})
   target_compile_options(${target} PRIVATE ${TORCH_FLAGS} -Wall -Wextra -fPIC)
   target_link_libraries(${target} PRIVATE ${TORCH_LIBRARIES})
@@ -29,7 +29,7 @@ function(xinfer_add_rust_shim target source)
     ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endfunction()
 
-xinfer_add_rust_shim(xinfer_torch_shim shim/torch_shim.cpp)
+xinfer_add_rust_shim(xinfer_torch_shim core/shim/torch_shim.cpp)
 
 set(_xinfer_cudart "")
 foreach(_cand IN ITEMS CUDA_cudart_LIBRARY CUDA_CUDART_LIBRARY)
@@ -91,3 +91,6 @@ function(xinfer_add_rust_executable target package)
 endfunction()
 
 xinfer_add_rust_executable(xinfer_aoti xinfer-runtime)
+if(XINFER_BUILD_SERVER)
+  xinfer_add_rust_executable(xinfer_serve xinfer-server)
+endif()

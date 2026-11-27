@@ -11,4 +11,4 @@ path = "src/main.rs"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-xinfer-runtime = { path = "../../../runtime" }
+xinfer-runtime = { path = "../../../runtime/core" }

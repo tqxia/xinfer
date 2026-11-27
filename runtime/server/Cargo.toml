@@ -19,7 +19,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 xinfer-engine = { path = "../engine" }
-xinfer-runtime = { path = "../runtime" }
+xinfer-runtime = { path = "../core" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util"] }

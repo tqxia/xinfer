@@ -14,11 +14,14 @@ histories in local artifacts).
   export setup, including quantization policy. `compiler/common/` owns shared
   adapters, compilation, metadata and weight helpers; `compiler/common/kernels/`
   owns shared kernels and their C shims.
-- `runtime/` owns the Rust runtime crate (`xinfer-runtime`), the production
-  `xinfer_aoti` CLI, and its minimal static C++ LibTorch shim (`runtime/shim/`).
-- `engine/` owns the protocol-agnostic continuous-batching engine (`xinfer-engine`),
-  slot scheduler, sampler, and native tokenizer/chat templates.
-- `server/` owns the minimal OpenAI-compatible HTTP/SSE serving binary (`xinfer_serve`).
+- `runtime/` owns the native Rust execution and serving stack:
+  - `runtime/core/` owns the core Rust runtime crate (`xinfer-runtime`), the
+    production `xinfer_aoti` CLI, and its minimal static C++ LibTorch shim
+    (`runtime/core/shim/`).
+  - `runtime/engine/` owns the protocol-agnostic continuous-batching engine
+    (`xinfer-engine`), slot scheduler, sampler, and native tokenizer/chat templates.
+  - `runtime/server/` owns the minimal OpenAI-compatible HTTP/SSE serving binary
+    (`xinfer_serve`).
 - `tools/` owns preparation, validation and benchmarking, with native Rust
   drivers under `tools/{benchmark,validation}/native/`. Production compiler code
   must not depend on tooling.

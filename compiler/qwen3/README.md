@@ -137,8 +137,8 @@ Training, arbitrary masks and attention-weight outputs are unsupported.
 Prefill accepts padded widths 2–512 per call; decode accepts width one,
 including at position zero. The shared runner chunks longer prompts and requires
 prompt plus output budget to fit capacity.
-`runtime/src/spec.rs` checks model-specific geometry; loading, state handling
-and generation live in `runtime/src/`.
+`runtime/core/src/spec.rs` checks model-specific geometry; loading, state handling
+and generation live in `runtime/core/src/`.
 
 ## Generate and validate
 
