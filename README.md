@@ -37,9 +37,10 @@ see [package metadata](docs/package-metadata.md) and
 
 ## Runtime architecture
 
-The same native executables serve both model families. Metadata selects the
-model-specific ABI checks; `runtime/common/` owns loading, state, request
-validation, prompt chunking and prefill/decode dispatch.
+The same native Rust executables serve all model families. Metadata selects the
+model-specific ABI checks; `runtime/` (`xinfer-runtime` + a minimal static C++
+LibTorch shim in `runtime/shim/`) owns loading, state, request validation,
+prompt chunking and prefill/decode dispatch.
 
 ![Runtime architecture: a shared C++ runner executes prefill and decode models using shared weights and model state.](docs/diagrams/runtime-architecture.svg)
 

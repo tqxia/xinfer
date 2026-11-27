@@ -2,7 +2,7 @@
 
 This image builds directly from `nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`
 (CUDA 13.0.1 toolkit, `nvcc` 13.0, GCC 13.2, `ncu`) with Python 3.12,
-`nlohmann-json3-dev` (`3.11.3`), and a single virtual environment at
+a minimal Rust toolchain (`/opt/rust`), and a single virtual environment at
 `/opt/xinfer/venv` (`$PY`, first on `PATH`). Python and build dependencies come
 straight from [environments/pro5000/requirements.txt](../requirements.txt)
 (which includes [environments/requirements.txt](../../requirements.txt)) and
@@ -83,8 +83,7 @@ bash environments/build.sh --target pro5000 --python "$PY"
 "$PY" -m environments.check --target pro5000 --dev --build build
 ```
 
-`nlohmann-json3-dev` (`3.11.3`) is preinstalled in the image, so CMake resolves
-`nlohmann_json` via `find_package` without network access. Set
+Set `CARGO_NET_OFFLINE=true` (with a pre-populated `CARGO_HOME` cache) and
 `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` when running against
 pre-downloaded checkpoints under `/models`. Freshly build native targets and
 model packages on the target host rather than copying generated `.so` files

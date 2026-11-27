@@ -9,8 +9,8 @@ the current implementation without separate version fields.
 tooling. `compiler/common/compile.py` owns AOTI compilation and paired bundle
 publication; `compiler/common/weights.py` owns the shared-weight archive pool,
 verified manifest reading and shared tensor loading.
-`runtime/common/spec.h` is the C++ reader; `runtime/<model>/runtime.h` validates
-model-specific geometry and `runtime/common/state.h` implements state ownership.
+`runtime/src/spec.rs` is the native Rust reader and model-specific geometry
+validator; `runtime/src/state.rs` implements state ownership.
 
 ## Metadata fields
 
@@ -31,8 +31,8 @@ and `shared_weights` from benchmark comparison; shared weights are compared by
 logical identity and source mappings separately from their archive checksum.
 
 `model_type` identifies the package as `qwen3`, `qwen35` or `qwen38`.
-Qwen3.8 exports use `qwen38`; both `qwen35` and `qwen38` select the shared
-`runtime/qwen35/` implementation and state calling convention. Their identities
+Qwen3.8 exports use `qwen38`; both `qwen35` and `qwen38` share the same
+hybrid state validation and calling convention in `runtime/src/spec.rs`. Their identities
 remain distinct: the shared archive's embedded `identity.model` must match
 (`qwen3`, `qwen3.5` or `qwen3.8`, respectively).
 

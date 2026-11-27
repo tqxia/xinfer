@@ -2,7 +2,7 @@
 
 This image builds directly from `nvidia/cuda:12.6.3-devel-ubuntu24.04` (CUDA
 12.6.3 toolkit, `nvcc` 12.6.85, GCC 13.2, `ncu`) with Python 3.12,
-`nlohmann-json3-dev` (`3.11.3`), and a single virtual environment at
+a minimal Rust toolchain (`/opt/rust`), and a single virtual environment at
 `/opt/xinfer/venv` (`$PY`, first on `PATH`). Python and build dependencies come
 straight from [environments/l20/requirements.txt](../requirements.txt) (which
 includes [environments/requirements.txt](../../requirements.txt)) and
@@ -82,8 +82,7 @@ bash environments/build.sh --target l20 --python "$PY"
 "$PY" -m environments.check --target l20 --dev --build build
 ```
 
-`nlohmann-json3-dev` (`3.11.3`) is preinstalled in the image, so CMake resolves
-`nlohmann_json` via `find_package` without network access. Set
+Set `CARGO_NET_OFFLINE=true` (with a pre-populated `CARGO_HOME` cache) and
 `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` when running against
 pre-downloaded checkpoints under `/models`. Freshly build native targets and
 model packages on the target host rather than copying generated `.so` files

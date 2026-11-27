@@ -1,0 +1,62 @@
+// Links the tool-only validation shim (`libxinfer_validate_shim.a`) and LibTorch.
+// Cargo does not propagate `rustc-link-arg` from library dependencies, so each
+// executable crate emits its own LibTorch link flags and RUNPATH from CMake.
+use std::collections::HashMap;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=XINFER_LINK_CONFIG");
+    println!("cargo:rerun-if-env-changed=XINFER_NATIVE_DIR");
+
+    let config_path = env::var_os("XINFER_LINK_CONFIG")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("XINFER_NATIVE_DIR")
+                .map(|dir| PathBuf::from(dir).join("xinfer_rust_link.env"))
+        })
+        .expect("Set XINFER_LINK_CONFIG or XINFER_NATIVE_DIR to the CMake build directory");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+
+    let content = fs::read_to_string(&config_path)
+        .unwrap_or_else(|e| panic!("Cannot read {}: {e}", config_path.display()));
+    let mut cfg = HashMap::new();
+    for line in content.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            cfg.insert(k.trim().to_string(), v.trim().to_string());
+        }
+    }
+
+    let get = |key: &str| -> String {
+        cfg.get(key)
+            .cloned()
+            .unwrap_or_else(|| panic!("Missing {key} in {}", config_path.display()))
+    };
+
+    let shim_dir = get("SHIM_DIR");
+    let torch_lib_dir = get("TORCH_LIB_DIR");
+    let cudart_lib = get("CUDART_LIB");
+    let rpath = get("RPATH");
+    let rpath_link = get("RPATH_LINK");
+
+    println!("cargo:rustc-link-search=native={shim_dir}");
+    println!("cargo:rustc-link-lib=static=xinfer_validate_shim");
+
+    println!("cargo:rustc-link-arg=-Wl,--no-as-needed");
+    println!("cargo:rustc-link-arg={torch_lib_dir}/libtorch_cuda.so");
+    println!("cargo:rustc-link-arg={torch_lib_dir}/libtorch_cpu.so");
+    println!("cargo:rustc-link-arg={torch_lib_dir}/libtorch.so");
+    println!("cargo:rustc-link-arg=-Wl,--as-needed");
+    println!("cargo:rustc-link-arg={torch_lib_dir}/libc10_cuda.so");
+    println!("cargo:rustc-link-arg={torch_lib_dir}/libc10.so");
+    println!("cargo:rustc-link-arg={cudart_lib}");
+    println!("cargo:rustc-link-arg=-lstdc++");
+
+    if !rpath_link.is_empty() {
+        println!("cargo:rustc-link-arg=-Wl,-rpath-link,{rpath_link}");
+    }
+    if !rpath.is_empty() {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,{rpath}");
+    }
+}

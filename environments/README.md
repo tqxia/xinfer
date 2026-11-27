@@ -13,7 +13,8 @@ actually been tested; a supported environment is not a blanket model-acceptance 
 All supported models (Qwen3, Qwen3.5 and Qwen3.8) share one Python 3.12 virtual
 environment per target host. Compile native code on the target host against that
 environment's LibTorch. The host needs Python 3.12, Linux with glibc 2.28 or
-newer, a C++ compiler, a compatible CUDA toolkit and an NVIDIA driver. The
+newer, a C++ compiler, a Rust toolchain (`cargo`/`rustc`), a compatible CUDA
+toolkit and an NVIDIA driver. The
 export linker path uses Linux GCC.
 
 | Target | CPU architecture | Torch runtime | Torch CUDA | GPU capability |
@@ -60,7 +61,7 @@ refused and preserved. Supported options are `--target l20|pro5000|gb10`,
 Setup does not require a GPU.
 
 `python -m environments.check` verifies installed packages against the target
-requirements, Python 3.12, OS/architecture, native tools (`c++`, `nvcc`), Torch
+requirements, Python 3.12, OS/architecture, native tools (`c++`, `nvcc`, `cargo`, `rustc`), Torch
 CUDA build, C++ ABI and GPU capability. Pass `--dev` to also check formatting
 tools, and `--build PATH` to verify CMake's `Torch_DIR`. Failure reports are
 written before exiting nonzero.
@@ -68,9 +69,8 @@ written before exiting nonzero.
 ## Build compiler kernels and native runtimes
 
 Use `environments/build.sh` to configure and build `xinfer_attention_ops`,
-`xinfer_deltanet_ops`, `xinfer_aoti`, `xinfer_validate`, `xinfer_benchmark` and
-the native contract
-tests into `build/` against the active venv's LibTorch:
+`xinfer_deltanet_ops`, `xinfer_aoti`, `xinfer_validate`, and `xinfer_benchmark`
+into `build/` against the active venv's LibTorch:
 
 ```bash
 PY="$PWD/work/$TARGET/venv/bin/python"
@@ -82,9 +82,8 @@ bash environments/build.sh --target "$TARGET" --python "$PY"
 
 `environments/build.sh` resolves `torch.utils.cmake_prefix_path`, CUDA
 architecture (live GPU capability, `TORCH_CUDA_ARCH_LIST`, or the target
-default `8.9`/`12.0`/`12.1`), L20's Torch-supplied `libcudart.so.12` link flags, and
-offline `FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON` automatically, printing the
-exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
+default `8.9`/`12.0`/`12.1`), and L20's Torch-supplied `libcudart.so.12` link
+flags automatically, printing the exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
 `--nvcc PATH`, `--jobs N` (default `2`), `--targets LIST` (comma-separated
 subset), `--no-validation`, `--no-benchmark`.
 
@@ -135,8 +134,7 @@ After building, install the project's runtime component from `build/` into a
 fresh prefix. The executables support all model families.
 GNUInstallDirs selects the executable directory, typically `bin/`.
 `xinfer_aoti` is always included; `xinfer_benchmark` and `xinfer_validate` are
-included when their build options are enabled. The focused
-`qwen_runtime_contract` helper remains a build-only target. The attention library
+included when their build options are enabled. The attention library
 is carried by each model package and is not installed in this prefix.
 `CMAKE_INSTALL_BINDIR` can customize the executable layout and must be relative.
 
@@ -196,4 +194,4 @@ The [L20 Docker image](l20/docker/README.md) (`nvidia/cuda:12.6.3-devel-ubuntu24
 and [PRO 5000 Docker image](pro5000/docker/README.md)
 (`nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04`) build directly from their
 target `requirements.txt` and `requirements-dev.txt` with a single
-`/opt/xinfer/venv` (`$PY`) and preinstalled `nlohmann-json3-dev`.
+`/opt/xinfer/venv` (`$PY`) and a minimal Rust toolchain in `/opt/rust`.

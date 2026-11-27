@@ -14,9 +14,9 @@ histories in local artifacts).
   export setup, including quantization policy. `compiler/common/` owns shared
   adapters, compilation, metadata and weight helpers; `compiler/common/kernels/`
   owns shared kernels and their C shims.
-- `runtime/common/` owns shared native loading, state and generation;
-  model-specific headers validate their model's ABI.
-- `tools/` owns preparation, validation and benchmarking, with native C++
+- `runtime/` owns the Rust runtime crate (`xinfer-runtime`), the production
+  `xinfer_aoti` CLI, and its minimal static C++ LibTorch shim (`runtime/shim/`).
+- `tools/` owns preparation, validation and benchmarking, with native Rust
   drivers under `tools/{benchmark,validation}/native/`. Production compiler code
   must not depend on tooling.
 - `environments/` owns setup, target requirements, native builds and environment checks.
@@ -92,7 +92,7 @@ Preserve shared-weight ownership and metadata-driven state handling. Keep
 checkpoint manifests, metadata schemas and logical model identities uniform
 across model families without model sizes or separate format/schema version
 fields; put build diagnostics in export logs. Metadata or ABI changes must
-update shared Python writers/validators, C++ readers, tests and documentation
+update shared Python writers/validators, Rust runtime readers, tests and documentation
 together; re-export retained packages when contracts change.
 
 ## C++ spacing
@@ -106,11 +106,12 @@ Avoid leading blank lines inside function bodies and consecutive blank lines
 
 ## Verification and measurement
 
-Use the pinned Ruff and clang-format tools with repository configs: verify
-`ruff format --check .`, `ruff check --select E,F,W .`, and
-`clang-format --dry-run --Werror`. Run CPU unit tests via
-`CUDA_VISIBLE_DEVICES="" python -m unittest discover` rather than hand-picked
-module lists, and keep preflight and CPU contract checks runnable with
+Use the pinned Ruff, clang-format and Cargo tools with repository configs: verify
+`ruff format --check .`, `ruff check --select E,F,W .`,
+`clang-format --dry-run --Werror`, `cargo fmt --all --check`, and
+`cargo clippy --workspace --locked --all-targets -- -D warnings`. Run CPU unit tests via
+`CUDA_VISIBLE_DEVICES="" python -m unittest discover` and
+`CUDA_VISIBLE_DEVICES="" cargo test --workspace --locked`, and keep preflight and CPU contract checks runnable with
 `CUDA_VISIBLE_DEVICES=""`. Follow model guides for affected GPU, export/AOTI
 and native checks, and report what ran, what could not run and any failures.
 

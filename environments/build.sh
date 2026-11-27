@@ -17,9 +17,9 @@ Configure and build xinfer compiler kernels and native executables.
   --no-benchmark             Configure with -DXINFER_BUILD_BENCHMARK=OFF
   -h, --help                 Show this help
 
-Relative paths are resolved from the repository root. When
-FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON is set in the environment, CMake is
-configured offline with FETCHCONTENT_FULLY_DISCONNECTED=ON.
+Relative paths are resolved from the repository root. Set
+CARGO_NET_OFFLINE=true in the environment to build Rust targets offline
+against a pre-populated Cargo cache.
 EOF
 }
 
@@ -144,13 +144,6 @@ if [[ "$target" == "l20" ]]; then
   cmake_args+=(
     "-DCUDA_cudart_LIBRARY=$cuda_runtime"
     "-DCUDA_CUDART_LIBRARY=$cuda_runtime"
-  )
-fi
-
-if [[ -n "${FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON:-}" ]]; then
-  cmake_args+=(
-    "-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=$FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON"
-    -DFETCHCONTENT_FULLY_DISCONNECTED=ON
   )
 fi
 

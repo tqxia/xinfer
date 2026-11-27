@@ -126,12 +126,12 @@ checks). Metadata selects the model ABI; native-path options override each tool'
 prompt chunking and dispatch. The [package contract](package-metadata.md)
 defines integrity checks, state ownership and compatibility.
 
-Python tools orchestrate workloads, references and reports. Their C++ workers live
-separately in [tools/benchmark/native](../tools/benchmark/native/) and
+Python tools orchestrate workloads, references and reports. Their native Rust
+workers live separately in [tools/benchmark/native](../tools/benchmark/native/) and
 [tools/validation/native](../tools/validation/native/); both reuse the shared
-runtime. `tools/CMakeLists.txt` builds these workers under the existing
-`XINFER_BUILD_BENCHMARK` and `XINFER_BUILD_VALIDATION` options. Executable paths
-and runtime installation are unchanged.
+`xinfer-runtime` crate. `tools/CMakeLists.txt` builds these workers under the
+existing `XINFER_BUILD_BENCHMARK` and `XINFER_BUILD_VALIDATION` options.
+Executable paths and runtime installation are unchanged.
 
 Generation stops at EOS or its output budget and refuses existing output/trace
 files and path aliases. Prompt plus `--max-output-tokens` must fit compiled
@@ -139,12 +139,12 @@ capacity; prompts are chunked into at most 512-token calls. Benchmark workloads
 consume all supplied tokens, including EOS. Validation records every logit and
 selected state checkpoints, with coverage described by its case manifest.
 
-With `XINFER_BUILD_VALIDATION=ON`, these native CPU contracts need neither model
+After configuring `build/`, native Rust CPU contracts need neither model
 packages nor a GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES='' build/xinfer_state_contract
-CUDA_VISIBLE_DEVICES='' build/xinfer_generation_contract
+XINFER_LINK_CONFIG=build/xinfer_rust_link.env CARGO_TARGET_DIR=build/rust \
+  CUDA_VISIBLE_DEVICES='' cargo test --workspace --locked
 ```
 
 See [runtime installation](../environments/README.md#install-and-relocate-the-runtime)

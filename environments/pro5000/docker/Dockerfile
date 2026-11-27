@@ -11,10 +11,15 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         python3.12 \
         python3.12-venv \
         python3.12-dev \
-        nlohmann-json3-dev \
+        curl \
         git \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+ENV RUSTUP_HOME=/opt/rust/rustup \
+    CARGO_HOME=/opt/rust/cargo
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path --profile minimal
 
 COPY environments/requirements.txt /tmp/xinfer/environments/requirements.txt
 COPY environments/pro5000/requirements.txt /tmp/xinfer/environments/pro5000/requirements.txt
@@ -30,7 +35,7 @@ RUN python3.12 -m venv /opt/xinfer/venv \
     && rm -rf /tmp/xinfer
 
 ENV PY=/opt/xinfer/venv/bin/python \
-    PATH="/opt/xinfer/venv/bin:${PATH}" \
+    PATH="/opt/xinfer/venv/bin:/opt/rust/cargo/bin:${PATH}" \
     CUDA_HOME=/usr/local/cuda \
     TORCH_CUDA_ARCH_LIST=12.0 \
     PYTHONNOUSERSITE=1 \

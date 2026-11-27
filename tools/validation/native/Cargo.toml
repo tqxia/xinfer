@@ -1,0 +1,14 @@
+[package]
+name = "xinfer-validate"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "xinfer_validate"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+xinfer-runtime = { path = "../../../runtime" }

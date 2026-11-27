@@ -25,6 +25,8 @@ def observed():
         native_tools={
             "c++": dict(path="/usr/bin/c++", version="g++ 11.2", exit_code=0),
             "nvcc": dict(path="/usr/local/cuda/bin/nvcc", version="nvcc 12.6", exit_code=0),
+            "cargo": dict(path="/opt/rust/cargo/bin/cargo", version="cargo 1.88.0", exit_code=0),
+            "rustc": dict(path="/opt/rust/cargo/bin/rustc", version="rustc 1.88.0", exit_code=0),
         },
         torch=dict(
             runtime_version="2.13.0+cu126",

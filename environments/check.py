@@ -114,7 +114,7 @@ def collect(requirements, build=None):
         python=dict(version=platform.python_version(), executable=sys.executable),
         platform=dict(system=platform.system(), machine=platform.machine()),
         packages={name: package_version(name) for name in requirements},
-        native_tools={name: native_tool(name) for name in ("c++", "nvcc")},
+        native_tools={name: native_tool(name) for name in ("c++", "nvcc", "cargo", "rustc")},
     )
     if build is not None:
         actual["build"] = configured_build(build)

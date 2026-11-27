@@ -74,7 +74,6 @@ class NativeBuildWrapper(unittest.TestCase):
             STUB_CUDART="/opt/torch/nvidia/cuda_runtime/lib/libcudart.so.12",
         )
         self.env.pop("TORCH_CUDA_ARCH_LIST", None)
-        self.env.pop("FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON", None)
 
     def run_build(self, *arguments, env=None):
         return subprocess.run(
@@ -111,7 +110,7 @@ class NativeBuildWrapper(unittest.TestCase):
         self.assertIn("-DXINFER_BUILD_BENCHMARK=ON", configure["args"])
         self.assertEqual(build["args"], ["--build", str(self.root / "build/custom"), "-j", "2"])
 
-    def test_gb10_omits_l20_cudart_and_forwards_offline_and_custom_flags(self):
+    def test_gb10_omits_l20_cudart_and_forwards_custom_flags(self):
         result = self.run_build(
             "--target",
             "gb10",
@@ -121,17 +120,11 @@ class NativeBuildWrapper(unittest.TestCase):
             "--no-benchmark",
             "--targets",
             "xinfer_attention_ops,xinfer_aoti",
-            env={"FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON": "/opt/deps/nlohmann_json"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         configure, build = self.calls()
         self.assertIn("-DTORCH_CUDA_ARCH_LIST=12.1", configure["args"])
         self.assertFalse(any("CUDA_cudart_LIBRARY" in arg for arg in configure["args"]))
-        self.assertIn(
-            "-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=/opt/deps/nlohmann_json",
-            configure["args"],
-        )
-        self.assertIn("-DFETCHCONTENT_FULLY_DISCONNECTED=ON", configure["args"])
         self.assertIn("-DXINFER_BUILD_VALIDATION=OFF", configure["args"])
         self.assertIn("-DXINFER_BUILD_BENCHMARK=OFF", configure["args"])
         self.assertEqual(
