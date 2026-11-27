@@ -154,6 +154,16 @@ def metadata_mutations():
             lambda m: m["entries"]["decode"].update(bytes=1),
             "Package file size mismatch",
         ),
+        (
+            "missing_tokenizer_metadata",
+            lambda m: m.pop("tokenizer"),
+            "Unsupported package metadata: tokenizer",
+        ),
+        (
+            "wrong_tokenizer_checksum",
+            lambda m: m["tokenizer"]["tokenizer.json"].update(sha256="0" * 64),
+            "Tokenizer checksum mismatch: tokenizer.json",
+        ),
     ]
     for field in (
         "entry_point",
@@ -193,6 +203,10 @@ def reject_metadata(args, env, metadata, directory, prompt):
         (packages / METADATA_FILE).write_text(json.dumps(modified))
         for kind in ("prefill", "decode"):
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
+        for tok_name in metadata.get("tokenizer", {}):
+            source = args.packages / tok_name
+            if source.is_file():
+                (packages / tok_name).symlink_to(source.resolve())
         (packages / "weights.safetensors").symlink_to(
             (args.packages / "weights.safetensors").resolve()
         )
@@ -228,6 +242,10 @@ def reject_archives(args, env, metadata, directory, prompt):
         (packages / METADATA_FILE).write_text(json.dumps(modified))
         for kind in ("prefill", "decode"):
             (packages / f"{kind}.pt2").symlink_to((args.packages / f"{kind}.pt2").resolve())
+        for tok_name in metadata.get("tokenizer", {}):
+            source = args.packages / tok_name
+            if source.is_file():
+                (packages / tok_name).symlink_to(source.resolve())
         output = packages / "generated.ids"
         run(
             [args.cli, packages, prompt, output],

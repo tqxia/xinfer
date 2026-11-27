@@ -258,12 +258,20 @@ def reject_metadata(packages, out, capital_prompt, env, run, report):
         report["rejections"].append(name)
 
 
+def symlink_tokenizer(packages, directory, metadata):
+    for name in metadata.get("tokenizer", {}):
+        source = packages / name
+        if source.is_file():
+            (directory / name).symlink_to(source.resolve())
+
+
 def package_fixture(packages, out, name, metadata, with_weights=False):
     directory = out / name
     directory.mkdir()
     (directory / METADATA_FILE).write_text(json.dumps(metadata))
     for kind in ("prefill", "decode"):
         (directory / f"{kind}.pt2").symlink_to((packages / f"{kind}.pt2").resolve())
+    symlink_tokenizer(packages, directory, metadata)
     if with_weights:
         (directory / "weights.safetensors").symlink_to((packages / "weights.safetensors").resolve())
     return directory
@@ -434,6 +442,7 @@ def reject_weights(packages, out, capital_prompt, env, run, report):
         (damaged / METADATA_FILE).write_text(json.dumps(metadata))
         for kind in ("prefill", "decode"):
             (damaged / (kind + ".pt2")).symlink_to((packages / (kind + ".pt2")).resolve())
+        symlink_tokenizer(packages, damaged, metadata)
         try:
             validate_shared_weights(damaged, metadata)
         except (ValueError, FileNotFoundError) as error:

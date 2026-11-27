@@ -214,6 +214,39 @@ impl ValidatedBundle {
             package_digests.insert(kind, digest);
         }
 
+        let declared_tokenizer = metadata
+            .get("tokenizer")
+            .and_then(Value::as_object)
+            .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+        for (name, entry) in declared_tokenizer {
+            let entry_obj = entry
+                .as_object()
+                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+            let expected_bytes = entry_obj
+                .get("bytes")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+            let expected_sha = entry_obj
+                .get("sha256")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+            let path = root.join(name);
+            require(
+                is_regular_file(&path),
+                format!("Tokenizer file is missing: {name}"),
+            )?;
+            let actual_bytes = fs::metadata(&path)?.len();
+            require(
+                actual_bytes == expected_bytes,
+                format!("Tokenizer file size mismatch: {name}"),
+            )?;
+            let digest = sha256_file(&path)?;
+            require(
+                digest == expected_sha,
+                format!("Tokenizer checksum mismatch: {name}"),
+            )?;
+        }
+
         let contract = metadata.get("shared_weights").ok_or_else(|| {
             Error::new("Shared weights metadata is required; re-export both packages")
         })?;

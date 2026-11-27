@@ -29,9 +29,10 @@ projections. Build `xinfer_attention_ops` before export; its library is embedded
 in both `.pt2` files and loaded by the standard AOTI loaders. See the
 [attention guide](docs/flash-attention.md) for the operator and packaging contract.
 
-The deployment bundle contains **four files**: `prefill.pt2`, `decode.pt2`,
-`weights.safetensors` and `metadata.json`. Graph dumps and build logs are
-export diagnostics. Deploy the complete bundle with matching LibTorch/CUDA;
+The deployment bundle contains `prefill.pt2`, `decode.pt2`,
+`weights.safetensors`, `metadata.json`, and bundled tokenizer files
+(`tokenizer.json`, `tokenizer_config.json`, and optional `chat_template.jinja`).
+Graph dumps and build logs are export diagnostics. Deploy the complete bundle with matching LibTorch/CUDA;
 see [package metadata](docs/package-metadata.md) and
 [runtime installation](environments/README.md#install-and-relocate-the-runtime).
 

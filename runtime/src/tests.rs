@@ -126,6 +126,10 @@ fn base_metadata(capacity: i64, model_type: &str) -> Value {
             "bytes": 1,
             "sha256": "c".repeat(64),
         },
+        "tokenizer": {
+            "tokenizer.json": { "bytes": 1, "sha256": "d".repeat(64) },
+            "tokenizer_config.json": { "bytes": 1, "sha256": "e".repeat(64) },
+        },
     })
 }
 
@@ -537,6 +541,13 @@ fn shared_weights_cpu_load_including_fp8_and_views() {
     let weights_sha = sha256_file(&weights_path).unwrap();
     let weights_bytes = fs::metadata(&weights_path).unwrap().len();
 
+    let tok_json = dir.path().join("tokenizer.json");
+    let tok_cfg = dir.path().join("tokenizer_config.json");
+    fs::write(&tok_json, b"{}").unwrap();
+    fs::write(&tok_cfg, b"{}").unwrap();
+    let tok_json_sha = sha256_file(&tok_json).unwrap();
+    let tok_cfg_sha = sha256_file(&tok_cfg).unwrap();
+
     let mut meta = base_metadata(512, "qwen3");
     meta["entries"]["prefill"] = json!({ "bytes": 12, "sha256": prefill_sha });
     meta["entries"]["decode"] = json!({ "bytes": 11, "sha256": decode_sha });
@@ -544,6 +555,10 @@ fn shared_weights_cpu_load_including_fp8_and_views() {
         "identity": identity_sha,
         "bytes": weights_bytes,
         "sha256": weights_sha,
+    });
+    meta["tokenizer"] = json!({
+        "tokenizer.json": { "bytes": 2, "sha256": tok_json_sha },
+        "tokenizer_config.json": { "bytes": 2, "sha256": tok_cfg_sha },
     });
     write_metadata(dir.path(), &meta);
 
@@ -856,4 +871,37 @@ fn tensor_chained_narrow_and_slice_preserves_offset() {
         }
     }
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn tokenizer_metadata_validation_and_file_checks() {
+    let mut with_template = base_metadata(512, "qwen35");
+    with_template["state"] = json!([
+        { "layer": 0, "kind": "conv", "shape": [8, 6144, 4], "dtype": "bfloat16" },
+        { "layer": 0, "kind": "recurrent", "shape": [8, 16, 128, 128], "dtype": "float32" },
+    ]);
+    with_template["tokenizer"]["chat_template.jinja"] =
+        json!({ "bytes": 4, "sha256": "f".repeat(64) });
+    validate_metadata(&with_template).unwrap();
+
+    let mut missing_tok = base_metadata(512, "qwen3");
+    missing_tok.as_object_mut().unwrap().remove("tokenizer");
+    assert_eq!(
+        validate_metadata(&missing_tok).unwrap_err().to_string(),
+        "Unsupported package metadata: tokenizer"
+    );
+
+    let mut unknown_file = base_metadata(512, "qwen3");
+    unknown_file["tokenizer"]["merges.txt"] = json!({ "bytes": 4, "sha256": "a".repeat(64) });
+    assert_eq!(
+        validate_metadata(&unknown_file).unwrap_err().to_string(),
+        "Unsupported package metadata: tokenizer"
+    );
+
+    let mut bad_bytes = base_metadata(512, "qwen3");
+    bad_bytes["tokenizer"]["tokenizer.json"]["bytes"] = json!(0);
+    assert_eq!(
+        validate_metadata(&bad_bytes).unwrap_err().to_string(),
+        "Unsupported package metadata: tokenizer"
+    );
 }

@@ -10,6 +10,9 @@ from compiler.common.artifacts import read_json, require, sha256
 
 METADATA_FILE = "metadata.json"
 ENTRY_KINDS = ("prefill", "decode")
+TOKENIZER_REQUIRED_FILES = ("tokenizer.json", "tokenizer_config.json")
+TOKENIZER_OPTIONAL_FILES = ("chat_template.jinja",)
+TOKENIZER_FILES = (*TOKENIZER_REQUIRED_FILES, *TOKENIZER_OPTIONAL_FILES)
 FIELDS = (
     "model_type",  # Model family used to select runtime behavior.
     "torch_version",  # PyTorch version used for export and compilation.
@@ -23,6 +26,7 @@ FIELDS = (
     "state",  # Ordered contiguous in-place state shapes and dtypes.
     "entries",  # Compiled prefill/decode .pt2 sizes and SHA-256 checksums.
     "shared_weights",  # Shared weight archive identity, size and SHA-256 checksum.
+    "tokenizer",  # Bundled tokenizer file sizes and SHA-256 checksums.
 )
 STATE_FIELDS = {"layer", "kind", "shape", "dtype"}
 KV_STATE_KINDS = ("key", "value")
@@ -188,6 +192,20 @@ def validate_metadata(metadata, model_type=None):
         and _digest(weights["identity"]),
         "shared_weights",
     )
+    tokenizer = m["tokenizer"]
+    _check(
+        isinstance(tokenizer, dict)
+        and set(TOKENIZER_REQUIRED_FILES) <= set(tokenizer)
+        and set(tokenizer) <= set(TOKENIZER_FILES)
+        and all(
+            isinstance(entry, dict)
+            and set(entry) == {"bytes", "sha256"}
+            and _integer(entry["bytes"], 1)
+            and _digest(entry["sha256"])
+            for entry in tokenizer.values()
+        ),
+        "tokenizer",
+    )
 
 
 def read_package_metadata(directory, model_type=None):
@@ -197,16 +215,26 @@ def read_package_metadata(directory, model_type=None):
 
 
 def finalize_metadata(metadata, *, directory, shared_weights):
-    """Attach publication facts for both entries and the shared archive, then validate."""
+    """Attach publication facts for entries, shared archive and tokenizer files, then validate."""
     directory = Path(directory)
     entries = {}
     for kind in ENTRY_KINDS:
         package_path = directory / f"{kind}.pt2"
         entries[kind] = dict(bytes=package_path.stat().st_size, sha256=sha256(package_path))
+    tokenizer = {}
+    for name in TOKENIZER_FILES:
+        tokenizer_path = directory / name
+        if tokenizer_path.is_file():
+            tokenizer[name] = dict(
+                bytes=tokenizer_path.stat().st_size, sha256=sha256(tokenizer_path)
+            )
+        elif name in TOKENIZER_REQUIRED_FILES:
+            raise ValueError(f"Tokenizer file is missing: {name}")
     result = dict(
         metadata,
         entries=entries,
         shared_weights=copy.deepcopy(shared_weights),
+        tokenizer=tokenizer,
     )
     validate_metadata(result)
     return result

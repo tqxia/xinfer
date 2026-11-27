@@ -143,6 +143,7 @@ def export_model(
             metadata=partial(bundle_metadata, model, checkpoint, capacity, model_type),
             native_libraries=[attention_library(), deltanet_library()],
             custom_op_shims={**attention_c_shims(), **deltanet_c_shims()},
+            tokenizer_dir=model_dir,
         )
     print(f"Saved prefill/decode bundle to {output}", flush=True)
 

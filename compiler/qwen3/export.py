@@ -105,6 +105,7 @@ def export_model(*, model_dir, output, max_context_length=None):
             metadata=partial(bundle_metadata, model, checkpoint, capacity),
             native_libraries=[attention_library()],
             custom_op_shims=attention_c_shims(),
+            tokenizer_dir=model_dir,
         )
     print(f"Saved prefill/decode bundle to {output}", flush=True)
 

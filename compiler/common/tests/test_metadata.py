@@ -56,6 +56,10 @@ def bundle_metadata(model_type="qwen3", *, cache_length=1024):
             bytes=1000000,
             sha256="b" * 64,
         ),
+        tokenizer={
+            "tokenizer.json": dict(bytes=256, sha256="c" * 64),
+            "tokenizer_config.json": dict(bytes=128, sha256="d" * 64),
+        },
     )
     return metadata
 
@@ -174,6 +178,7 @@ class PackageMetadata(unittest.TestCase):
             "cache_length",
             "max_prefill_tokens",
             "shared_weights",
+            "tokenizer",
         ):
             with self.subTest(missing=field):
                 metadata = bundle_metadata()
@@ -214,6 +219,35 @@ class PackageMetadata(unittest.TestCase):
         metadata["shared_weights"]["file"] = "weights.safetensors"
         with self.assertRaisesRegex(ValueError, "Unsupported package metadata: shared_weights"):
             validate_metadata(metadata)
+        optional = bundle_metadata()
+        optional["tokenizer"]["chat_template.jinja"] = dict(bytes=64, sha256="e" * 64)
+        validate_metadata(optional)
+        for bad_tokenizer in (
+            {},
+            {"tokenizer.json": dict(bytes=1, sha256="a" * 64)},
+            {
+                "tokenizer.json": dict(bytes=1, sha256="a" * 64),
+                "tokenizer_config.json": dict(bytes=1, sha256="a" * 64),
+                "merges.txt": dict(bytes=1, sha256="a" * 64),
+            },
+            {
+                "tokenizer.json": dict(bytes=0, sha256="a" * 64),
+                "tokenizer_config.json": dict(bytes=1, sha256="a" * 64),
+            },
+            {
+                "tokenizer.json": dict(bytes=1, sha256="bad"),
+                "tokenizer_config.json": dict(bytes=1, sha256="a" * 64),
+            },
+            {
+                "tokenizer.json": dict(bytes=True, sha256="a" * 64),
+                "tokenizer_config.json": dict(bytes=1, sha256="a" * 64),
+            },
+        ):
+            with self.subTest(tokenizer=bad_tokenizer):
+                metadata = bundle_metadata()
+                metadata["tokenizer"] = bad_tokenizer
+                with self.assertRaisesRegex(ValueError, "Unsupported package metadata: tokenizer"):
+                    validate_metadata(metadata)
 
     def test_state_contract_rejects_bad_bounds_legacy_layout_and_mutation(self):
         changes = [
@@ -263,6 +297,8 @@ class PackageMetadata(unittest.TestCase):
             metadata = bundle_metadata()
             for kind in ("prefill", "decode"):
                 (root / f"{kind}.pt2").write_bytes(kind.encode())
+            for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja"):
+                (root / name).write_bytes(name.encode())
             complete = finalize_metadata(
                 metadata,
                 directory=root,
@@ -272,6 +308,10 @@ class PackageMetadata(unittest.TestCase):
                 package = root / f"{kind}.pt2"
                 self.assertEqual(complete["entries"][kind]["bytes"], len(kind))
                 self.assertEqual(complete["entries"][kind]["sha256"], sha256(package))
+            for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja"):
+                path = root / name
+                self.assertEqual(complete["tokenizer"][name]["bytes"], len(name))
+                self.assertEqual(complete["tokenizer"][name]["sha256"], sha256(path))
             (root / METADATA_FILE).write_text(json.dumps(complete))
             loaded = read_package_metadata(root)
             self.assertEqual(loaded, complete)

@@ -26,7 +26,7 @@ pub use spec::{
     checked_device, configured_device, metadata_check, metadata_digest, metadata_integer,
     metadata_keys, parse_integer, read_json, torch_build_info, validate_metadata, ModelType, Spec,
     StateSpec, TorchBuildInfo, MAX_BATCH_SIZE, MAX_CACHE_LENGTH, MAX_PREFILL_TOKENS,
-    METADATA_FIELDS, METADATA_FILE,
+    METADATA_FIELDS, METADATA_FILE, TOKENIZER_OPTIONAL_FILES, TOKENIZER_REQUIRED_FILES,
 };
 pub use state::StatePolicy;
 pub use tensor::{

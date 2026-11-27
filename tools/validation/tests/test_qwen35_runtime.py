@@ -47,6 +47,10 @@ class AOTIRuntimeContract(unittest.TestCase):
                 bytes=1,
                 sha256="3" * 64,
             ),
+            tokenizer={
+                "tokenizer.json": dict(bytes=1, sha256="4" * 64),
+                "tokenizer_config.json": dict(bytes=1, sha256="5" * 64),
+            },
         )
         return value
 

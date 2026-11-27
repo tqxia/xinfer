@@ -19,7 +19,10 @@ pub const MAX_PREFILL_TOKENS: i64 = 512;
 // Keep cumulative int32 KV lengths across all compiled batch slots below i32::MAX.
 pub const MAX_CACHE_LENGTH: i64 = (i32::MAX as i64) / MAX_BATCH_SIZE;
 
-pub const METADATA_FIELDS: [&str; 12] = [
+pub const TOKENIZER_REQUIRED_FILES: [&str; 2] = ["tokenizer.json", "tokenizer_config.json"];
+pub const TOKENIZER_OPTIONAL_FILES: [&str; 1] = ["chat_template.jinja"];
+
+pub const METADATA_FIELDS: [&str; 13] = [
     "model_type",
     "torch_version",
     "cxx11_abi",
@@ -32,6 +35,7 @@ pub const METADATA_FIELDS: [&str; 12] = [
     "state",
     "entries",
     "shared_weights",
+    "tokenizer",
 ];
 
 /// Logical model family declared in `metadata.json` (`model_type`).
@@ -304,6 +308,24 @@ pub fn validate_metadata(metadata: &Value) -> Result<()> {
             && metadata_digest(&weights["sha256"]),
         "shared_weights",
     )?;
+
+    let tokenizer = obj["tokenizer"].as_object();
+    metadata_check(tokenizer.is_some(), "tokenizer")?;
+    let tokenizer = tokenizer.unwrap();
+    for required in TOKENIZER_REQUIRED_FILES {
+        metadata_check(tokenizer.contains_key(required), "tokenizer")?;
+    }
+    for (name, entry) in tokenizer {
+        let allowed = TOKENIZER_REQUIRED_FILES.contains(&name.as_str())
+            || TOKENIZER_OPTIONAL_FILES.contains(&name.as_str());
+        metadata_check(
+            allowed
+                && metadata_keys(entry, &["bytes", "sha256"])
+                && metadata_integer(&entry["bytes"], 1)
+                && metadata_digest(&entry["sha256"]),
+            "tokenizer",
+        )?;
+    }
 
     Ok(())
 }

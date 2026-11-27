@@ -4,13 +4,20 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
 import time
 
 import torch
 
 from compiler.common.artifacts import require, sha256
-from compiler.common.metadata import ENTRY_KINDS, METADATA_FILE, finalize_metadata
+from compiler.common.metadata import (
+    ENTRY_KINDS,
+    METADATA_FILE,
+    TOKENIZER_FILES,
+    TOKENIZER_REQUIRED_FILES,
+    finalize_metadata,
+)
 from compiler.common.weights import SharedWeightPool
 from compiler.patches.torch_2_13.aoti_constant_handles import owned_constant_handles
 
@@ -206,6 +213,7 @@ def compile_shared(
     metadata=None,
     native_libraries=(),
     custom_op_shims=None,
+    tokenizer_dir=None,
 ):
     """Compile both entries and publish one complete shared-weight bundle.
 
@@ -248,6 +256,14 @@ def compile_shared(
         require(isinstance(bundle_metadata, dict), "Package metadata must be an object")
         contract = pool.save(staging)
         if "model_type" in bundle_metadata:
+            require(tokenizer_dir is not None, "Full-model export requires tokenizer_dir")
+            source_dir = Path(tokenizer_dir)
+            for name in TOKENIZER_FILES:
+                source = source_dir / name
+                if source.is_file():
+                    shutil.copyfile(source, staging / name)
+                elif name in TOKENIZER_REQUIRED_FILES:
+                    raise ValueError(f"Tokenizer file is missing: {source}")
             bundle_metadata = finalize_metadata(
                 bundle_metadata,
                 directory=staging,

@@ -21,6 +21,17 @@ def validate_shared_weights(directory, metadata):
             require(package.is_file(), f"Package file is missing: {kind}")
             require(package.stat().st_size == entry["bytes"], "Package file size mismatch")
             require(sha256(package) == entry["sha256"], f"Package checksum mismatch: {kind}")
+        for name, entry in metadata["tokenizer"].items():
+            tokenizer_path = Path(directory) / name
+            require(tokenizer_path.is_file(), f"Tokenizer file is missing: {name}")
+            require(
+                tokenizer_path.stat().st_size == entry["bytes"],
+                f"Tokenizer file size mismatch: {name}",
+            )
+            require(
+                sha256(tokenizer_path) == entry["sha256"],
+                f"Tokenizer checksum mismatch: {name}",
+            )
     manifest = read_shared_weight_manifest(directory, metadata["shared_weights"])
     if "model_type" in metadata:
         model_type = {"qwen3": "qwen3", "qwen3.5": "qwen35", "qwen3.8": "qwen38"}.get(

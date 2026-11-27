@@ -37,6 +37,10 @@ def metadata(*, cache_length=1024):
             bytes=128,
             sha256="c" * 64,
         ),
+        tokenizer={
+            "tokenizer.json": dict(bytes=128, sha256="d" * 64),
+            "tokenizer_config.json": dict(bytes=64, sha256="e" * 64),
+        },
     )
     return result
 
@@ -112,6 +116,8 @@ class SharedWeightBundleContract(unittest.TestCase):
         self.bundle = Path(temporary.name)
         for kind in ("prefill", "decode"):
             (self.bundle / f"{kind}.pt2").write_bytes(f"{kind} package fixture".encode())
+        for name in ("tokenizer.json", "tokenizer_config.json"):
+            (self.bundle / name).write_bytes(f"{name} fixture".encode())
         self.write_archive("cpu-tied-view-fixture")
         self.metadata = dict(shared_weights=self.contract)
 
@@ -150,6 +156,13 @@ class SharedWeightBundleContract(unittest.TestCase):
             for kind in ("prefill", "decode")
         }
         value["shared_weights"] = self.contract
+        value["tokenizer"] = {
+            name: dict(
+                bytes=(self.bundle / name).stat().st_size,
+                sha256=sha256(self.bundle / name),
+            )
+            for name in ("tokenizer.json", "tokenizer_config.json")
+        }
         return value
 
     def test_complete_bundles_return_the_verified_manifest(self):
@@ -193,6 +206,27 @@ class SharedWeightBundleContract(unittest.TestCase):
                 meta = self.model_metadata()
                 with self.assertRaisesRegex(ValueError, "Package model identity mismatch"):
                     validate_shared_weights(self.bundle, meta)
+
+    def test_tokenizer_file_facts_fail_before_archive_access(self):
+        for field, value, error in (
+            ("bytes", 1, "Tokenizer file size mismatch: tokenizer.json"),
+            ("sha256", "0" * 64, "Tokenizer checksum mismatch: tokenizer.json"),
+        ):
+            with self.subTest(field=field):
+                meta = self.model_metadata()
+                meta["tokenizer"]["tokenizer.json"][field] = value
+                with patch("compiler.common.weights.read_shared_weight_manifest") as archive:
+                    with self.assertRaisesRegex(ValueError, error):
+                        validate_shared_weights(self.bundle, meta)
+                    archive.assert_not_called()
+        meta = self.model_metadata()
+        meta["tokenizer"]["chat_template.jinja"] = dict(bytes=10, sha256="a" * 64)
+        with patch("compiler.common.weights.read_shared_weight_manifest") as archive:
+            with self.assertRaisesRegex(
+                ValueError, "Tokenizer file is missing: chat_template.jinja"
+            ):
+                validate_shared_weights(self.bundle, meta)
+            archive.assert_not_called()
 
     def test_missing_shared_weights_contract_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "metadata is required"):

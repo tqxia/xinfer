@@ -1,8 +1,10 @@
 # Package metadata
 
-All supported models deploy **four files** together: `prefill.pt2`, `decode.pt2`,
-`weights.safetensors` and `metadata.json`. Metadata and model interfaces follow
-the current implementation without separate version fields.
+All supported models deploy one self-contained bundle directory containing
+`prefill.pt2`, `decode.pt2`, `weights.safetensors`, `metadata.json`, and the
+bundled tokenizer files (`tokenizer.json`, `tokenizer_config.json`, and optional
+`chat_template.jinja`). Metadata and model interfaces follow the current
+implementation without separate version fields.
 
 `compiler/common/metadata.py` writes and validates the common format.
 `tools/packages.py` owns model ABI and shared-weight bundle checks for Python
@@ -24,6 +26,7 @@ validator; `runtime/src/state.rs` implements state ownership.
 | `state` | Ordered contiguous in-place state descriptors (`layer`, `kind`, `shape`, `dtype`) |
 | `entries` | Per-entry (`prefill`, `decode`) `.pt2` byte sizes and SHA-256 checksums |
 | `shared_weights` | Shared `weights.safetensors` logical identity, byte size and SHA-256 checksum |
+| `tokenizer` | Bundled tokenizer file byte sizes and SHA-256 checksums (`tokenizer.json`, `tokenizer_config.json`, optional `chat_template.jinja`) |
 
 Missing/unknown fields and retired aliases are rejected.
 `COMPARISON_EXCLUDED_FIELDS` in `compiler/common/metadata.py` excludes `entries`
