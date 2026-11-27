@@ -552,6 +552,20 @@ impl Tensor {
         Ok(token)
     }
 
+    /// Computes `argmax(-1)` on GPU for a 2D `[batch, vocab]` logits tensor and returns
+    /// one host `i64` token ID per row.
+    pub fn argmax_batch(&self) -> Result<Vec<i64>> {
+        let sizes = self.sizes()?;
+        require(sizes.len() == 2, "Expected 2D [batch, vocab] logits")?;
+        let batch = usize::try_from(sizes[0])
+            .map_err(|_| Error::invalid_input("Invalid logits batch size"))?;
+        let mut tokens = vec![0i64; batch];
+        shim_call(|err| unsafe {
+            torch_sys::xinfer_shim_argmax_batch(self.raw(), tokens.as_mut_ptr(), batch, err)
+        })?;
+        Ok(tokens)
+    }
+
     /// Copy contiguous BF16 CUDA/CPU logits to host FP32 (matching C++ `write_logits`).
     pub fn bf16_to_f32_host(&self) -> Result<Vec<f32>> {
         require(

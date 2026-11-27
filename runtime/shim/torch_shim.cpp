@@ -9,7 +9,10 @@
 #include <torch/csrc/inductor/aoti_torch/utils.h>
 #include <torch/version.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -47,6 +50,56 @@ const at::Tensor &require_tensor(AtenTensorHandle handle, const char *message) {
   if (!tensor || !tensor->defined())
     throw std::runtime_error(message);
   return *tensor;
+}
+
+int64_t sample_cdf(const at::Tensor &probs, float uniform) {
+  auto cdf = probs.cumsum(-1);
+  const float u = std::clamp(uniform, 0.0f, 0.99999994f);
+  auto u_tensor = at::full({1}, static_cast<double>(u), cdf.options());
+  const int64_t pos = at::searchsorted(cdf, u_tensor, false, true).item<int64_t>();
+  return std::clamp<int64_t>(pos, 0, probs.size(0) - 1);
+}
+
+at::Tensor apply_top_p(const at::Tensor &sorted_probs, float top_p) {
+  auto cdf = sorted_probs.cumsum(-1);
+  // Keep every token whose preceding cumulative mass is strictly below top_p,
+  // always retaining at least the highest-probability token.
+  auto keep = (cdf - sorted_probs) < static_cast<double>(top_p);
+  keep[0] = true;
+  auto filtered = sorted_probs.masked_fill(keep.logical_not(), 0.0);
+  auto total = filtered.sum();
+  return filtered / total;
+}
+
+int64_t sample_row(const at::Tensor &row, const XinferSampleRow &param) {
+  if (param.temperature <= 0.0f)
+    return row.argmax(-1).item<int64_t>();
+  if (!std::isfinite(param.temperature))
+    throw std::runtime_error("Sampling temperature must be finite");
+
+  const int64_t vocab = row.size(0);
+  auto scores = row.to(at::kFloat) / static_cast<double>(param.temperature);
+  const int64_t top_k = param.top_k > 0 ? std::min<int64_t>(param.top_k, vocab) : 0;
+  const bool use_top_p = param.top_p > 0.0f && param.top_p < 1.0f;
+
+  if (top_k > 0) {
+    auto [values, indices] = at::topk(scores, top_k, -1, true, true);
+    auto probs = at::softmax(values, -1);
+    if (use_top_p)
+      probs = apply_top_p(probs, param.top_p);
+    const int64_t pos = sample_cdf(probs, param.uniform);
+    return indices[pos].item<int64_t>();
+  }
+
+  if (use_top_p) {
+    auto [values, indices] = at::sort(scores, -1, true);
+    auto probs = apply_top_p(at::softmax(values, -1), param.top_p);
+    const int64_t pos = sample_cdf(probs, param.uniform);
+    return indices[pos].item<int64_t>();
+  }
+
+  auto probs = at::softmax(scores, -1);
+  return sample_cdf(probs, param.uniform);
 }
 
 } // namespace
@@ -134,5 +187,54 @@ int xinfer_shim_argmax(AtenTensorHandle logits, int64_t *token, XinferError *err
   return xinfer_shim_call(error, [&] {
     const auto &tensor = require_tensor(logits, "No logits; execute a step first");
     *token = tensor.argmax(-1).item<int64_t>();
+  });
+}
+
+int xinfer_shim_argmax_batch(AtenTensorHandle logits, int64_t *tokens, size_t count,
+                             XinferError *error) noexcept {
+  return xinfer_shim_call(error, [&] {
+    const auto &tensor = require_tensor(logits, "No logits; execute a step first");
+    if (tensor.dim() != 2 || static_cast<size_t>(tensor.size(0)) != count)
+      throw std::runtime_error("Argmax batch size mismatch");
+    if (count == 0)
+      return;
+    auto ids = tensor.argmax(-1).to(at::kCPU, at::kLong, false, false).contiguous();
+    std::memcpy(tokens, ids.const_data_ptr<int64_t>(), count * sizeof(int64_t));
+  });
+}
+
+int xinfer_shim_sample_batch(AtenTensorHandle logits, const XinferSampleRow *params,
+                             const uint8_t *active, int64_t *out_tokens, size_t count,
+                             XinferError *error) noexcept {
+  return xinfer_shim_call(error, [&] {
+    const auto &tensor = require_tensor(logits, "Null logits tensor handle");
+    if (tensor.dim() != 2 || static_cast<size_t>(tensor.size(0)) != count)
+      throw std::runtime_error("Sampler batch size mismatch");
+    if (count == 0)
+      return;
+
+    bool all_greedy = true;
+    for (size_t i = 0; i < count; ++i) {
+      if (active[i] && params[i].temperature > 0.0f) {
+        all_greedy = false;
+        break;
+      }
+    }
+
+    if (all_greedy) {
+      auto ids = tensor.argmax(-1).to(at::kCPU, at::kLong, false, false).contiguous();
+      const auto *src = ids.const_data_ptr<int64_t>();
+      for (size_t i = 0; i < count; ++i)
+        out_tokens[i] = active[i] ? src[i] : 0;
+      return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+      if (!active[i]) {
+        out_tokens[i] = 0;
+        continue;
+      }
+      out_tokens[i] = sample_row(tensor[static_cast<int64_t>(i)], params[i]);
+    }
   });
 }

@@ -14,7 +14,7 @@ pub mod tensor;
 pub mod torch_sys;
 pub mod weights;
 
-pub use error::{require, Error, Result};
+pub use error::{require, require_kind, Error, ErrorKind, Result};
 pub use io::{
     create_output_file, path_exists, weakly_canonical, write_output_file, write_tensor_bytes,
 };

@@ -9,9 +9,9 @@ use serde_json::{json, Value};
 use crate::{
     check_view_bounds, contiguous_strides, generate_with, parse_integer, prefill_with,
     read_safetensors_metadata, sha256_file, torch_build_info, validate_metadata, DType, Device,
-    Error, Model, ModelType, Result, SharedWeights, Spec, StatePolicy, StateSpec, StepDriver,
-    Tensor, ValidatedBundle, MAX_BATCH_SIZE, MAX_CACHE_LENGTH, METADATA_FILE, SHARED_WEIGHTS_FILE,
-    SHARED_WEIGHTS_MANIFEST_KEY,
+    Error, ErrorKind, Model, ModelType, Result, SharedWeights, Spec, StatePolicy, StateSpec,
+    StepDriver, Tensor, ValidatedBundle, MAX_BATCH_SIZE, MAX_CACHE_LENGTH, METADATA_FILE,
+    SHARED_WEIGHTS_FILE, SHARED_WEIGHTS_MANIFEST_KEY,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -886,10 +886,9 @@ fn tokenizer_metadata_validation_and_file_checks() {
 
     let mut missing_tok = base_metadata(512, "qwen3");
     missing_tok.as_object_mut().unwrap().remove("tokenizer");
-    assert_eq!(
-        validate_metadata(&missing_tok).unwrap_err().to_string(),
-        "Unsupported package metadata: tokenizer"
-    );
+    let err = validate_metadata(&missing_tok).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::Unsupported);
+    assert_eq!(err.to_string(), "Unsupported package metadata: tokenizer");
 
     let mut unknown_file = base_metadata(512, "qwen3");
     unknown_file["tokenizer"]["merges.txt"] = json!({ "bytes": 4, "sha256": "a".repeat(64) });
@@ -904,4 +903,167 @@ fn tokenizer_metadata_validation_and_file_checks() {
         validate_metadata(&bad_bytes).unwrap_err().to_string(),
         "Unsupported package metadata: tokenizer"
     );
+}
+
+#[test]
+fn state_reset_slot_updates_only_target_row() {
+    // Use 16-byte-aligned row strides matching production AOTI state descriptors.
+    let aligned_spec = |kind: &str| {
+        let shape = if kind == "conv" {
+            vec![3, 2, 4]
+        } else {
+            vec![3, 2, 2, 4]
+        };
+        let stride = contiguous_strides(&shape);
+        StateSpec {
+            name: format!("layer_0.{kind}"),
+            kind: kind.to_string(),
+            layer: 0,
+            shape,
+            stride,
+            dtype: if kind == "recurrent" {
+                DType::Float32
+            } else {
+                DType::BFloat16
+            },
+        }
+    };
+    let specs = vec![
+        aligned_spec("conv"),
+        aligned_spec("recurrent"),
+        aligned_spec("key"),
+        aligned_spec("value"),
+    ];
+    let mut state = StatePolicy::new(specs, Device::Cpu, Some(3)).unwrap();
+    state.reset(7.0).unwrap();
+
+    // Write distinct non-zero values into every row of conv/recurrent and KV.
+    for (idx, tensor) in state.tensors_mut().iter_mut().enumerate() {
+        for slot in 0..3i64 {
+            let mut row = tensor.narrow_dim0(slot, 1).unwrap();
+            row.fill_scalar((slot + 1 + idx as i64) as f64).unwrap();
+        }
+    }
+
+    // Resetting slot 1 with fill_kv=None zeroes conv/recurrent row 1 while leaving KV and rows 0,2 intact.
+    state.reset_slot(1, None).unwrap();
+    for (idx, tensor) in state.tensors().iter().enumerate() {
+        let row0 = tensor_f32_values(&tensor.narrow_dim0(0, 1).unwrap());
+        let row1 = tensor_f32_values(&tensor.narrow_dim0(1, 1).unwrap());
+        let row2 = tensor_f32_values(&tensor.narrow_dim0(2, 1).unwrap());
+        assert!(row0.iter().all(|&v| v == (1 + idx) as f32));
+        assert!(row2.iter().all(|&v| v == (3 + idx) as f32));
+        if idx < 2 {
+            // conv, recurrent
+            assert!(row1.iter().all(|&v| v == 0.0));
+        } else {
+            // key, value untouched when fill_kv is None
+            assert!(row1.iter().all(|&v| v == (2 + idx) as f32));
+        }
+    }
+
+    // Out-of-bounds slot fails with InvalidInput.
+    let err = state.reset_slot(3, None).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidInput);
+}
+
+#[test]
+fn tensor_argmax_batch_selects_per_row_max_on_cpu() {
+    let logits = Tensor::empty_contiguous(&[3, 5], DType::Float32, Device::Cpu).unwrap();
+    let ptr = logits.data_ptr().unwrap().cast::<f32>();
+    let values: [f32; 15] = [
+        -1.0, 2.5, 0.0, 1.0, -3.0, // max at 1
+        0.1, 0.2, 0.3, 0.4, 9.5, // max at 4
+        7.0, 6.0, 5.0, 4.0, 3.0, // max at 0
+    ];
+    unsafe {
+        std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len());
+    }
+    assert_eq!(logits.argmax_batch().unwrap(), vec![1, 4, 0]);
+}
+
+#[test]
+fn spec_error_kinds_distinguish_input_vs_capacity() {
+    let dir = TempDir::new("err-kinds");
+    write_metadata(dir.path(), &base_metadata(512, "qwen3"));
+    let spec = Spec::load(dir.path()).unwrap();
+
+    assert_eq!(
+        spec.check_tokens(&[]).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        spec.check_tokens(&vec![1; 513]).unwrap_err().kind(),
+        ErrorKind::CapacityExceeded
+    );
+    assert_eq!(
+        spec.check_request(&[1, 2], 0).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    assert_eq!(
+        spec.check_request(&[1, 2], 511).unwrap_err().kind(),
+        ErrorKind::CapacityExceeded
+    );
+}
+
+#[test]
+#[ignore = "requires GPU and XINFER_PACKAGES"]
+fn gpu_step_slot_and_reset_slot_match_batch_bitwise() {
+    let dir = PathBuf::from(
+        std::env::var("XINFER_PACKAGES").expect("Set XINFER_PACKAGES to a compiled bundle"),
+    );
+    let model = Model::open(&dir).unwrap();
+    let mut session = model.open_session(Some(4)).unwrap();
+
+    // Baseline: generate 4 tokens on slot 0 for two distinct prompts.
+    let prompt_a = [42i64, 13, 99, 7];
+    let prompt_b = [11i64, 22, 33];
+    let expected_a = session.generate(&prompt_a, 4, None).unwrap();
+    let expected_b = session.generate(&prompt_b, 4, None).unwrap();
+
+    // Now test slot 2 directly via step_slot (non-zero storage_offset) + interior hole in step_slots_range.
+    session.reset(0.0).unwrap();
+    let logits_a0 = session.step_slot(0, &prompt_a).unwrap();
+    let tok_a0 = logits_a0.argmax_batch().unwrap()[0];
+    assert_eq!(tok_a0, expected_a[0]);
+
+    // Prefill prompt_b directly into slot 2 (leaving slot 1 as an untouched hole!).
+    let logits_b0 = session.step_slot(2, &prompt_b).unwrap();
+    let tok_b0 = logits_b0.argmax_batch().unwrap()[0];
+    assert_eq!(tok_b0, expected_b[0]);
+
+    // Batched decode across slots 0..=2 with slot 1 as an empty hole.
+    let mut got_a = vec![tok_a0];
+    let mut got_b = vec![tok_b0];
+    for _ in 1..4 {
+        let last_a = [*got_a.last().unwrap()];
+        let last_b = [*got_b.last().unwrap()];
+        let logits = session
+            .step_slots_range(0, &[&last_a, &[], &last_b])
+            .unwrap();
+        let next = logits.argmax_batch().unwrap();
+        got_a.push(next[0]);
+        got_b.push(next[2]);
+    }
+    assert_eq!(got_a, expected_a);
+    assert_eq!(got_b, expected_b);
+
+    // Recycle slot 2 with prompt_a (exercises reset_slot for DeltaNet + KV overwrite) and verify exact parity.
+    session.reset_slot(2).unwrap();
+    let mut recycled = Vec::new();
+    let mut tok = session
+        .step_slot(2, &prompt_a)
+        .unwrap()
+        .argmax_batch()
+        .unwrap()[0];
+    recycled.push(tok);
+    for _ in 1..4 {
+        tok = session
+            .step_slot(2, &[tok])
+            .unwrap()
+            .argmax_batch()
+            .unwrap()[0];
+        recycled.push(tok);
+    }
+    assert_eq!(recycled, expected_a);
 }

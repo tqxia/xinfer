@@ -52,6 +52,7 @@ previous state. The weight pool outlives both loaders.
 | Executable | Purpose |
 | --- | --- |
 | `xinfer_aoti` | Greedy generation from token IDs, stopping at EOS or the output budget. |
+| `xinfer_serve` | OpenAI-compatible HTTP/SSE server with continuous batching (`B=1..8`) and interleaved chunked prefill. |
 | `xinfer_benchmark` | Fixed-token prefill/decode timing and memory measurements. |
 | `xinfer_validate` | Logit/state traces and runtime correctness checks. |
 
@@ -118,15 +119,19 @@ Use idle-GPU checks and repeated measurements for performance conclusions.
 - **CPU portability:** compiled wrappers can inherit the build host's instruction
   set. CPU compatibility is not checked; use a compatible CPU or re-export on
   the destination host.
-- **Scope:** batch-one text generation; no native tokenizer, serving API or
-  concurrent request scheduler. CUDA Graph integration is deferred.
+- **Scope:** native text generation and OpenAI-compatible HTTP/SSE serving
+  (`xinfer_serve`) with dynamic `B=1..8` continuous batching, interleaved
+  chunked prefill, and bundled native tokenization/chat templates. PagedAttention,
+  packed 1D ragged batching, `B > 8`, and CUDA Graph integration are deferred.
 
 ## Code and documentation map
 
 | Location | Responsibility |
 | --- | --- |
 | [`compiler/`](compiler/) | Model loading, adapters, graph passes, kernels and paired export; common metadata, weight and packaging helpers. |
-| [`runtime/`](runtime/) | Shared C++ runner, generation CLI and model-specific ABI checks. |
+| [`runtime/`](runtime/) | Core Rust runtime (`xinfer-runtime`), `xinfer_aoti` CLI, minimal static C++ LibTorch shim, and model-specific ABI checks. |
+| [`engine/`](engine/) | Protocol-agnostic continuous-batching engine (`xinfer-engine`), interleaved chunked prefill scheduler, GPU-assisted sampling, and native tokenizer/chat templates. |
+| [`server/`](server/) | Minimal OpenAI-compatible HTTP/SSE serving binary (`xinfer_serve`). |
 | [`tools/`](tools/) | Checkpoint preparation, numerical validation and benchmarks; native validation and benchmark drivers in their `native/` subdirectories. |
 | [`environments/`](environments/README.md) | Per-device/model dependency pins, setup, checks, builds and deployment. |
 | [`plugins/xinfer-perf/`](plugins/xinfer-perf/README.md) | Fusion and kernel optimization workflows for GB10 in Codex and Claude Code. |

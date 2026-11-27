@@ -106,6 +106,7 @@ class NativeBuildWrapper(unittest.TestCase):
             "-DCUDA_CUDART_LIBRARY=/opt/torch/nvidia/cuda_runtime/lib/libcudart.so.12",
             configure["args"],
         )
+        self.assertIn("-DXINFER_BUILD_SERVER=ON", configure["args"])
         self.assertIn("-DXINFER_BUILD_VALIDATION=ON", configure["args"])
         self.assertIn("-DXINFER_BUILD_BENCHMARK=ON", configure["args"])
         self.assertEqual(build["args"], ["--build", str(self.root / "build/custom"), "-j", "2"])
@@ -116,6 +117,7 @@ class NativeBuildWrapper(unittest.TestCase):
             "gb10",
             "--jobs",
             "4",
+            "--no-server",
             "--no-validation",
             "--no-benchmark",
             "--targets",
@@ -125,6 +127,7 @@ class NativeBuildWrapper(unittest.TestCase):
         configure, build = self.calls()
         self.assertIn("-DTORCH_CUDA_ARCH_LIST=12.1", configure["args"])
         self.assertFalse(any("CUDA_cudart_LIBRARY" in arg for arg in configure["args"]))
+        self.assertIn("-DXINFER_BUILD_SERVER=OFF", configure["args"])
         self.assertIn("-DXINFER_BUILD_VALIDATION=OFF", configure["args"])
         self.assertIn("-DXINFER_BUILD_BENCHMARK=OFF", configure["args"])
         self.assertEqual(

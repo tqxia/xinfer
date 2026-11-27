@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::error::{require, Error, Result};
+use crate::error::{require, require_kind, Error, ErrorKind, Result};
 use crate::tensor::{contiguous_strides, cuda_device_capability, DType, Device};
 use crate::torch_sys::{self, shim_call, XinferTorchInfo};
 use crate::weights::ValidatedBundle;
@@ -129,7 +129,11 @@ pub fn read_json(path: &Path, prefix: &str) -> Result<Value> {
 }
 
 pub fn metadata_check(condition: bool, field: &str) -> Result<()> {
-    require(condition, format!("Unsupported package metadata: {field}"))
+    require_kind(
+        condition,
+        ErrorKind::Unsupported,
+        format!("Unsupported package metadata: {field}"),
+    )
 }
 
 /// True iff `value` is a JSON integer (rejecting floats like `1.0`) `>= minimum`.
@@ -513,43 +517,70 @@ impl Spec {
         Ok(bundle)
     }
 
+    /// Returns the checkpoint model ID declared in `metadata.json` (`checkpoint.model`).
+    pub fn checkpoint_model(&self) -> &str {
+        self.metadata["checkpoint"]["model"].as_str().unwrap_or("")
+    }
+
     pub fn check_token_ids(&self, ids: &[i64]) -> Result<()> {
         for &id in ids {
-            require(id >= 0 && id < self.vocab, "Token ID out of range")?;
+            require_kind(
+                id >= 0 && id < self.vocab,
+                ErrorKind::InvalidInput,
+                "Token ID out of range",
+            )?;
         }
         Ok(())
     }
 
     pub fn check_tokens(&self, ids: &[i64]) -> Result<()> {
-        require(
-            !ids.is_empty() && (ids.len() as i64) <= self.capacity,
+        require_kind(
+            !ids.is_empty(),
+            ErrorKind::InvalidInput,
+            format!("Expected 1..{} input tokens", self.capacity),
+        )?;
+        require_kind(
+            (ids.len() as i64) <= self.capacity,
+            ErrorKind::CapacityExceeded,
             format!("Expected 1..{} input tokens", self.capacity),
         )?;
         self.check_token_ids(ids)
     }
 
     pub fn check_batch_tokens(&self, rows: &[&[i64]]) -> Result<i64> {
-        require(
+        require_kind(
             !rows.is_empty() && (rows.len() as i64) <= self.max_batch_size,
+            ErrorKind::InvalidInput,
             "Batch size outside package range",
         )?;
         let mut length: usize = 0;
         for row in rows {
-            require(
+            require_kind(
                 row.len() <= self.max_prefill as usize,
+                ErrorKind::InvalidInput,
                 "Too many tokens per compiled call",
             )?;
             self.check_token_ids(row)?;
             length = length.max(row.len());
         }
-        require(length > 0, "Expected at least one active row")?;
+        require_kind(
+            length > 0,
+            ErrorKind::InvalidInput,
+            "Expected at least one active row",
+        )?;
         Ok(length as i64)
     }
 
     pub fn check_request(&self, ids: &[i64], limit: i64) -> Result<()> {
         self.check_tokens(ids)?;
-        require(
-            limit > 0 && limit <= self.capacity - (ids.len() as i64),
+        require_kind(
+            limit > 0,
+            ErrorKind::InvalidInput,
+            "Generation budget must be positive and prompt + budget must fit the context",
+        )?;
+        require_kind(
+            limit <= self.capacity - (ids.len() as i64),
+            ErrorKind::CapacityExceeded,
             "Generation budget must be positive and prompt + budget must fit the context",
         )
     }

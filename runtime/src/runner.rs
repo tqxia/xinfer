@@ -9,7 +9,7 @@ use std::path::Path;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
-use crate::error::{require, Error, Result};
+use crate::error::{require, require_kind, Error, ErrorKind, Result};
 use crate::spec::{configured_device, Spec};
 use crate::state::StatePolicy;
 use crate::tensor::{cuda_synchronize, DType, Device, Tensor};
@@ -270,29 +270,81 @@ impl Runner {
         Ok(())
     }
 
+    /// Resets one slot in place (zeroing DeltaNet state on hybrid models, leaving KV
+    /// buffers untouched) and resets `positions[slot]` to 0 without disturbing other slots.
+    pub fn reset_slot(&mut self, slot: usize) -> Result<()> {
+        self.reset_slot_with_kv_fill(slot, None)
+    }
+
+    /// Resets one slot in place, optionally filling its KV slice with `fill_kv`.
+    pub fn reset_slot_with_kv_fill(&mut self, slot: usize, fill_kv: Option<f64>) -> Result<()> {
+        require_kind(
+            slot < self.positions.len(),
+            ErrorKind::InvalidInput,
+            "Slot index exceeds allocated state",
+        )?;
+        self.state.reset_slot(slot, fill_kv)?;
+        self.positions[slot] = 0;
+        self.position = self.positions.iter().copied().max().unwrap_or(0);
+        Ok(())
+    }
+
     pub fn step(&mut self, tokens: &[i64]) -> Result<Tensor> {
         self.step_batch(&[tokens])
     }
 
+    /// Executes one compiled `decode` (len == 1) or `prefill` (len in 2..=512) call for
+    /// a single slot `slot` via a `B = 1` contiguous `narrow_dim0(slot, 1)` state view.
+    /// Avoids padding overhead on other slots when running chunked prefill.
+    pub fn step_slot(&mut self, slot: usize, tokens: &[i64]) -> Result<Tensor> {
+        self.execute_slot_range(slot, &[tokens], false)
+    }
+
+    /// Executes one compiled call over the contiguous slot window `start_slot..start_slot+rows.len()`.
+    /// Vacant interior holes (`row.is_empty()`) are permitted and receive `query_len = 0` with
+    /// `kv_len = positions[slot].max(1)` so attention length checks pass without mutating state.
+    pub fn step_slots_range(&mut self, start_slot: usize, rows: &[&[i64]]) -> Result<Tensor> {
+        self.execute_slot_range(start_slot, rows, true)
+    }
+
     /// Executes one compiled `decode` (max row len == 1) or `prefill` (len in 2..=512)
-    /// call for `1..=allocated_batch_size` rows. Empty rows remain inactive in place.
+    /// call for `1..=allocated_batch_size` rows starting at slot 0. Empty rows remain
+    /// inactive in place once initialized.
     pub fn step_batch(&mut self, rows: &[&[i64]]) -> Result<Tensor> {
+        self.execute_slot_range(0, rows, false)
+    }
+
+    fn execute_slot_range(
+        &mut self,
+        start_slot: usize,
+        rows: &[&[i64]],
+        allow_idle_holes: bool,
+    ) -> Result<Tensor> {
         let length = self.spec.check_batch_tokens(rows)?;
         let batch_size = rows.len() as i64;
-        require(
-            batch_size <= self.allocated_batch_size,
+        let end_slot = start_slot
+            .checked_add(rows.len())
+            .ok_or_else(|| Error::invalid_input("Batch size exceeds allocated state"))?;
+        require_kind(
+            end_slot <= self.positions.len(),
+            ErrorKind::InvalidInput,
             "Batch size exceeds allocated state",
         )?;
         for (row_idx, row) in rows.iter().enumerate() {
+            let slot = start_slot + row_idx;
             let row_len = row.len() as i64;
-            require(
-                row_len <= self.spec.capacity - self.positions[row_idx],
+            require_kind(
+                row_len <= self.spec.capacity - self.positions[slot],
+                ErrorKind::CapacityExceeded,
                 "Context capacity exceeded",
             )?;
-            require(
-                self.positions[row_idx] + row_len > 0,
-                "Each row must start with tokens",
-            )?;
+            if !allow_idle_holes {
+                require_kind(
+                    self.positions[slot] + row_len > 0,
+                    ErrorKind::InvalidInput,
+                    "Each row must start with tokens",
+                )?;
+            }
         }
 
         let count = batch_size * length;
@@ -316,20 +368,26 @@ impl Runner {
 
             let stride_usize = stride as usize;
             for (row_idx, row) in rows.iter().enumerate() {
-                let base_pos = self.positions[row_idx];
+                let slot = start_slot + row_idx;
+                let base_pos = self.positions[slot];
                 for (tok_idx, &token) in row.iter().enumerate() {
                     token_pos[row_idx * length_usize + tok_idx] = token;
                     token_pos[stride_usize + row_idx * length_usize + tok_idx] =
                         base_pos + tok_idx as i64;
                 }
                 let row_tokens = row.len() as i64;
-                kv_data[row_idx] = (base_pos + row_tokens) as i32;
+                let kv_len = if row_tokens == 0 && allow_idle_holes {
+                    base_pos.max(1)
+                } else {
+                    base_pos + row_tokens
+                };
+                kv_data[row_idx] = kv_len as i32;
                 query_data[row_idx] = row_tokens as i32;
             }
         }
 
         // One coalesced pageable H2D copy avoids stalling the GPU stream while
-        // keeping staging buffers safe to reuse on the next step_batch call.
+        // keeping staging buffers safe to reuse on the next call.
         let mut staged = self.device_token_pos.narrow_dim0(0, stride + count)?;
         let host_staged = self.host_token_pos.narrow_dim0(0, stride + count)?;
         staged.copy_from(&host_staged)?;
@@ -344,9 +402,10 @@ impl Runner {
             &[length, 1],
             stride,
         )?);
-        // Prefix views preserve the allocation and unused rows' state.
+        // Contiguous slot-window views preserve allocations and untouched slots' state.
+        let start_i64 = start_slot as i64;
         for tensor in self.state.tensors() {
-            inputs.push(tensor.narrow_dim0(0, batch_size)?);
+            inputs.push(tensor.narrow_dim0(start_i64, batch_size)?);
         }
         inputs.push(self.host_lengths.reinterpret(&[batch_size], &[1], 0)?);
         inputs.push(self.host_lengths.reinterpret(
@@ -359,7 +418,7 @@ impl Runner {
         drop(inputs);
 
         for (row_idx, row) in rows.iter().enumerate() {
-            self.positions[row_idx] += row.len() as i64;
+            self.positions[start_slot + row_idx] += row.len() as i64;
         }
         self.position = self.positions.iter().copied().max().unwrap_or(0);
         Ok(output)
@@ -445,6 +504,10 @@ impl Runner {
     pub fn state(&self) -> &[Tensor] {
         self.state.tensors()
     }
+
+    pub fn bundle_dir(&self) -> &Path {
+        self._weights.directory()
+    }
 }
 
 impl StepDriver for Runner {
@@ -488,6 +551,10 @@ impl Model {
         &self.spec
     }
 
+    pub fn packages_dir(&self) -> &Path {
+        &self.packages
+    }
+
     /// Open a GPU execution session.
     ///
     /// `Session` is deliberately `!Send` and `!Sync` to enforce single-thread GPU/stream ownership:
@@ -525,8 +592,24 @@ impl Session {
         self.runner.reset(fill)
     }
 
+    pub fn reset_slot(&mut self, slot: usize) -> Result<()> {
+        self.runner.reset_slot(slot)
+    }
+
+    pub fn reset_slot_with_kv_fill(&mut self, slot: usize, fill_kv: Option<f64>) -> Result<()> {
+        self.runner.reset_slot_with_kv_fill(slot, fill_kv)
+    }
+
     pub fn step(&mut self, tokens: &[i64]) -> Result<Tensor> {
         self.runner.step(tokens)
+    }
+
+    pub fn step_slot(&mut self, slot: usize, tokens: &[i64]) -> Result<Tensor> {
+        self.runner.step_slot(slot, tokens)
+    }
+
+    pub fn step_slots_range(&mut self, start_slot: usize, rows: &[&[i64]]) -> Result<Tensor> {
+        self.runner.step_slots_range(start_slot, rows)
     }
 
     pub fn step_batch(&mut self, rows: &[&[i64]]) -> Result<Tensor> {
@@ -574,6 +657,10 @@ impl Session {
 
     pub fn state(&self) -> &[Tensor] {
         self.runner.state()
+    }
+
+    pub fn bundle_dir(&self) -> &Path {
+        self.runner.bundle_dir()
     }
 
     pub fn synchronize(&self) -> Result<()> {

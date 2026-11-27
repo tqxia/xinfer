@@ -71,6 +71,24 @@ int xinfer_shim_pkg_run(XinferPkg *pkg, const AtenTensorHandle *inputs, size_t n
 // Computes `logits.argmax(-1).item<int64_t>()` on the tensor's resident device.
 int xinfer_shim_argmax(AtenTensorHandle logits, int64_t *token, XinferError *error) XINFER_NOEXCEPT;
 
+// Computes `logits.argmax(-1)` on GPU for a 2D `[count, vocab]` tensor and writes
+// `count` token IDs to host `tokens`.
+int xinfer_shim_argmax_batch(AtenTensorHandle logits, int64_t *tokens, size_t count,
+                             XinferError *error) XINFER_NOEXCEPT;
+
+typedef struct {
+  float temperature; // <= 0.0 selects greedy argmax
+  float top_p;       // (0.0, 1.0); >= 1.0 disables nucleus filtering
+  int32_t top_k;     // <= 0 disables top-k filtering
+  float uniform;     // deterministic draw in [0.0, 1.0) provided by Rust RNG
+} XinferSampleRow;
+
+// Samples one token ID per active row of 2D `[count, vocab]` logits (CPU or CUDA).
+// Inactive rows (`active[i] == 0`) are skipped and receive `out_tokens[i] = 0`.
+int xinfer_shim_sample_batch(AtenTensorHandle logits, const XinferSampleRow *params,
+                             const uint8_t *active, int64_t *out_tokens, size_t count,
+                             XinferError *error) XINFER_NOEXCEPT;
+
 #ifdef __cplusplus
 }
 #endif

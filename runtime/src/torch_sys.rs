@@ -30,6 +30,15 @@ pub struct XinferTorchInfo {
     pub cxx11_abi: bool,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct XinferSampleRow {
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: i32,
+    pub uniform: f32,
+}
+
 pub const CUDA_MEMCPY_HOST_TO_DEVICE: c_int = 1;
 pub const CUDA_MEMCPY_DEVICE_TO_HOST: c_int = 2;
 pub const CUDA_DEV_ATTR_COMPUTE_CAPABILITY_MAJOR: c_int = 75;
@@ -69,6 +78,20 @@ extern "C" {
     pub fn xinfer_shim_argmax(
         logits: AtenTensorHandle,
         token: *mut i64,
+        error: *mut XinferError,
+    ) -> c_int;
+    pub fn xinfer_shim_argmax_batch(
+        logits: AtenTensorHandle,
+        tokens: *mut i64,
+        count: usize,
+        error: *mut XinferError,
+    ) -> c_int;
+    pub fn xinfer_shim_sample_batch(
+        logits: AtenTensorHandle,
+        params: *const XinferSampleRow,
+        active: *const u8,
+        out_tokens: *mut i64,
+        count: usize,
         error: *mut XinferError,
     ) -> c_int;
 

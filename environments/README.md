@@ -69,8 +69,8 @@ written before exiting nonzero.
 ## Build compiler kernels and native runtimes
 
 Use `environments/build.sh` to configure and build `xinfer_attention_ops`,
-`xinfer_deltanet_ops`, `xinfer_aoti`, `xinfer_validate`, and `xinfer_benchmark`
-into `build/` against the active venv's LibTorch:
+`xinfer_deltanet_ops`, `xinfer_aoti`, `xinfer_serve`, `xinfer_validate`, and
+`xinfer_benchmark` into `build/` against the active venv's LibTorch:
 
 ```bash
 PY="$PWD/work/$TARGET/venv/bin/python"
@@ -85,7 +85,7 @@ architecture (live GPU capability, `TORCH_CUDA_ARCH_LIST`, or the target
 default `8.9`/`12.0`/`12.1`), and L20's Torch-supplied `libcudart.so.12` link
 flags automatically, printing the exact CMake commands it runs. Useful options: `--build PATH` (default `build`),
 `--nvcc PATH`, `--jobs N` (default `2`), `--targets LIST` (comma-separated
-subset), `--no-validation`, `--no-benchmark`.
+subset), `--no-server`, `--no-validation`, `--no-benchmark`.
 
 The compiler owns the `xinfer_attention_ops` and `xinfer_deltanet_ops` targets
 and their native sources in `compiler/common/kernels/`. They write
@@ -133,8 +133,8 @@ native attention dependency; see the [contract](../docs/flash-attention.md#build
 After building, install the project's runtime component from `build/` into a
 fresh prefix. The executables support all model families.
 GNUInstallDirs selects the executable directory, typically `bin/`.
-`xinfer_aoti` is always included; `xinfer_benchmark` and `xinfer_validate` are
-included when their build options are enabled. The attention library
+`xinfer_aoti` is always included; `xinfer_serve`, `xinfer_benchmark` and
+`xinfer_validate` are included when their build options are enabled. The attention library
 is carried by each model package and is not installed in this prefix.
 `CMAKE_INSTALL_BINDIR` can customize the executable layout and must be relative.
 

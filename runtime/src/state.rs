@@ -1,6 +1,6 @@
 //! Caller-owned in-place state buffer allocation, alignment, and reset policy.
 
-use crate::error::{require, Result};
+use crate::error::{require, require_kind, ErrorKind, Result};
 use crate::spec::StateSpec;
 use crate::tensor::{Device, Tensor};
 
@@ -68,6 +68,34 @@ impl StatePolicy {
             let addr = tensor.data_ptr()? as usize;
             require((addr & 15) == 0, "State buffer must be 16-byte aligned")?;
             tensor.fill_scalar(if item.is_kv() { fill } else { 0.0 })?;
+        }
+        Ok(())
+    }
+
+    /// Resets a single batch slot `slot` in place without disturbing other rows.
+    ///
+    /// Non-KV (`conv` / `recurrent`) tensors are zeroed on row `slot`; KV buffers are
+    /// optionally filled only when `fill_kv` is `Some(...)` (FlashAttention only reads
+    /// `[0..kv_len)`, so leaving KV untouched is safe and avoids needless bandwidth).
+    pub fn reset_slot(&mut self, slot: usize, fill_kv: Option<f64>) -> Result<()> {
+        require(
+            !self.tensors.is_empty(),
+            "State must be reset before execution",
+        )?;
+        let slot_i64 = i64::try_from(slot).unwrap_or(i64::MAX);
+        require_kind(
+            slot_i64 < self.allocated_batch_size,
+            ErrorKind::InvalidInput,
+            "Slot index exceeds allocated state",
+        )?;
+        for (item, tensor) in self.specs.iter().zip(self.tensors.iter_mut()) {
+            let fill = if item.is_kv() { fill_kv } else { Some(0.0) };
+            if let Some(value) = fill {
+                let mut row = tensor.narrow_dim0(slot_i64, 1)?;
+                let addr = row.data_ptr()? as usize;
+                require((addr & 15) == 0, "State slot view must be 16-byte aligned")?;
+                row.fill_scalar(value)?;
+            }
         }
         Ok(())
     }

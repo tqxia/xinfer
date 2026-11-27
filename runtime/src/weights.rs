@@ -12,7 +12,7 @@ use safetensors::SafeTensors;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::error::{require, Error, Result};
+use crate::error::{require, Error, ErrorKind, Result};
 use crate::runner::Package;
 use crate::sha256::sha256_file;
 use crate::tensor::{cuda_synchronize, DType, Device, Tensor};
@@ -217,19 +217,39 @@ impl ValidatedBundle {
         let declared_tokenizer = metadata
             .get("tokenizer")
             .and_then(Value::as_object)
-            .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+            .ok_or_else(|| {
+                Error::with_kind(
+                    ErrorKind::Unsupported,
+                    "Unsupported package metadata: tokenizer",
+                )
+            })?;
         for (name, entry) in declared_tokenizer {
-            let entry_obj = entry
-                .as_object()
-                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
-            let expected_bytes = entry_obj
-                .get("bytes")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
-            let expected_sha = entry_obj
-                .get("sha256")
-                .and_then(Value::as_str)
-                .ok_or_else(|| Error::new("Unsupported package metadata: tokenizer"))?;
+            let entry_obj = entry.as_object().ok_or_else(|| {
+                Error::with_kind(
+                    ErrorKind::Unsupported,
+                    "Unsupported package metadata: tokenizer",
+                )
+            })?;
+            let expected_bytes =
+                entry_obj
+                    .get("bytes")
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| {
+                        Error::with_kind(
+                            ErrorKind::Unsupported,
+                            "Unsupported package metadata: tokenizer",
+                        )
+                    })?;
+            let expected_sha =
+                entry_obj
+                    .get("sha256")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        Error::with_kind(
+                            ErrorKind::Unsupported,
+                            "Unsupported package metadata: tokenizer",
+                        )
+                    })?;
             let path = root.join(name);
             require(
                 is_regular_file(&path),
@@ -323,6 +343,11 @@ impl ValidatedBundle {
     /// Returns the logical model identity object embedded in the weight archive.
     pub fn identity(&self) -> &Value {
         &self.manifest.identity
+    }
+
+    /// Returns the canonical bundle directory path verified by this proof.
+    pub fn directory(&self) -> &Path {
+        &self.directory
     }
 }
 
@@ -555,5 +580,9 @@ impl SharedWeights {
 
     pub fn tensor(&self, name: &str) -> Option<&Tensor> {
         self.tensors.get(name)
+    }
+
+    pub fn directory(&self) -> &Path {
+        self.bundle.directory()
     }
 }

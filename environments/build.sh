@@ -13,6 +13,7 @@ Configure and build xinfer compiler kernels and native executables.
   --nvcc PATH                CUDA compiler (default: $CUDA_HOME/bin/nvcc or /usr/local/cuda/bin/nvcc)
   --jobs N                   Parallel build jobs (default: 2)
   --targets LIST             Comma-separated CMake targets (default: all enabled targets)
+  --no-server                Configure with -DXINFER_BUILD_SERVER=OFF
   --no-validation            Configure with -DXINFER_BUILD_VALIDATION=OFF
   --no-benchmark             Configure with -DXINFER_BUILD_BENCHMARK=OFF
   -h, --help                 Show this help
@@ -53,6 +54,7 @@ build_dir="build"
 nvcc="${CUDA_HOME:-/usr/local/cuda}/bin/nvcc"
 jobs="2"
 targets=""
+build_server="ON"
 build_validation="ON"
 build_benchmark="ON"
 
@@ -69,6 +71,10 @@ while [[ $# -gt 0 ]]; do
         --targets) targets="$2" ;;
       esac
       shift 2
+      ;;
+    --no-server)
+      build_server="OFF"
+      shift
       ;;
     --no-validation)
       build_validation="OFF"
@@ -135,6 +141,7 @@ cmake_args=(
   "-DCMAKE_CUDA_COMPILER=$nvcc"
   "-DTORCH_CUDA_ARCH_LIST=$cuda_arch"
   -DCMAKE_BUILD_TYPE=Release
+  "-DXINFER_BUILD_SERVER=$build_server"
   "-DXINFER_BUILD_VALIDATION=$build_validation"
   "-DXINFER_BUILD_BENCHMARK=$build_benchmark"
 )
