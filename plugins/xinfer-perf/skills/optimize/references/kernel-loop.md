@@ -47,7 +47,7 @@ and full-model measurement.
    - When combining interacting changes, test each viable change alone and
      together (or ablate one from the bundle) on the same baseline.
 2. **Edit and compile.** For a brand-new operator or AOTI packaging boundary,
-   prove export + AOTI + C++ execution with the first *correct* implementation
+   prove export + AOTI + native execution with the first *correct* implementation
    before investing in tuning revisions.
 3. **Check correctness.** Verify all outputs against existing tolerances across
    real shapes, tails, strides, aliasing/mutation, and masking. For stateful
@@ -68,4 +68,4 @@ and full-model measurement.
 Bring the local winner back to outer steps 3–6: export, verify the packaged
 `.pt2` uses the exact expected kernel and launch settings (re-check NCU if AOTI
 or Triton packaging changes launch configs or FP-fusion flags), validate, run
-paired C++ benchmarks, and profile native execution.
+paired native benchmarks, and profile native execution.

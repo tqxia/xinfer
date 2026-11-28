@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="462" viewBox="0 0 820 462" role="img" aria-labelledby="title description">
   <title id="title">Xinfer compiler architecture</title>
-  <desc id="description">A Hugging Face checkpoint enters the Python compiler. Model adapters, graph optimization and AOTInductor produce a deployment bundle containing prefill and decode models, shared weights and metadata.</desc>
+  <desc id="description">A Hugging Face checkpoint enters the Python compiler. Model adapters, graph optimization and AOTInductor produce a deployment bundle containing prefill and decode models, shared weights, metadata and tokenizer files.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#52647a"/>
@@ -25,7 +25,7 @@
 
   <rect class="node" x="56" y="186" width="212" height="80" rx="8"/>
   <text x="162" y="220">Model adapters</text>
-  <text class="label" x="162" y="246">Qwen3 · Qwen3.5</text>
+  <text class="label" x="162" y="246">Qwen3 · Qwen3.5 · Qwen3.8</text>
 
   <path class="edge" d="M268 226 H304"/>
   <rect class="node" x="304" y="186" width="212" height="80" rx="8"/>
@@ -38,7 +38,7 @@
   <text class="label" x="658" y="246">Compile + package</text>
 
   <path class="edge" d="M410 314 V358"/>
-  <rect x="160" y="358" width="500" height="80" rx="10" fill="#eaf5f0" stroke="#8ab7a1"/>
+  <rect x="140" y="358" width="540" height="80" rx="10" fill="#eaf5f0" stroke="#8ab7a1"/>
   <text class="heading" x="410" y="390">Model bundle</text>
-  <text class="label" x="410" y="415">Prefill + decode · shared weights · metadata</text>
+  <text class="label" x="410" y="415">Prefill + decode · shared weights · metadata · tokenizer</text>
 </svg>

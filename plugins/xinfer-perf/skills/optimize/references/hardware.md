@@ -8,8 +8,7 @@ bandwidth, and clock behavior on the target host (`nvidia-smi`, NCU
 
 - **Platform:** NVIDIA GB10, ARM64 (`aarch64`), Blackwell SM 12.1.
 - **Stack:** CUDA 13.0, Torch `2.13.0+cu130` (`environments/gb10/requirements.txt`).
-- **Decode characteristics observed in xinfer** (see
-  `docs/experiments/qwen35-gemv-2026-11-13.md`):
+- **Decode characteristics observed in xinfer:**
   - Small-batch BF16 decode is overwhelmingly projection-dominated (~95% of
     decode kernel time in Qwen3.5-0.8B: ~69% decoder GEMVs, ~26% vocab head).
   - High register pressure and low CTA occupancy strongly penalized default

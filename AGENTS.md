@@ -29,36 +29,32 @@ histories in local artifacts).
 - `plugins/` owns coding-agent skills that reuse project tools; keep
   model-specific details in model guides.
 - Tests follow the code they cover: module/operator/kernel checks belong in unit
-  tests; full export-to-native checks belong in `tools/validation/`.
-- Keep test-only and tool-only helpers in test/tool modules (and native test
-  translation units); never expose them from production code.
+  tests; full export-to-native checks belong in `tools/validation/`. Keep
+  test-only and tool-only helpers out of production code.
 - Extend shared pipelines through explicit model callbacks before adding
   parallel orchestration. Derive geometry and bounds from inputs or metadata
-  where supported, and make actual model/ABI restrictions explicit. Keep small
-  construction steps inline when extraction only fragments the flow, and name
-  modules for their responsibility (e.g., `text_checkpoint.py`).
+  where supported, make actual model/ABI restrictions explicit, keep small
+  construction steps inline, and name modules for their responsibility.
 - Keep native tools read-only on caller-supplied inputs, stage multi-model GPU
   validation sequentially (at most one full GPU model resident at a time), and
-  refuse occupied output paths including dangling symlinks (`path_exists` /
-  `symlink_status` in C++, `exists() or is_symlink()` in Python).
+  refuse occupied output paths including dangling symlinks (`path_exists` in
+  Rust, `exists() or is_symlink()` in Python).
 
 ## Environment and builds
 
 Use `environments/requirements.txt` and `environments/<target>/requirements.txt`
-as the dependency source for each target; keep package pins out of setup scripts.
-Keep shared Python dependency pins aligned across targets.
-Create fresh independent venvs with `environments/setup.sh` (use `--venv` for
-another destination; preserve existing environments) and build native targets
-with `environments/build.sh`.
+as the dependency source for each target; keep package pins out of setup scripts
+and keep shared Python pins aligned across targets. Create fresh independent
+venvs with `environments/setup.sh` (preserve existing environments) and build
+native targets with `environments/build.sh`.
 
 Run Python tools as modules from the repository root with the target
 interpreter, and build native code against that interpreter's LibTorch in
 `build/`. Build `xinfer_attention_ops` (and `xinfer_deltanet_ops` for
 Qwen3.5/Qwen3.8) before export or standalone operator tests; runtime targets
 build independently and consume packaged kernels. Enforce C++20 as the minimum
-native standard, avoid deprecated serialization (`torch.jit`) and extra native
-runtime dependencies (e.g., OpenSSL, Python), and use
-`python -m environments.check` to verify the stack and build.
+native standard, avoid `torch.jit` and extra native runtime dependencies (e.g.,
+OpenSSL, Python), and verify the stack with `python -m environments.check`.
 
 Keep compiler dependency workarounds in version-specific `compiler/patches/`
 directories with applicability checks, focused tests and documentation. Do not
@@ -66,60 +62,58 @@ modify installed dependency sources in place.
 
 ## Correctness contracts
 
-Preserve the `HF → adapted/optimized eager → Python AOTI → C++ AOTI` chain
-with identical teacher-forced inputs and the unmodified live HF checkpoint at
-its original precision; use the frontend's export setup for adapted eager and
+Preserve the `HF → adapted/optimized eager → Python AOTI → native AOTI (cpp_aoti)`
+chain with identical teacher-forced inputs and the unmodified live HF checkpoint
+at its original precision; use the frontend's export setup for adapted eager and
 distinguish execution drift from quantization loss. Preserve checkpoint-native
 parameter dtypes on load (`dtype="auto"`, keeping native FP32 weights such as
 `A_log` and `norm.weight`) rather than globally casting all parameters to BF16.
 Component tests compare matching input dtypes (BF16 against BF16 with
 algorithm-defined FP32 accumulation and recurrent state; FP32 against FP32);
-neither full-model nor BF16 kernel validation loads a separate upcast FP32
-control.
+neither full-model nor BF16 kernel validation loads an upcast FP32 control.
 
 Keep native/Python bitwise equality, finite-value, state ownership, masking,
 reset/reuse, generation and boundary checks strict. All models follow the
 [shared numerical policy](docs/development-tools.md#shared-numerical-policy):
 matched-input logit bounds are required, while full-model state and HF
 token/greedy differences are diagnostic; component kernel/block tests retain
-their own required output and state limits. After changing export tracing,
-dynamic shapes or graph passes, verify from export diagnostics or tests that
-expected passes still match (`replaced > 0`) rather than becoming silent no-ops.
-Do not loosen tolerances, alter references or suppress failures to make an
-optimization pass, and report HF numerical acceptance separately from native
-parity; passing native checks does not resolve existing HF failures.
+their own required limits. After changing export tracing, dynamic shapes or
+graph passes, verify expected passes still match (`replaced > 0`) rather than
+becoming silent no-ops. Do not loosen tolerances, alter references or suppress
+failures, and report HF numerical acceptance separately from native parity.
 
 Keep package identity distinct from runtime implementation: models sharing a
 runtime retain their own `model_type`. Package tools dispatch by `model_type`;
-preparation routes by checkpoint model ID. Prefer re-exporting over adding
-legacy compatibility unless explicitly requested.
+preparation routes by checkpoint model ID. Prefer re-exporting over legacy
+compatibility unless explicitly requested.
 
 Preserve shared-weight ownership and metadata-driven state handling. Keep
 checkpoint manifests, metadata schemas and logical model identities uniform
-across model families without model sizes or separate format/schema version
-fields; put build diagnostics in export logs. Metadata or ABI changes must
-update shared Python writers/validators, Rust runtime readers, tests and documentation
+across model families without model sizes or format/schema version fields; put
+build diagnostics in export logs. Metadata or ABI changes must update shared
+Python writers/validators, Rust runtime readers, tests and documentation
 together; re-export retained packages when contracts change.
 
 ## C++ spacing
 
-Use blank lines as paragraphs: one blank line between function definitions and
-between distinct logical phases within a function (validation, preparation,
-execution, reporting). Keep declarations with their immediate uses and
-operations with their error checks; related one-line accessors may stay grouped.
-Avoid leading blank lines inside function bodies and consecutive blank lines
-(`clang-format` caps excess blank lines but does not group logical phases).
+For C++/CUDA kernels and shims, use blank lines as paragraphs: one blank line
+between function definitions and between distinct logical phases within a
+function (validation, preparation, execution, reporting). Keep declarations with
+their immediate uses and operations with their error checks; related one-line
+accessors may stay grouped. Avoid leading blank lines inside function bodies and
+consecutive blank lines.
 
 ## Verification and measurement
 
-Use the pinned Ruff, clang-format and Cargo tools with repository configs: verify
+Use the pinned Ruff, clang-format and Cargo tools with repository configs:
 `ruff format --check .`, `ruff check --select E,F,W .`,
 `clang-format --dry-run --Werror`, `cargo fmt --all --check`, and
-`cargo clippy --workspace --locked --all-targets -- -D warnings`. Run CPU unit tests via
-`CUDA_VISIBLE_DEVICES="" python -m unittest discover` and
-`CUDA_VISIBLE_DEVICES="" cargo test --workspace --locked`, and keep preflight and CPU contract checks runnable with
-`CUDA_VISIBLE_DEVICES=""`. Follow model guides for affected GPU, export/AOTI
-and native checks, and report what ran, what could not run and any failures.
+`cargo clippy --workspace --locked --all-targets -- -D warnings`. Run CPU unit
+tests via `CUDA_VISIBLE_DEVICES="" python -m unittest discover` and
+`CUDA_VISIBLE_DEVICES="" cargo test --workspace --locked`, and keep preflight
+and CPU contract checks runnable with `CUDA_VISIBLE_DEVICES=""`. Follow model
+guides for affected GPU, export/AOTI and native checks, and report what ran,
+what could not run and any failures.
 
 Keep benchmarks separate from accuracy validation. Use the same GPU UUID for
 workers, idle checks and telemetry. Establish idle conditions and repeat
@@ -129,15 +123,14 @@ semantics for a constrained host.
 
 ## Repository hygiene
 
-Generated environments and scratch/one-off scripts belong in ignored `work/`,
-native builds in `build/`, and packages/run artifacts in `artifacts/`; maintain
-only reusable project tooling in Git. Preserve unrelated files and retained
+Generated environments and scratch scripts belong in ignored `work/`, native
+builds in `build/`, and packages/run artifacts in `artifacts/`; maintain only
+reusable project tooling in Git. Preserve unrelated files and retained
 checkpoints/packages, and keep private infrastructure identifiers and access
 details out of tracked files.
 
 Give shared commands, contracts and validation status one documented home linked
 from model guides, keeping model-specific design and constraints in those
-guides. Preserve reusable technical conclusions and dated evidence links when
-retiring development journals, and update documentation when interfaces change.
+guides. Update documentation when interfaces change.
 
 Commit, push or rewrite history only when requested.

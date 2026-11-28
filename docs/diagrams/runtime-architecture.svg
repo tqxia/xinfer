@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="492" viewBox="0 0 820 492" role="img" aria-labelledby="title description">
   <title id="title">Xinfer runtime architecture</title>
-  <desc id="description">The C++ runtime loads a model bundle. Its shared request runner accepts input tokens, dispatches prefill and decode execution, and produces output tokens. The compiled models use shared weights and model state.</desc>
+  <desc id="description">The native Rust runtime loads a model bundle. Its shared runner and serving engine accept input tokens or HTTP requests, dispatch prefill and decode execution, and produce output tokens. The compiled models use shared weights and in-place model state.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#52647a"/>
@@ -22,15 +22,15 @@
   <path class="edge" d="M410 80 V124"/>
 
   <rect x="192" y="124" width="436" height="344" rx="12" fill="#edf4fc" stroke="#92aecf"/>
-  <text class="heading" x="410" y="156">C++ runtime</text>
+  <text class="heading" x="410" y="156">Native Rust runtime</text>
 
   <rect class="node" x="16" y="184" width="138" height="68" rx="8"/>
   <text x="85" y="224">Input tokens</text>
   <path class="edge" d="M154 218 H220"/>
 
   <rect class="node" x="220" y="184" width="380" height="68" rx="8"/>
-  <text x="410" y="212">Request runner</text>
-  <text class="label" x="410" y="236">Generation and dispatch</text>
+  <text x="410" y="212">Runner &amp; serving engine</text>
+  <text class="label" x="410" y="236">Scheduling, sampling and dispatch</text>
 
   <path class="edge" d="M600 218 H666"/>
   <rect class="node" x="666" y="184" width="138" height="68" rx="8"/>
@@ -43,5 +43,5 @@
 
   <path class="edge exchange" d="M410 356 V404"/>
   <rect x="220" y="404" width="380" height="44" rx="8" fill="#eaf5f0" stroke="#8ab7a1"/>
-  <text x="410" y="432">Shared weights + model state</text>
+  <text x="410" y="432">Shared weights + in-place state</text>
 </svg>

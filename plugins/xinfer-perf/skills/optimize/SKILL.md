@@ -1,6 +1,6 @@
 ---
 name: optimize
-description: Profile and optimize compiled LLM inference in xinfer on NVIDIA GB10 (SM 12.1) through graph fusion and GPU kernel optimization. Use for GB10 performance investigations, fusion or kernel experiments, or continuing an existing optimization notebook. Default objective is native decode latency per token; C++ runtime changes are outside this skill.
+description: Profile and optimize compiled LLM inference in xinfer on NVIDIA GB10 (SM 12.1) through graph fusion and GPU kernel optimization. Use for GB10 performance investigations, fusion or kernel experiments, or continuing an existing optimization notebook. Default objective is native decode latency per token; native runtime changes are outside this skill.
 ---
 
 # Optimize xinfer on GB10
@@ -8,7 +8,7 @@ description: Profile and optimize compiled LLM inference in xinfer on NVIDIA GB1
 Target **NVIDIA GB10 (SM 12.1)**. Start from native baseline profiling and
 iterate on graph fusion (`compiler/common/passes/`, adapters) and GPU kernels
 (`compiler/common/kernels/`, `compiler/<model>/kernels/`). Preserve the exported
-interface and C++ runtime contract; runtime/CUDA Graph changes belong to a
+interface and native runtime contract; runtime/CUDA Graph changes belong to a
 separate future skill.
 
 ## Setup, budget, and notebook

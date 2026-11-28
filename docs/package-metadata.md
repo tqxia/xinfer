@@ -1,207 +1,126 @@
 # Package metadata
 
 All supported models deploy one self-contained bundle directory containing
-`prefill.pt2`, `decode.pt2`, `weights.safetensors`, `metadata.json`, and the
-bundled tokenizer files (`tokenizer.json`, `tokenizer_config.json`, and optional
+`prefill.pt2`, `decode.pt2`, `weights.safetensors`, `metadata.json`, and bundled
+tokenizer files (`tokenizer.json`, `tokenizer_config.json`, optional
 `chat_template.jinja`). Metadata and model interfaces follow the current
 implementation without separate version fields.
 
-`compiler/common/metadata.py` writes and validates the common format.
-`tools/packages.py` owns model ABI and shared-weight bundle checks for Python
-tooling. `compiler/common/compile.py` owns AOTI compilation and paired bundle
-publication; `compiler/common/weights.py` owns the shared-weight archive pool,
-verified manifest reading and shared tensor loading.
-`runtime/core/src/spec.rs` is the native Rust reader and model-specific geometry
-validator; `runtime/core/src/state.rs` implements state ownership.
+- `compiler/common/metadata.py` writes and validates `metadata.json`.
+- `compiler/common/compile.py` compiles and publishes paired bundles;
+  `compiler/common/weights.py` owns the shared-weight archive pool and manifest.
+- `tools/packages.py` owns Python-side ABI and bundle checks.
+- `runtime/core/src/spec.rs` is the native Rust reader and geometry validator;
+  `runtime/core/src/state.rs` owns state allocation and views.
 
 ## Metadata fields
 
 | Fields | Meaning |
 | --- | --- |
-| `model_type` | Model family (`qwen3`, `qwen35` or `qwen38`) used to select runtime behavior |
+| `model_type` | Model family (`qwen3`, `qwen35` or `qwen38`) selecting runtime behavior |
 | `torch_version`, `cxx11_abi`, `cuda_compute_capability` | Runtime compatibility |
-| `cache_length`, `max_prefill_tokens` | Allocated context capacity and compiled per-call prefill ceiling (512) |
+| `cache_length`, `max_prefill_tokens` | Per-row context capacity and per-call prefill ceiling (`512`) |
 | `vocab_size`, `eos_token_ids` | Vocabulary upper bound and explicit EOS stop list |
-| `checkpoint` | Prepared `model_manifest.json` object (`model`, `revision` and checkpoint files) |
+| `checkpoint` | Prepared `model_manifest.json` object (`model`, `revision`, checkpoint files) |
 | `state` | Ordered contiguous in-place state descriptors (`layer`, `kind`, `shape`, `dtype`) |
-| `entries` | Per-entry (`prefill`, `decode`) `.pt2` byte sizes and SHA-256 checksums |
-| `shared_weights` | Shared `weights.safetensors` logical identity, byte size and SHA-256 checksum |
-| `tokenizer` | Bundled tokenizer file byte sizes and SHA-256 checksums (`tokenizer.json`, `tokenizer_config.json`, optional `chat_template.jinja`) |
+| `entries` | Per-entry (`prefill`, `decode`) `.pt2` byte sizes and SHA-256 digests |
+| `shared_weights` | `weights.safetensors` logical identity, byte size and SHA-256 digest |
+| `tokenizer` | Bundled tokenizer byte sizes and SHA-256 digests (`tokenizer.json`, `tokenizer_config.json`, optional `chat_template.jinja`) |
 
 Missing/unknown fields and retired aliases are rejected.
 `COMPARISON_EXCLUDED_FIELDS` in `compiler/common/metadata.py` excludes `entries`
-and `shared_weights` from benchmark comparison; shared weights are compared by
-logical identity and source mappings separately from their archive checksum.
+and `shared_weights` from benchmark comparison (weights are compared by logical
+identity and source mappings separately).
 
-`model_type` identifies the package as `qwen3`, `qwen35` or `qwen38`.
-Qwen3.8 exports use `qwen38`; both `qwen35` and `qwen38` share the same
-hybrid state validation and calling convention in `runtime/core/src/spec.rs`. Their identities
-remain distinct: the shared archive's embedded `identity.model` must match
-(`qwen3`, `qwen3.5` or `qwen3.8`, respectively).
-
-Fixed export/compiler invariants (`backed_size_oblivious=True`, TF32 disabled,
-`emulate_precision_casts=True`, weightless AOTI compilation) live in code rather
-than `metadata.json`. Resolved compiler options, pass counts and compile timings
-are printed as export-log events, and graph dumps / packing reports are saved as
-separate export diagnostics. There are no package `provenance`, `diagnostics` or
-source-code-hash fields. Retain the export log when investigating a build.
+`model_type` dispatches package tools and runtime checks: `qwen35` and `qwen38`
+share hybrid state validation and calling convention in `runtime/core/src/spec.rs`
+while keeping distinct `model_type` and shared-archive `identity.model` values
+(`qwen3`, `qwen3.5` or `qwen3.8`). Fixed compiler invariants
+(`backed_size_oblivious=True`, TF32 disabled, `emulate_precision_casts=True`,
+weightless AOTI compilation) live in code rather than `metadata.json`; compiler
+options, pass counts and timings are emitted as export logs, while graph dumps
+and packing reports are separate export diagnostics.
 
 ## Capacity and state
 
-`--max-context-length` chooses `cache_length` before GPU allocation. The default
-is the selected text config's `max_position_embeddings`; valid values are 512
-through that ceiling (capped by `INT32_MAX // 8` across the 8 compiled batch
-slots). Supported models use default RoPE; no scaling factor is inferred. KV
-descriptors contain exactly `cache_length` slots.
+`--max-context-length` chooses per-row `cache_length` before GPU allocation
+(defaulting to the model config's `max_position_embeddings`; valid range `512`
+through that ceiling, capped by `INT32_MAX // 8`). Supported models use default
+RoPE. Changing capacity requires re-exporting both entries.
 
-Decode accepts 1 token per call; prefill accepts 2–`max_prefill_tokens` (512)
-tokens per call. The runner chunks a complete prompt and uses decode for a
-singleton remainder. The prompt plus requested `--max-output-tokens` budget must
-fit `cache_length` before execution begins; the budget is rejected rather than
-clamped. There is no separate prompt cap. Changing capacity requires re-export
-of both entries; editing `metadata.json` cannot enlarge compiled buffers or
-symbolic bounds.
+Decode accepts 1 token per call; prefill accepts 2–512 tokens per call. Longer
+prompts are chunked automatically with decode handling a 1-token remainder. The
+prompt plus output budget must fit `cache_length` before execution begins
+(requests exceeding capacity are rejected, never clamped).
 
-Each ordered state descriptor contains `layer`, `kind`, `shape` and `dtype`.
-Every state tensor across both model families (KV cache as well as Qwen3.5
-convolution/recurrent state) is updated in place, so no per-tensor `update`
-field is recorded. Readers derive names, contiguous
-strides and model geometry from these descriptors. Reset retains every state
-allocation (requiring 16-byte buffer alignment so AOTI alignment guards never
-clone caller-owned inputs), fills KV buffers (`key`/`value`) with the requested
-value, and zeroes non-KV (`conv`/`recurrent`) buffers.
+Every state tensor across all model families (KV cache, DeltaNet convolution and
+FP32 recurrent state) updates in place, so descriptors carry only `layer`,
+`kind`, `shape` and `dtype`. Reset retains all allocations (enforcing 16-byte
+alignment so AOTI alignment guards never clone caller buffers), fills KV buffers
+(`key`/`value`) with the requested fill value, and zeroes `conv`/`recurrent`
+buffers.
 
 ## Dynamic batch interfaces
 
-One prefill/decode bundle accepts every batch size B=1..8, including scalar
-generation. The package ceiling is hardcoded to eight in state descriptors; at
-runtime, `Runner` and `StatePolicy` accept an optional `allocated_batch_size`
-in `1..8` (defaulting to the package ceiling 8; scalar CLI and benchmark tools
-allocate 1 row). Export and compilation enable `backed_size_oblivious` to
-retain B=1 in the symbolic range.
+One bundle serves every batch size `B=1..8`. State descriptors declare the
+package ceiling (`8`), while `Session` / `Runner` / `StatePolicy` accept an
+optional `allocated_batch_size` in `1..8` (default `8`; scalar `xinfer_aoti` and
+`xinfer_benchmark` allocate `1` row). Export enables `backed_size_oblivious` so
+`B=1` remains in the symbolic range.
 
-- Python inputs: `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
-  IDs and positions are CUDA int64 `[B,T]`. State inputs are a tuple of
-  contiguous views into the first B rows of the allocated state buffers.
-- Flat AOTI inputs: IDs, positions, ordered state tensors, KV lengths, query
-  lengths. Qwen3-0.6B/1.7B have 56 state tensors / 60 inputs; Qwen3.5-0.8B has
-  48 / 52; Qwen3.5-4B has 64 / 68.
-- The two length inputs are CPU int32 `[B]`: populated length after this call
-  and real input count for each row. The graph builds cumulative lengths and
-  their CUDA copy once, shared across layers.
-- IDs are right-padded. A row starts with tokens; later it may consume 0–512
-  tokens per call. At least one row must be active. Width one selects decode;
-  widths 2–512 select prefill. Per-row positions identify contiguous appends.
-- Logits are BF16 `[B,vocab_size]` for each row's last real token. Empty rows
-  return zero logits without advancing any state or position.
-- Qwen3, Qwen3.5 and Qwen3.8 use one unified logits-only `inplace` ABI:
-  compiled entries return only `[B,vocab_size]` BF16 logits and update every
-  state tensor (KV cache, DeltaNet convolution state and FP32 recurrent state)
-  in place on caller-owned buffers.
-- State allocation and row identity persist across calls up to
-  `allocated_batch_size`. Smaller B passes active-prefix views (`narrow(0, 0, B)`)
-  and leaves omitted tail rows (`B..allocated_batch_size`) untouched. Larger B
-  resumes those rows or starts unused rows with their first tokens.
-- Reset clears all allocated rows while retaining every state buffer allocation.
-  The state policy checks output count (`outputs.size() == 1`), batch bounds and
-  16-byte buffer alignment.
-- The runner validates every supplied row before execution. `positions()` exposes
-  all allocated row counts; `position()` is their maximum for trace handling.
-
-Qwen3 flattens independent positions around HF's RoPE call to avoid singleton
-matmul specialization. Qwen3.5 computes the equivalent text-only frequencies
-without HF's redundant cross-grid slice writes, which otherwise introduce a
-`B >= 2` guard during export. Component tests require bitwise HF agreement.
-
-Scalar generation and benchmark commands execute B=1 from the same bundle.
-`xinfer_validate` accepts explicit `batch_steps`. `runtime/core/` provides
-per-slot execution and reset (`Session::step_slot`, `step_slots_range`,
-`reset_slot`), and `runtime/engine/` + `xinfer_serve` layer continuous-batching
-scheduling with interleaved chunked prefill on top. The runtime calls the
-current model interface directly; editing `metadata.json` cannot change a
-package's compiled signature.
+- **Python signature:** `(input_ids, cache_position, state, kv_lengths, query_lengths)`.
+  IDs and positions are CUDA int64 `[B,T]`; length tensors are CPU int32 `[B]`
+  (populated length after this call and real token count per row); `state` is a
+  tuple of contiguous views into the active rows of allocated buffers.
+- **Flat AOTI inputs:** IDs, positions, ordered state tensors, `kv_lengths`,
+  `query_lengths` (Qwen3-0.6B/1.7B: 56 state tensors / 60 inputs; Qwen3.5-0.8B:
+  48 / 52; Qwen3.5-4B: 64 / 68; Qwen3.8-27B-FP8: 128 / 132).
+- **Padding and dispatch:** inputs are right-padded. A row starts with real
+  tokens and may later consume 0–512 tokens per call (at least one row must be
+  active). Width 1 invokes decode; widths 2–512 invoke prefill. Logits are BF16
+  `[B,vocab_size]` for each row's last real token; empty rows return zero logits
+  without advancing state or position.
+- **Unified in-place ABI:** all model families return only `[B,vocab_size]` BF16
+  logits and mutate all state tensors in place.
+- **State ownership & continuous batching:** row identity persists across calls
+  up to `allocated_batch_size`; narrower prefix views (`narrow(0, 0, B)`) leave
+  tail rows untouched. `runtime/core/` also exposes per-slot execution and reset
+  (`Session::step_slot`, `step_slots_range`, `reset_slot`), which
+  `runtime/engine/` and `xinfer_serve` use for `B=1..8` continuous batching with
+  interleaved chunked prefill.
 
 ## Shared-weight archive and ownership
 
-`weights.safetensors` contains parameters and lifted tensor constants used by the
-compiled graphs. Constants are captured during lowering, after graph passes such as
-weight packing. Exact per-entry runtime names are recorded; names are not matched by
-suffix. The manifest JSON is embedded under `__metadata__.xinfer_manifest` in the
-safetensors header, not a separate file. It maps each entry's constants to tensor
-views over deduplicated storage, preserving shape, stride, offset, dtype and device.
-Tied embeddings and shared packed sources can therefore share storage without
-changing their views. All supported models record `identity` as
-`{"model": "<family>", "checkpoint": <manifest>}` (`qwen3`, `qwen3.5` or `qwen3.8`).
+`weights.safetensors` stores deduplicated parameters and lifted constants after
+graph passes (such as linear packing), with an embedded JSON manifest under
+`__metadata__.xinfer_manifest` mapping exact per-entry constant names to views
+(shape, stride, offset, dtype, device) and recording both `.pt2` hashes and
+`identity = {"model": "<family>", "checkpoint": <manifest>}`. E4M3 FP8 storage
+(`float8_e4m3fn`) is supported with separate scale tensors.
 
-`metadata.json`'s `shared_weights` descriptor records the archive's logical
-identity, byte size and SHA-256 (always targeting `weights.safetensors`). The
-embedded manifest also records the exact package hashes. Archive bytes cover both
-mappings and tensor data; the archive binds package hashes, not `metadata.json`
-hashes. Native loading validates the safetensors header and copies deduplicated
-storages directly from an `mmap`ped file without TorchScript (`torch.jit`)
-dependencies.
+One export invocation compiles both entries sequentially, verifies shared tensor
+content, stages all bundle files in a sibling temporary directory, and publishes
+atomically only on success (never overwriting a populated output path).
 
-One export invocation loads the model once, compiles both entries sequentially,
-requires consistent shared tensor content, and serializes the archive once.
-It stages the complete result in a sibling temporary directory and publishes
-only after both entries succeed. Populated output directories are preserved.
-Graph dumps and packing reports are diagnostics, not extra deployment files.
-
-Python and the native Rust runtime retain one tensor pool and inject constants
-into both loaders with `load_constants(..., user_managed=True)` (the fourth C++
-argument in `runtime/core/shim/torch_shim.cpp`). The native loader verifies its
-constant pointers against the supplied storage. Weights remain immutable and
-their owner outlives both loaders; Rust struct field drop order in `Model`
-ensures both loaders are dropped before `_weights`. Current packages require the supported
-Torch 2.13 stack and weightless compilation, not embedded per-entry weights.
-
-The shared archive also supports E4M3 FP8 storage (`float8_e4m3fn`), with scales
-stored as separate tensors. FP8 bundles require a reader with that dtype support;
-the manifest format and dynamic model ABI are unchanged.
-
-Shared-weight compilation applies the version/hash-guarded
+Python and native Rust retain one tensor pool and inject constants into both
+loaders with `load_constants(..., user_managed=True)` (verified pointer-for-pointer
+against the pool). Rust struct field drop order in `Model` drops both loaders
+before `_weights`. Compilation applies the guarded
 [Torch 2.13 header overlay](../compiler/patches/torch_2_13/README.md) so cloned
-user-managed constant handles are released with their loaders.
-The overlay preserves shared tensor storage and does not modify installed Torch
-headers. Older bundles need re-export for this lifetime fix; metadata edits cannot
-change their compiled ownership behavior.
+user-managed constant handles release cleanly with their loaders.
 
-## Loading and native dependencies
+## Loading, native dependencies and compatibility
 
-Every native runtime construction validates metadata/model ABI, verifies each
-package's size and hash, verifies the shared archive, and checks actual GPU
-compatibility before loading GPU weights. Each package and archive is hashed
-once per construction, and the archive manifest is parsed once. This is a
-load-scoped result, not a persistent trust cache across runtime instances.
+Every native `Model::open` validates metadata/ABI, verifies `.pt2`,
+`weights.safetensors` and tokenizer file sizes and SHA-256 digests once per
+load, and checks live GPU compute capability before loading weights.
 
-All model families embed `libxinfer_attention_ops.so` in each `.pt2` package,
-and Qwen3.5/Qwen3.8 additionally embed `libxinfer_deltanet_ops.so`; package checksums
-cover all embedded operator libraries. Generic weight readers do not inspect or
-compare embedded operator payloads. Current exporters select one implementation
-for both entries, but readers do not require byte equality between them.
-Standard AOTI loaders extract the native libraries alongside the wrapper via
-`$ORIGIN`. LibTorch/CUDA remain external dependencies.
-See [attention packaging](flash-attention.md#build-and-deployment) for the C shim,
-linker search path and limits on selecting independent implementations.
+All bundles embed `libxinfer_attention_ops.so` inside each `.pt2` (Qwen3.5 and
+Qwen3.8 also embed `libxinfer_deltanet_ops.so`); AOTI extracts them beside the
+wrapper via `$ORIGIN`. LibTorch and CUDA remain external dependencies; CPU ISA
+compatibility is not checked at load time (see
+[runtime installation](../environments/README.md#install-and-relocate-the-runtime)).
 
-Native `load_ms` includes integrity preflight, weight loading and loader setup.
-Older measurements excluded checks performed during spec construction; compare
-whole-process elapsed time when crossing that reporting change.
-CPU instruction-set compatibility is not enforced; see
-[deployment constraints](../environments/README.md#install-and-relocate-the-runtime).
-
-## Compatibility and retained bundles
-
-Qwen3.8 bundles require `model_type="qwen38"` and archive identity
-`model="qwen3.8"`. Package-based tools dispatch directly by `model_type`;
-checkpoint model IDs do not override that selection. Re-export older Qwen3.8
-bundles labeled `qwen35`; no compatibility routing is provided. Relabeling only
-`metadata.json` would mismatch the embedded archive identity.
-
-Re-export with the current exporter by default. Packages with embedded weights,
-the old attention interface, an external operator dependency, legacy state
-`update` fields (such as returned-state `replace` Qwen3.5 metadata), or legacy
-`prefill.json`/`decode.json` sidecars
-require re-export; metadata conversion cannot supply missing code or change the
-compiled ABI. Keep historical bundles with their matching runtimes when
-retaining them as evidence.
+Re-export bundles whenever the package schema or compiled ABI changes (no legacy
+format migration or `model_type` compatibility aliasing is provided). Keep
+historical bundles paired with their matching runtimes when retained as evidence.
