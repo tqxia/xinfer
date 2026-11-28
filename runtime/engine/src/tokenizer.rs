@@ -242,19 +242,26 @@ impl StreamDecoder {
             .decode(&self.tokens[self.prefix_offset..], true)
             .map_err(|err| Error::new(format!("Detokenization failed: {err}")))?;
 
-        let delta = if new_text.len() > prefix_text.len()
-            && !new_text.ends_with('\u{FFFD}')
-            && new_text.starts_with(&prefix_text)
-        {
-            let slice = new_text[prefix_text.len()..].to_string();
+        // A single UTF-8 scalar value is at most 4 bytes (at most 4 single-byte BPE tokens),
+        // so bound U+FFFD holdback to avoid stalling on literal U+FFFD output tokens.
+        let buffered_tokens = self.tokens.len().saturating_sub(self.read_offset);
+        let wait_for_utf8 = new_text.ends_with('\u{FFFD}') && buffered_tokens < 4;
+        let delta = extract_incremental_delta(&prefix_text, &new_text);
+
+        let emitted = if !wait_for_utf8 && !delta.is_empty() {
+            let slice = delta.to_string();
             self.prefix_offset = self.read_offset;
             self.read_offset = self.tokens.len();
             slice
         } else {
+            if !wait_for_utf8 && buffered_tokens >= 4 && new_text == prefix_text {
+                self.prefix_offset = self.read_offset;
+                self.read_offset = self.tokens.len();
+            }
             String::new()
         };
 
-        self.apply_stop_filter(&delta)
+        self.apply_stop_filter(&emitted)
     }
 
     /// Feeds already-decoded text directly (used by unit tests without a tokenizer file).
@@ -285,8 +292,9 @@ impl StreamDecoder {
         Ok(StreamStep::Continue(emitted))
     }
 
-    /// Flushes any trailing buffered text (e.g., pending stop holdback or incomplete UTF-8) at EOS/limit.
-    pub fn finish(&mut self) -> Result<String> {
+    /// Flushes any trailing buffered text (e.g., pending stop holdback or incomplete UTF-8)
+    /// at EOS/limit, enforcing `stop_strings` before returning.
+    pub fn finish(&mut self) -> Result<StreamStep> {
         if let Some(tok) = &self.tokenizer {
             if self.read_offset < self.tokens.len() {
                 let prefix_text = tok
@@ -297,14 +305,45 @@ impl StreamDecoder {
                     .tokenizer
                     .decode(&self.tokens[self.prefix_offset..], true)
                     .map_err(|err| Error::new(format!("Detokenization failed: {err}")))?;
-                if new_text.len() > prefix_text.len() && new_text.starts_with(&prefix_text) {
-                    self.pending.push_str(&new_text[prefix_text.len()..]);
-                }
+                self.pending
+                    .push_str(extract_incremental_delta(&prefix_text, &new_text));
+                self.prefix_offset = self.read_offset;
                 self.read_offset = self.tokens.len();
             }
         }
-        Ok(std::mem::take(&mut self.pending))
+        if !self.stop_strings.is_empty() {
+            if let Some(pos) = earliest_stop_match(&self.pending, &self.stop_strings) {
+                let emitted = self.pending[..pos].to_string();
+                self.pending.clear();
+                return Ok(StreamStep::Stopped(emitted));
+            }
+        }
+        Ok(StreamStep::Continue(std::mem::take(&mut self.pending)))
     }
+
+    #[cfg(test)]
+    pub(crate) fn append_pending_for_test(&mut self, text: &str) {
+        self.pending.push_str(text);
+    }
+}
+
+pub(crate) fn extract_incremental_delta<'a>(prefix_text: &str, new_text: &'a str) -> &'a str {
+    if let Some(rest) = new_text.strip_prefix(prefix_text) {
+        return rest;
+    }
+    let common = common_prefix_len_char_boundary(prefix_text, new_text);
+    &new_text[common..]
+}
+
+fn common_prefix_len_char_boundary(a: &str, b: &str) -> usize {
+    let mut len = 0usize;
+    for (ca, cb) in a.chars().zip(b.chars()) {
+        if ca != cb {
+            break;
+        }
+        len += ca.len_utf8();
+    }
+    len
 }
 
 fn earliest_stop_match(text: &str, stops: &[String]) -> Option<usize> {

@@ -11,13 +11,11 @@ use tokio::sync::{mpsc, oneshot};
 use xinfer_runtime::{require_kind, Error, ErrorKind, Model, Result};
 
 use crate::config::EngineConfig;
-use crate::scheduler::{PendingRequest, Scheduler, SessionBackend};
+use crate::scheduler::{BatchBackend, PendingRequest, Scheduler, SessionBackend};
 use crate::tokenizer::BundleTokenizer;
-use crate::types::{ChatMessage, GenerateEvent, GenerateRequest, ModelInfo, SamplingParams};
+use crate::types::{ChatMessage, GenerateEvent, GenerateOptions, GenerateRequest, ModelInfo};
 
-const EVENT_CHANNEL_CAPACITY: usize = 64;
-
-enum Command {
+pub(crate) enum Command {
     Submit {
         pending: PendingRequest,
         ack: oneshot::Sender<Result<()>>,
@@ -37,6 +35,7 @@ pub struct EngineHandle {
     model_info: Arc<ModelInfo>,
     tokenizer: Arc<BundleTokenizer>,
     ready: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl EngineHandle {
@@ -49,26 +48,26 @@ impl EngineHandle {
     }
 
     pub fn is_ready(&self) -> bool {
-        self.ready.load(Ordering::Acquire) && !self.cmd_tx.is_closed()
+        self.ready.load(Ordering::Acquire)
+            && !self.shutdown.load(Ordering::Acquire)
+            && !self.cmd_tx.is_closed()
     }
 
     /// Tokenizes `prompt` on the caller's thread and submits a completion request to the GPU actor.
     pub async fn submit_completion(
         &self,
         prompt: &str,
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
-    ) -> Result<mpsc::Receiver<GenerateEvent>> {
+        options: GenerateOptions,
+    ) -> Result<mpsc::UnboundedReceiver<GenerateEvent>> {
         let prompt_tokens = self.tokenizer.encode(prompt, true)?;
-        let resolved_max = self.resolve_max_tokens(prompt_tokens.len(), max_tokens)?;
+        let resolved_max = self.resolve_max_tokens(prompt_tokens.len(), options.max_tokens)?;
         self.submit_tokens(GenerateRequest {
             prompt_tokens,
             max_tokens: resolved_max,
-            sampling,
-            stop_strings,
-            stop_token_ids: Vec::new(),
-            ignore_eos: false,
+            sampling: options.sampling,
+            stop_strings: options.stop_strings,
+            stop_token_ids: options.stop_token_ids,
+            ignore_eos: options.ignore_eos,
         })
         .await
     }
@@ -77,24 +76,22 @@ impl EngineHandle {
     pub async fn submit_chat(
         &self,
         messages: &[ChatMessage],
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
+        options: GenerateOptions,
         enable_thinking: Option<bool>,
-    ) -> Result<mpsc::Receiver<GenerateEvent>> {
+    ) -> Result<mpsc::UnboundedReceiver<GenerateEvent>> {
         let rendered = self
             .tokenizer
             .apply_chat_template(messages, true, enable_thinking)?;
         // Template already inserts special tokens such as `<|im_start|>`.
         let prompt_tokens = self.tokenizer.encode(&rendered, false)?;
-        let resolved_max = self.resolve_max_tokens(prompt_tokens.len(), max_tokens)?;
+        let resolved_max = self.resolve_max_tokens(prompt_tokens.len(), options.max_tokens)?;
         self.submit_tokens(GenerateRequest {
             prompt_tokens,
             max_tokens: resolved_max,
-            sampling,
-            stop_strings,
-            stop_token_ids: Vec::new(),
-            ignore_eos: false,
+            sampling: options.sampling,
+            stop_strings: options.stop_strings,
+            stop_token_ids: options.stop_token_ids,
+            ignore_eos: options.ignore_eos,
         })
         .await
     }
@@ -103,9 +100,9 @@ impl EngineHandle {
     pub async fn submit_tokens(
         &self,
         request: GenerateRequest,
-    ) -> Result<mpsc::Receiver<GenerateEvent>> {
+    ) -> Result<mpsc::UnboundedReceiver<GenerateEvent>> {
         if !self.is_ready() {
-            return Err(Error::new("Engine is not ready"));
+            return Err(Error::unavailable("Engine is not ready"));
         }
         request.sampling.validate()?;
         require_kind(
@@ -141,7 +138,7 @@ impl EngineHandle {
             ),
         )?;
 
-        let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (ack_tx, ack_rx) = oneshot::channel();
         self.cmd_tx
             .try_send(Command::Submit {
@@ -152,15 +149,15 @@ impl EngineHandle {
                 ack: ack_tx,
             })
             .map_err(|err| match err {
-                mpsc::error::TrySendError::Full(_) => {
-                    Error::capacity_exceeded("Request queue is full")
+                mpsc::error::TrySendError::Full(_) => Error::queue_full("Request queue is full"),
+                mpsc::error::TrySendError::Closed(_) => {
+                    Error::unavailable("Engine is shutting down")
                 }
-                mpsc::error::TrySendError::Closed(_) => Error::new("Engine is shutting down"),
             })?;
 
         let result = ack_rx
             .await
-            .map_err(|_| Error::new("Engine terminated before acknowledging request"))?;
+            .map_err(|_| Error::unavailable("Engine terminated before acknowledging request"))?;
         result?;
         Ok(event_rx)
     }
@@ -187,7 +184,8 @@ impl EngineHandle {
     }
 
     pub fn request_shutdown(&self) {
-        self.ready.store(false, Ordering::Release);
+        self.shutdown.store(true, Ordering::SeqCst);
+        self.ready.store(false, Ordering::SeqCst);
         let _ = self.cmd_tx.try_send(Command::Shutdown);
     }
 }
@@ -208,11 +206,20 @@ impl Engine {
         let (ready_tx, ready_rx) = std_mpsc::sync_channel::<Result<StartupInfo>>(1);
         let ready = Arc::new(AtomicBool::new(false));
         let ready_worker = Arc::clone(&ready);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_worker = Arc::clone(&shutdown);
 
         let worker = thread::Builder::new()
             .name("xinfer-gpu".to_string())
             .spawn(move || {
-                run_gpu_actor(bundle_dir, config, cmd_rx, ready_tx, ready_worker);
+                run_gpu_actor(
+                    bundle_dir,
+                    config,
+                    cmd_rx,
+                    ready_tx,
+                    ready_worker,
+                    shutdown_worker,
+                );
             })
             .map_err(|err| Error::io(format!("Failed to spawn GPU worker thread: {err}")))?;
 
@@ -225,6 +232,7 @@ impl Engine {
             model_info: Arc::new(startup.model_info),
             tokenizer: startup.tokenizer,
             ready,
+            shutdown,
         };
         Ok(Self {
             handle,
@@ -294,6 +302,7 @@ fn run_gpu_actor(
     mut cmd_rx: mpsc::Receiver<Command>,
     ready_tx: std_mpsc::SyncSender<Result<StartupInfo>>,
     ready: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 ) {
     let mut scheduler = match init_actor(&bundle_dir, &config) {
         Ok((startup, scheduler)) => {
@@ -307,11 +316,30 @@ fn run_gpu_actor(
         }
     };
 
+    run_actor_loop(&mut scheduler, &mut cmd_rx, &ready, &shutdown);
+}
+
+pub(crate) fn run_actor_loop<B: BatchBackend>(
+    scheduler: &mut Scheduler<B>,
+    cmd_rx: &mut mpsc::Receiver<Command>,
+    ready: &AtomicBool,
+    shutdown: &AtomicBool,
+) {
     let mut shutting_down = false;
-    while !shutting_down {
+    while !shutting_down && !shutdown.load(Ordering::SeqCst) {
         if !scheduler.has_work() {
+            // Re-check shutdown right before parking in `blocking_recv()`. If `request_shutdown()`
+            // ran concurrently and dropped `Command::Shutdown` because `cmd_tx` was full, `cmd_rx`
+            // is guaranteed non-empty so `blocking_recv()` returns immediately.
+            if shutdown.load(Ordering::SeqCst) {
+                break;
+            }
             match cmd_rx.blocking_recv() {
                 Some(Command::Submit { pending, ack }) => {
+                    if shutdown.load(Ordering::SeqCst) {
+                        let _ = ack.send(Err(Error::unavailable("Engine is shutting down")));
+                        break;
+                    }
                     let _ = ack.send(scheduler.submit(pending));
                 }
                 Some(Command::Shutdown) | None => break,
@@ -320,6 +348,10 @@ fn run_gpu_actor(
 
         // Drain any newly arrived requests before launching the next GPU step.
         loop {
+            if shutdown.load(Ordering::SeqCst) {
+                shutting_down = true;
+                break;
+            }
             match cmd_rx.try_recv() {
                 Ok(Command::Submit { pending, ack }) => {
                     let _ = ack.send(scheduler.submit(pending));
@@ -335,17 +367,27 @@ fn run_gpu_actor(
                 }
             }
         }
-        if shutting_down {
+        if shutting_down || shutdown.load(Ordering::SeqCst) {
             break;
         }
 
         if let Err(err) = scheduler.step() {
             ready.store(false, Ordering::Release);
+            drain_unacked_submits(cmd_rx, "Inference engine terminated");
             scheduler.abort_all(&format!("Inference engine error: {err}"));
             return;
         }
     }
 
     ready.store(false, Ordering::Release);
+    drain_unacked_submits(cmd_rx, "Engine is shutting down");
     scheduler.abort_all("Engine shutting down");
+}
+
+fn drain_unacked_submits(cmd_rx: &mut mpsc::Receiver<Command>, message: &str) {
+    while let Ok(cmd) = cmd_rx.try_recv() {
+        if let Command::Submit { ack, .. } = cmd {
+            let _ = ack.send(Err(Error::unavailable(message)));
+        }
+    }
 }

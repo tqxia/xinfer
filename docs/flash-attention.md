@@ -77,10 +77,10 @@ concurrent exports must use separate processes; each export CLI compiles its
 entries sequentially. `package_aoti` includes the native library in each `.pt2`
 during normal packaging.
 
-Standard Python/C++ AOTI loaders extract the library beside the wrapper; the
-system linker loads it and registers the operator. Native executables neither
-link nor install a separate attention library. Deploy the complete
-[four-file bundle](package-metadata.md) with compatible LibTorch/CUDA. External-
+Standard Python and native AOTI loaders extract the library beside the wrapper;
+the system linker loads it and registers the operator. Native executables
+neither link nor install a separate attention library. Deploy the complete
+[deployment bundle](package-metadata.md) with compatible LibTorch/CUDA. External-
 library packages require re-export; editing JSON or copying a library beside
 an old package does not meet the bundled contract.
 

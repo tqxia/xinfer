@@ -33,6 +33,9 @@ pub struct CompletionRequest {
     pub top_k: Option<i32>,
     pub seed: Option<u64>,
     pub stop: Option<StopParam>,
+    pub stop_token_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub ignore_eos: bool,
     #[serde(default)]
     pub stream: bool,
 }
@@ -53,6 +56,9 @@ pub struct ChatCompletionRequest {
     pub top_k: Option<i32>,
     pub seed: Option<u64>,
     pub stop: Option<StopParam>,
+    pub stop_token_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub ignore_eos: bool,
     #[serde(default)]
     pub stream: bool,
     pub chat_template_kwargs: Option<ChatTemplateKwargs>,
@@ -216,36 +222,37 @@ impl ApiError {
         let message = err.to_string();
         match err.kind() {
             ErrorKind::InvalidInput | ErrorKind::Unsupported => Self::bad_request(message),
-            ErrorKind::CapacityExceeded => {
-                if message.contains("queue") {
-                    Self {
-                        status: StatusCode::TOO_MANY_REQUESTS,
-                        error_type: "rate_limit_error",
-                        code: Some("queue_full"),
-                        message,
-                    }
-                } else {
-                    Self {
-                        status: StatusCode::BAD_REQUEST,
-                        error_type: "invalid_request_error",
-                        code: Some("context_length_exceeded"),
-                        message,
-                    }
-                }
-            }
-            ErrorKind::Io | ErrorKind::Runtime => {
-                if message.contains("not ready") || message.contains("shutting down") {
-                    Self::service_unavailable(message)
-                } else {
-                    Self {
-                        status: StatusCode::INTERNAL_SERVER_ERROR,
-                        error_type: "server_error",
-                        code: None,
-                        message,
-                    }
-                }
-            }
+            ErrorKind::CapacityExceeded => Self {
+                status: StatusCode::BAD_REQUEST,
+                error_type: "invalid_request_error",
+                code: Some("context_length_exceeded"),
+                message,
+            },
+            ErrorKind::QueueFull => Self {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                error_type: "rate_limit_error",
+                code: Some("queue_full"),
+                message,
+            },
+            ErrorKind::Unavailable => Self::service_unavailable(message),
+            ErrorKind::Io | ErrorKind::Runtime => Self {
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+                error_type: "server_error",
+                code: None,
+                message,
+            },
         }
+    }
+
+    pub fn to_json_string(&self) -> String {
+        let body = ErrorEnvelope {
+            error: ErrorBody {
+                message: self.message.clone(),
+                error_type: self.error_type,
+                code: self.code,
+            },
+        };
+        serde_json::to_string(&body).unwrap_or_default()
     }
 }
 

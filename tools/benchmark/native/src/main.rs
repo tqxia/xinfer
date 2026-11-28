@@ -162,7 +162,7 @@ fn parse_options(args: &[String]) -> Result<Options> {
 
 fn read_workload(path: &Path) -> Result<Workload> {
     let content = fs::read_to_string(path)
-        .map_err(|_| Error::new(format!("Cannot open metadata: {}", path.display())))?;
+        .map_err(|_| Error::new(format!("Cannot open workload: {}", path.display())))?;
     let workload: Workload = serde_json::from_str(&content)?;
     Ok(workload)
 }

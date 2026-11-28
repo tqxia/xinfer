@@ -10,6 +10,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum ErrorKind {
     InvalidInput,
     CapacityExceeded,
+    QueueFull,
+    Unavailable,
     Unsupported,
     Io,
     Runtime,
@@ -42,6 +44,14 @@ impl Error {
 
     pub fn capacity_exceeded(message: impl Into<String>) -> Self {
         Self::with_kind(ErrorKind::CapacityExceeded, message)
+    }
+
+    pub fn queue_full(message: impl Into<String>) -> Self {
+        Self::with_kind(ErrorKind::QueueFull, message)
+    }
+
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::with_kind(ErrorKind::Unavailable, message)
     }
 
     pub fn unsupported(message: impl Into<String>) -> Self {

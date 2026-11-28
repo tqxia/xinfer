@@ -406,42 +406,77 @@ impl Tensor {
         )
     }
 
+    fn byte_capacity(&self) -> Result<usize> {
+        let numel = usize::try_from(self.numel()?)
+            .map_err(|_| Error::new("Negative tensor element count"))?;
+        numel
+            .checked_mul(self.dtype()?.element_size())
+            .ok_or_else(|| Error::new("Tensor byte size overflow"))
+    }
+
     /// Alignment-safe H2D byte copy into a contiguous CUDA tensor on PyTorch's current stream.
-    pub fn copy_bytes_h2d_async(&mut self, bytes: &[u8]) -> Result<()> {
-        if bytes.is_empty() {
-            return Ok(());
-        }
+    ///
+    /// # Safety
+    /// The caller must keep `bytes` alive and unmodified until the copy completes on
+    /// PyTorch's current CUDA stream (e.g., via `cuda_synchronize()`).
+    pub(crate) unsafe fn copy_bytes_h2d_async(&mut self, bytes: &[u8]) -> Result<()> {
         let dev = match self.device()? {
             Device::Cuda(idx) => idx,
             Device::Cpu => return Err(Error::new("Expected CUDA destination tensor")),
         };
+        require(
+            self.is_contiguous()?,
+            "Expected contiguous CUDA destination tensor",
+        )?;
+        let capacity = self.byte_capacity()?;
+        require(
+            bytes.len() <= capacity,
+            format!(
+                "H2D copy length ({}) exceeds tensor byte capacity ({capacity})",
+                bytes.len()
+            ),
+        )?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
         let stream = current_cuda_stream(dev)?;
         let dst = self.data_ptr()?;
         check_cuda(
-            unsafe {
-                torch_sys::cudaMemcpyAsync(
-                    dst,
-                    bytes.as_ptr().cast::<c_void>(),
-                    bytes.len(),
-                    torch_sys::CUDA_MEMCPY_HOST_TO_DEVICE,
-                    stream,
-                )
-            },
+            torch_sys::cudaMemcpyAsync(
+                dst,
+                bytes.as_ptr().cast::<c_void>(),
+                bytes.len(),
+                torch_sys::CUDA_MEMCPY_HOST_TO_DEVICE,
+                stream,
+            ),
             "cudaMemcpyAsync(H2D)",
         )
     }
 
     /// Alignment-safe copy from host byte slice into a contiguous CPU tensor.
     pub fn copy_bytes_cpu(&mut self, bytes: &[u8]) -> Result<()> {
-        if bytes.is_empty() {
-            return Ok(());
-        }
         require(
             self.device()? == Device::Cpu,
             "Expected CPU destination tensor",
         )?;
+        require(
+            self.is_contiguous()?,
+            "Expected contiguous CPU destination tensor",
+        )?;
+        let capacity = self.byte_capacity()?;
+        require(
+            bytes.len() <= capacity,
+            format!(
+                "CPU copy length ({}) exceeds tensor byte capacity ({capacity})",
+                bytes.len()
+            ),
+        )?;
+        if bytes.is_empty() {
+            return Ok(());
+        }
         let dst = self.data_ptr()?.cast::<u8>();
-        // SAFETY: `self` is a live contiguous CPU tensor sized for `bytes.len()` and does not alias `bytes`.
+        // SAFETY: `self` is verified contiguous on CPU with `bytes.len() <= capacity`
+        // and its allocation cannot alias `bytes`.
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst, bytes.len());
         }

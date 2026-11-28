@@ -114,8 +114,10 @@ without HF's redundant cross-grid slice writes, which otherwise introduce a
 `B >= 2` guard during export. Component tests require bitwise HF agreement.
 
 Scalar generation and benchmark commands execute B=1 from the same bundle.
-`xinfer_validate` accepts explicit `batch_steps`. Per-row request replacement and
-continuous-batching scheduling are not implemented. The runtime calls the
+`xinfer_validate` accepts explicit `batch_steps`. `runtime/core/` provides
+per-slot execution and reset (`Session::step_slot`, `step_slots_range`,
+`reset_slot`), and `runtime/engine/` + `xinfer_serve` layer continuous-batching
+scheduling with interleaved chunked prefill on top. The runtime calls the
 current model interface directly; editing `metadata.json` cannot change a
 package's compiled signature.
 
@@ -145,11 +147,12 @@ It stages the complete result in a sibling temporary directory and publishes
 only after both entries succeed. Populated output directories are preserved.
 Graph dumps and packing reports are diagnostics, not extra deployment files.
 
-Python and C++ retain one tensor pool and inject constants into both loaders with
-`load_constants(..., user_managed=True)` (the fourth C++ argument).
-The native loader verifies its constant pointers against the supplied storage.
-Weights remain immutable and their owner outlives both loaders; C++ member order
-ensures loaders are destroyed first. Current packages require the supported
+Python and the native Rust runtime retain one tensor pool and inject constants
+into both loaders with `load_constants(..., user_managed=True)` (the fourth C++
+argument in `runtime/core/shim/torch_shim.cpp`). The native loader verifies its
+constant pointers against the supplied storage. Weights remain immutable and
+their owner outlives both loaders; Rust struct field drop order in `Model`
+ensures both loaders are dropped before `_weights`. Current packages require the supported
 Torch 2.13 stack and weightless compilation, not embedded per-entry weights.
 
 The shared archive also supports E4M3 FP8 storage (`float8_e4m3fn`), with scales

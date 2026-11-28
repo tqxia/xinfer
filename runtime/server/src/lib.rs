@@ -18,7 +18,7 @@ use axum::{Json, Router};
 use futures_util::stream;
 use tokio::sync::mpsc;
 use xinfer_engine::{
-    ChatMessage, EngineHandle, FinishReason, GenerateEvent, ModelInfo, SamplingParams, Usage,
+    ChatMessage, EngineHandle, FinishReason, GenerateEvent, GenerateOptions, ModelInfo, Usage,
 };
 use xinfer_runtime::Result;
 
@@ -37,18 +37,14 @@ pub trait ServingBackend: Send + Sync + 'static {
     fn submit_completion<'a>(
         &'a self,
         prompt: &'a str,
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
-    ) -> BoxFuture<'a, Result<mpsc::Receiver<GenerateEvent>>>;
+        options: GenerateOptions,
+    ) -> BoxFuture<'a, Result<mpsc::UnboundedReceiver<GenerateEvent>>>;
     fn submit_chat<'a>(
         &'a self,
         messages: &'a [ChatMessage],
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
+        options: GenerateOptions,
         enable_thinking: Option<bool>,
-    ) -> BoxFuture<'a, Result<mpsc::Receiver<GenerateEvent>>>;
+    ) -> BoxFuture<'a, Result<mpsc::UnboundedReceiver<GenerateEvent>>>;
 }
 
 impl ServingBackend for EngineHandle {
@@ -63,33 +59,21 @@ impl ServingBackend for EngineHandle {
     fn submit_completion<'a>(
         &'a self,
         prompt: &'a str,
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
-    ) -> BoxFuture<'a, Result<mpsc::Receiver<GenerateEvent>>> {
-        Box::pin(EngineHandle::submit_completion(
-            self,
-            prompt,
-            max_tokens,
-            sampling,
-            stop_strings,
-        ))
+        options: GenerateOptions,
+    ) -> BoxFuture<'a, Result<mpsc::UnboundedReceiver<GenerateEvent>>> {
+        Box::pin(EngineHandle::submit_completion(self, prompt, options))
     }
 
     fn submit_chat<'a>(
         &'a self,
         messages: &'a [ChatMessage],
-        max_tokens: Option<usize>,
-        sampling: SamplingParams,
-        stop_strings: Vec<String>,
+        options: GenerateOptions,
         enable_thinking: Option<bool>,
-    ) -> BoxFuture<'a, Result<mpsc::Receiver<GenerateEvent>>> {
+    ) -> BoxFuture<'a, Result<mpsc::UnboundedReceiver<GenerateEvent>>> {
         Box::pin(EngineHandle::submit_chat(
             self,
             messages,
-            max_tokens,
-            sampling,
-            stop_strings,
+            options,
             enable_thinking,
         ))
     }
@@ -170,7 +154,7 @@ fn check_model_name(requested: Option<&str>, served: &str) -> std::result::Resul
 }
 
 async fn collect_all(
-    mut rx: mpsc::Receiver<GenerateEvent>,
+    mut rx: mpsc::UnboundedReceiver<GenerateEvent>,
 ) -> std::result::Result<(String, FinishReason, Usage), ApiError> {
     let mut output = String::new();
     while let Some(event) = rx.recv().await {
@@ -185,6 +169,23 @@ async fn collect_all(
     ))
 }
 
+enum CompletionSseState {
+    Streaming(mpsc::UnboundedReceiver<GenerateEvent>),
+    EmitDone,
+    Closed,
+}
+
+enum ChatSseState {
+    EmitRole(mpsc::UnboundedReceiver<GenerateEvent>),
+    Streaming(mpsc::UnboundedReceiver<GenerateEvent>),
+    EmitDone,
+    Closed,
+}
+
+fn sse_error_event(api_err: ApiError) -> std::result::Result<Event, Infallible> {
+    Ok(Event::default().data(api_err.to_json_string()))
+}
+
 async fn completions(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CompletionRequest>,
@@ -195,11 +196,16 @@ async fn completions(
         return Err(ApiError::bad_request("prompt must not be empty"));
     }
 
-    let sampling = sampling_from_openai(req.temperature, req.top_p, req.top_k, req.seed);
-    let stop = req.stop.map(|s| s.into_vec()).unwrap_or_default();
+    let options = GenerateOptions {
+        max_tokens: req.max_tokens,
+        sampling: sampling_from_openai(req.temperature, req.top_p, req.top_k, req.seed),
+        stop_strings: req.stop.map(|s| s.into_vec()).unwrap_or_default(),
+        stop_token_ids: req.stop_token_ids.unwrap_or_default(),
+        ignore_eos: req.ignore_eos,
+    };
     let rx = state
         .backend
-        .submit_completion(&req.prompt, req.max_tokens, sampling, stop)
+        .submit_completion(&req.prompt, options)
         .await
         .map_err(ApiError::from_runtime_error)?;
 
@@ -223,118 +229,78 @@ async fn completions(
         .into_response());
     }
 
-    let sse_stream = stream::unfold((rx, false), move |(mut rx, done)| {
+    let sse_stream = stream::unfold(CompletionSseState::Streaming(rx), move |state| {
         let id = id.clone();
         let model = model.clone();
         async move {
-            if done {
-                return None;
-            }
-            match rx.recv().await {
-                Some(GenerateEvent::Delta { text, .. }) => {
-                    if text.is_empty() {
-                        // Emit an empty keep-alive-free skip? Keep folding by returning an event
-                        // only when text is non-empty is cleaner, so loop inside unfold.
-                        let mut rx = rx;
-                        loop {
-                            match rx.recv().await {
-                                Some(GenerateEvent::Delta { text, .. }) if text.is_empty() => {
-                                    continue
-                                }
-                                Some(GenerateEvent::Delta { text, .. }) => {
-                                    let payload = serde_json::to_string(&CompletionResponse {
-                                        id,
-                                        object: "text_completion",
-                                        created,
-                                        model,
-                                        choices: vec![CompletionChoice {
-                                            index: 0,
-                                            text,
-                                            finish_reason: None,
-                                        }],
-                                        usage: None,
-                                    })
-                                    .unwrap_or_default();
-                                    return Some((
-                                        Ok::<Event, Infallible>(Event::default().data(payload)),
-                                        (rx, false),
-                                    ));
-                                }
-                                Some(GenerateEvent::Finished { reason, .. }) => {
-                                    let payload = serde_json::to_string(&CompletionResponse {
-                                        id,
-                                        object: "text_completion",
-                                        created,
-                                        model,
-                                        choices: vec![CompletionChoice {
-                                            index: 0,
-                                            text: String::new(),
-                                            finish_reason: Some(reason.as_openai_str()),
-                                        }],
-                                        usage: None,
-                                    })
-                                    .unwrap_or_default();
-                                    return Some((
-                                        Ok::<Event, Infallible>(Event::default().data(payload)),
-                                        (rx, true),
-                                    ));
-                                }
-                                Some(GenerateEvent::Error(_)) | None => {
-                                    return Some((
-                                        Ok::<Event, Infallible>(Event::default().data("[DONE]")),
-                                        (rx, true),
-                                    ));
-                                }
-                            }
+            match state {
+                CompletionSseState::Closed => None,
+                CompletionSseState::EmitDone => Some((
+                    Ok::<Event, Infallible>(Event::default().data("[DONE]")),
+                    CompletionSseState::Closed,
+                )),
+                CompletionSseState::Streaming(mut rx) => loop {
+                    match rx.recv().await {
+                        Some(GenerateEvent::Delta { text, .. }) if text.is_empty() => continue,
+                        Some(GenerateEvent::Delta { text, .. }) => {
+                            let payload = serde_json::to_string(&CompletionResponse {
+                                id,
+                                object: "text_completion",
+                                created,
+                                model,
+                                choices: vec![CompletionChoice {
+                                    index: 0,
+                                    text,
+                                    finish_reason: None,
+                                }],
+                                usage: None,
+                            })
+                            .unwrap_or_default();
+                            return Some((
+                                Ok::<Event, Infallible>(Event::default().data(payload)),
+                                CompletionSseState::Streaming(rx),
+                            ));
+                        }
+                        Some(GenerateEvent::Finished { reason, .. }) => {
+                            let payload = serde_json::to_string(&CompletionResponse {
+                                id,
+                                object: "text_completion",
+                                created,
+                                model,
+                                choices: vec![CompletionChoice {
+                                    index: 0,
+                                    text: String::new(),
+                                    finish_reason: Some(reason.as_openai_str()),
+                                }],
+                                usage: None,
+                            })
+                            .unwrap_or_default();
+                            return Some((
+                                Ok::<Event, Infallible>(Event::default().data(payload)),
+                                CompletionSseState::EmitDone,
+                            ));
+                        }
+                        Some(GenerateEvent::Error(err)) => {
+                            return Some((
+                                sse_error_event(ApiError::from_runtime_error(err)),
+                                CompletionSseState::Closed,
+                            ));
+                        }
+                        None => {
+                            return Some((
+                                sse_error_event(ApiError::service_unavailable(
+                                    "Generation stream closed unexpectedly",
+                                )),
+                                CompletionSseState::Closed,
+                            ));
                         }
                     }
-                    let payload = serde_json::to_string(&CompletionResponse {
-                        id,
-                        object: "text_completion",
-                        created,
-                        model,
-                        choices: vec![CompletionChoice {
-                            index: 0,
-                            text,
-                            finish_reason: None,
-                        }],
-                        usage: None,
-                    })
-                    .unwrap_or_default();
-                    Some((
-                        Ok::<Event, Infallible>(Event::default().data(payload)),
-                        (rx, false),
-                    ))
-                }
-                Some(GenerateEvent::Finished { reason, .. }) => {
-                    let payload = serde_json::to_string(&CompletionResponse {
-                        id,
-                        object: "text_completion",
-                        created,
-                        model,
-                        choices: vec![CompletionChoice {
-                            index: 0,
-                            text: String::new(),
-                            finish_reason: Some(reason.as_openai_str()),
-                        }],
-                        usage: None,
-                    })
-                    .unwrap_or_default();
-                    // Send final chunk, then [DONE] on the next poll by transitioning state.
-                    Some((
-                        Ok::<Event, Infallible>(Event::default().data(payload)),
-                        (rx, true),
-                    ))
-                }
-                Some(GenerateEvent::Error(_)) | None => None,
+                },
             }
         }
     });
 
-    let done_stream =
-        stream::once(async { Ok::<Event, Infallible>(Event::default().data("[DONE]")) });
-    let combined = futures_util::StreamExt::chain(sse_stream, done_stream);
-    Ok(Sse::new(combined)
+    Ok(Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
         .into_response())
 }
@@ -349,14 +315,18 @@ async fn chat_completions(
         return Err(ApiError::bad_request("messages must not be empty"));
     }
 
-    let max_tokens = req.max_completion_tokens.or(req.max_tokens);
-    let sampling = sampling_from_openai(req.temperature, req.top_p, req.top_k, req.seed);
-    let stop = req.stop.map(|s| s.into_vec()).unwrap_or_default();
+    let options = GenerateOptions {
+        max_tokens: req.max_completion_tokens.or(req.max_tokens),
+        sampling: sampling_from_openai(req.temperature, req.top_p, req.top_k, req.seed),
+        stop_strings: req.stop.map(|s| s.into_vec()).unwrap_or_default(),
+        stop_token_ids: req.stop_token_ids.unwrap_or_default(),
+        ignore_eos: req.ignore_eos,
+    };
     let enable_thinking = req.chat_template_kwargs.and_then(|kw| kw.enable_thinking);
 
     let rx = state
         .backend
-        .submit_chat(&req.messages, max_tokens, sampling, stop, enable_thinking)
+        .submit_chat(&req.messages, options, enable_thinking)
         .await
         .map_err(ApiError::from_runtime_error)?;
 
@@ -383,90 +353,103 @@ async fn chat_completions(
         .into_response());
     }
 
-    let role_chunk = serde_json::to_string(&ChatCompletionChunk {
-        id: id.clone(),
-        object: "chat.completion.chunk",
-        created,
-        model: model.clone(),
-        choices: vec![ChatStreamChoice {
-            index: 0,
-            delta: ChatDelta {
-                role: Some("assistant"),
-                content: Some(String::new()),
-            },
-            finish_reason: None,
-        }],
-    })
-    .unwrap_or_default();
-
-    let first_stream =
-        stream::once(async move { Ok::<Event, Infallible>(Event::default().data(role_chunk)) });
-
-    let body_stream = stream::unfold((rx, false), move |(mut rx, done)| {
+    let sse_stream = stream::unfold(ChatSseState::EmitRole(rx), move |state| {
         let id = id.clone();
         let model = model.clone();
         async move {
-            if done {
-                return None;
-            }
-            loop {
-                match rx.recv().await {
-                    Some(GenerateEvent::Delta { text, .. }) if text.is_empty() => continue,
-                    Some(GenerateEvent::Delta { text, .. }) => {
-                        let payload = serde_json::to_string(&ChatCompletionChunk {
-                            id,
-                            object: "chat.completion.chunk",
-                            created,
-                            model,
-                            choices: vec![ChatStreamChoice {
-                                index: 0,
-                                delta: ChatDelta {
-                                    role: None,
-                                    content: Some(text),
-                                },
-                                finish_reason: None,
-                            }],
-                        })
-                        .unwrap_or_default();
-                        return Some((
-                            Ok::<Event, Infallible>(Event::default().data(payload)),
-                            (rx, false),
-                        ));
-                    }
-                    Some(GenerateEvent::Finished { reason, .. }) => {
-                        let payload = serde_json::to_string(&ChatCompletionChunk {
-                            id,
-                            object: "chat.completion.chunk",
-                            created,
-                            model,
-                            choices: vec![ChatStreamChoice {
-                                index: 0,
-                                delta: ChatDelta {
-                                    role: None,
-                                    content: None,
-                                },
-                                finish_reason: Some(reason.as_openai_str()),
-                            }],
-                        })
-                        .unwrap_or_default();
-                        return Some((
-                            Ok::<Event, Infallible>(Event::default().data(payload)),
-                            (rx, true),
-                        ));
-                    }
-                    Some(GenerateEvent::Error(_)) | None => return None,
+            match state {
+                ChatSseState::Closed => None,
+                ChatSseState::EmitRole(rx) => {
+                    let payload = serde_json::to_string(&ChatCompletionChunk {
+                        id,
+                        object: "chat.completion.chunk",
+                        created,
+                        model,
+                        choices: vec![ChatStreamChoice {
+                            index: 0,
+                            delta: ChatDelta {
+                                role: Some("assistant"),
+                                content: Some(String::new()),
+                            },
+                            finish_reason: None,
+                        }],
+                    })
+                    .unwrap_or_default();
+                    Some((
+                        Ok::<Event, Infallible>(Event::default().data(payload)),
+                        ChatSseState::Streaming(rx),
+                    ))
                 }
+                ChatSseState::EmitDone => Some((
+                    Ok::<Event, Infallible>(Event::default().data("[DONE]")),
+                    ChatSseState::Closed,
+                )),
+                ChatSseState::Streaming(mut rx) => loop {
+                    match rx.recv().await {
+                        Some(GenerateEvent::Delta { text, .. }) if text.is_empty() => continue,
+                        Some(GenerateEvent::Delta { text, .. }) => {
+                            let payload = serde_json::to_string(&ChatCompletionChunk {
+                                id,
+                                object: "chat.completion.chunk",
+                                created,
+                                model,
+                                choices: vec![ChatStreamChoice {
+                                    index: 0,
+                                    delta: ChatDelta {
+                                        role: None,
+                                        content: Some(text),
+                                    },
+                                    finish_reason: None,
+                                }],
+                            })
+                            .unwrap_or_default();
+                            return Some((
+                                Ok::<Event, Infallible>(Event::default().data(payload)),
+                                ChatSseState::Streaming(rx),
+                            ));
+                        }
+                        Some(GenerateEvent::Finished { reason, .. }) => {
+                            let payload = serde_json::to_string(&ChatCompletionChunk {
+                                id,
+                                object: "chat.completion.chunk",
+                                created,
+                                model,
+                                choices: vec![ChatStreamChoice {
+                                    index: 0,
+                                    delta: ChatDelta {
+                                        role: None,
+                                        content: None,
+                                    },
+                                    finish_reason: Some(reason.as_openai_str()),
+                                }],
+                            })
+                            .unwrap_or_default();
+                            return Some((
+                                Ok::<Event, Infallible>(Event::default().data(payload)),
+                                ChatSseState::EmitDone,
+                            ));
+                        }
+                        Some(GenerateEvent::Error(err)) => {
+                            return Some((
+                                sse_error_event(ApiError::from_runtime_error(err)),
+                                ChatSseState::Closed,
+                            ));
+                        }
+                        None => {
+                            return Some((
+                                sse_error_event(ApiError::service_unavailable(
+                                    "Generation stream closed unexpectedly",
+                                )),
+                                ChatSseState::Closed,
+                            ));
+                        }
+                    }
+                },
             }
         }
     });
 
-    let done_stream =
-        stream::once(async { Ok::<Event, Infallible>(Event::default().data("[DONE]")) });
-    let combined = futures_util::StreamExt::chain(
-        futures_util::StreamExt::chain(first_stream, body_stream),
-        done_stream,
-    );
-    Ok(Sse::new(combined)
+    Ok(Sse::new(sse_stream)
         .keep_alive(KeepAlive::default())
         .into_response())
 }

@@ -161,7 +161,7 @@ pub fn metadata_keys(value: &Value, keys: &[&str]) -> bool {
     obj.len() == keys.len() && keys.iter().all(|key| obj.contains_key(*key))
 }
 
-/// Enforces the strict 12-field `metadata.json` schema before any file or GPU I/O.
+/// Enforces the strict 13-field `metadata.json` schema before any file or GPU I/O.
 pub fn validate_metadata(metadata: &Value) -> Result<()> {
     let obj = metadata
         .as_object()
@@ -447,7 +447,7 @@ impl Spec {
         })
     }
 
-    /// Parses `metadata.json`, validates the 12-field schema, and checks model-specific state geometry.
+    /// Parses `metadata.json`, validates the 13-field schema, and checks model-specific state geometry.
     pub fn load(directory: &Path) -> Result<Self> {
         let spec = Self::load_base(directory)?;
         spec.validate_model_state()?;

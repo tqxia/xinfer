@@ -1,8 +1,8 @@
-# Qwen3 AOTI / C++
+# Qwen3 AOTI / Native Runtime
 
 Qwen3 compiles BF16 AOTInductor with valid-prefix FlashAttention and native
 grouped-query attention. The original Hugging Face model provides the weights
-and an independent eager reference. The shared C++ runtime performs inference
+and an independent eager reference. The shared native runtime performs inference
 and greedy generation without Python. Batch-one generation is the default;
 one package also supports explicit inference steps with any batch size from 1 through 8.
 
@@ -51,7 +51,7 @@ once for the entire matrix. Common and multi-row fixtures run for each B;
 batch-transition fixtures run once afterward. Per-batch reports live in
 `b1/` through `b8/`, with transition results in `transitions/`; `summary.json`
 uses these group names as keys. After the Python phase releases its models,
-one C++ runtime executes all cases. Expected cache traces use sparse files with
+one native runtime executes all cases. Expected cache traces use sparse files with
 unchanged bytes; C++ compares complete logits/state files byte for byte and
 removes successful state dumps case by case. Reports retain their digests.
 HF state differences remain diagnostic. See

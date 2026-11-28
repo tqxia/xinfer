@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -52,54 +53,70 @@ const at::Tensor &require_tensor(AtenTensorHandle handle, const char *message) {
   return *tensor;
 }
 
-int64_t sample_cdf(const at::Tensor &probs, float uniform) {
+std::pair<at::Tensor, at::Tensor> sample_cdf_device(const at::Tensor &probs, float uniform) {
   auto cdf = probs.cumsum(-1);
-  const float u = std::clamp(uniform, 0.0f, 0.99999994f);
-  auto u_tensor = at::full({1}, static_cast<double>(u), cdf.options());
-  const int64_t pos = at::searchsorted(cdf, u_tensor, false, true).item<int64_t>();
-  return std::clamp<int64_t>(pos, 0, probs.size(0) - 1);
+  auto total = cdf.narrow(0, probs.size(0) - 1, 1);
+  auto valid = at::isfinite(total).logical_and(total.gt(0.0));
+
+  // Scale `u` strictly below `cdf[-1]` on device so `searchsorted(..., right=true)`
+  // never walks past the last positive-probability entry into masked-out zero tails.
+  constexpr float kMaxUniform = 1.0f - 2.0f * std::numeric_limits<float>::epsilon();
+  const float u = std::clamp(uniform, 0.0f, kMaxUniform);
+  auto max_target = at::nextafter(total, at::zeros_like(total));
+  auto target = at::minimum(total * static_cast<double>(u), max_target);
+
+  auto pos = at::searchsorted(cdf, target, false, true).clamp(0, probs.size(0) - 1);
+  return {pos, valid};
 }
 
-at::Tensor apply_top_p(const at::Tensor &sorted_probs, float top_p) {
+at::Tensor mask_top_p(const at::Tensor &sorted_probs, float top_p) {
   auto cdf = sorted_probs.cumsum(-1);
   // Keep every token whose preceding cumulative mass is strictly below top_p,
   // always retaining at least the highest-probability token.
   auto keep = (cdf - sorted_probs) < static_cast<double>(top_p);
-  keep[0] = true;
-  auto filtered = sorted_probs.masked_fill(keep.logical_not(), 0.0);
-  auto total = filtered.sum();
-  return filtered / total;
+  keep.narrow(0, 0, 1).fill_(true);
+  return sorted_probs.masked_fill(keep.logical_not(), 0.0);
 }
 
-int64_t sample_row(const at::Tensor &row, const XinferSampleRow &param) {
-  if (param.temperature <= 0.0f)
-    return row.argmax(-1).item<int64_t>();
+// Returns a 1-element int64 tensor on `row.device()`; writes -1 if logits are non-finite.
+at::Tensor sample_row_device(const at::Tensor &row, const XinferSampleRow &param) {
   if (!std::isfinite(param.temperature))
     throw std::runtime_error("Sampling temperature must be finite");
+  if (param.temperature <= 0.0f)
+    return row.argmax(-1).reshape({1}).to(at::kLong);
+  if (!std::isfinite(param.top_p) || param.top_p <= 0.0f || param.top_p > 1.0f)
+    throw std::runtime_error("Sampling top_p must be finite and in (0, 1]");
+  if (!std::isfinite(param.uniform))
+    throw std::runtime_error("Sampling uniform variate must be finite");
 
   const int64_t vocab = row.size(0);
   auto scores = row.to(at::kFloat) / static_cast<double>(param.temperature);
   const int64_t top_k = param.top_k > 0 ? std::min<int64_t>(param.top_k, vocab) : 0;
-  const bool use_top_p = param.top_p > 0.0f && param.top_p < 1.0f;
+  const bool use_top_p = param.top_p < 1.0f;
 
+  at::Tensor token;
+  at::Tensor valid;
   if (top_k > 0) {
     auto [values, indices] = at::topk(scores, top_k, -1, true, true);
     auto probs = at::softmax(values, -1);
     if (use_top_p)
-      probs = apply_top_p(probs, param.top_p);
-    const int64_t pos = sample_cdf(probs, param.uniform);
-    return indices[pos].item<int64_t>();
-  }
-
-  if (use_top_p) {
+      probs = mask_top_p(probs, param.top_p);
+    auto [pos, ok] = sample_cdf_device(probs, param.uniform);
+    token = indices.index_select(0, pos);
+    valid = ok;
+  } else if (use_top_p) {
     auto [values, indices] = at::sort(scores, -1, true);
-    auto probs = apply_top_p(at::softmax(values, -1), param.top_p);
-    const int64_t pos = sample_cdf(probs, param.uniform);
-    return indices[pos].item<int64_t>();
+    auto probs = mask_top_p(at::softmax(values, -1), param.top_p);
+    auto [pos, ok] = sample_cdf_device(probs, param.uniform);
+    token = indices.index_select(0, pos);
+    valid = ok;
+  } else {
+    auto probs = at::softmax(scores, -1);
+    std::tie(token, valid) = sample_cdf_device(probs, param.uniform);
   }
 
-  auto probs = at::softmax(scores, -1);
-  return sample_cdf(probs, param.uniform);
+  auto invalid_sentinel = at::full({1}, -1, token.options());
+  return at::where(valid, token, invalid_sentinel);
 }
 
 } // namespace
@@ -212,10 +229,16 @@ int xinfer_shim_sample_batch(AtenTensorHandle logits, const XinferSampleRow *par
       throw std::runtime_error("Sampler batch size mismatch");
     if (count == 0)
       return;
+    if (tensor.size(1) <= 0)
+      throw std::runtime_error("Sampler logits vocabulary must be non-empty");
 
     bool all_greedy = true;
     for (size_t i = 0; i < count; ++i) {
-      if (active[i] && params[i].temperature > 0.0f) {
+      if (!active[i])
+        continue;
+      if (!std::isfinite(params[i].temperature))
+        throw std::runtime_error("Sampling temperature must be finite");
+      if (params[i].temperature > 0.0f) {
         all_greedy = false;
         break;
       }
@@ -229,12 +252,28 @@ int xinfer_shim_sample_batch(AtenTensorHandle logits, const XinferSampleRow *par
       return;
     }
 
+    std::vector<size_t> active_rows;
+    std::vector<at::Tensor> sampled_device;
+    active_rows.reserve(count);
+    sampled_device.reserve(count);
     for (size_t i = 0; i < count; ++i) {
       if (!active[i]) {
         out_tokens[i] = 0;
         continue;
       }
-      out_tokens[i] = sample_row(tensor[static_cast<int64_t>(i)], params[i]);
+      active_rows.push_back(i);
+      sampled_device.push_back(sample_row_device(tensor[static_cast<int64_t>(i)], params[i]));
+    }
+    if (sampled_device.empty())
+      return;
+
+    // Transfer all active sampled token IDs in a single D2H sync.
+    auto ids = at::cat(sampled_device, 0).to(at::kCPU, at::kLong, false, false).contiguous();
+    const auto *src = ids.const_data_ptr<int64_t>();
+    for (size_t k = 0; k < active_rows.size(); ++k) {
+      if (src[k] < 0)
+        throw std::runtime_error("Non-finite logits encountered during sampling");
+      out_tokens[active_rows[k]] = src[k];
     }
   });
 }

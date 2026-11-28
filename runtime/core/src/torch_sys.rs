@@ -45,7 +45,7 @@ pub const CUDA_DEV_ATTR_COMPUTE_CAPABILITY_MAJOR: c_int = 75;
 pub const CUDA_DEV_ATTR_COMPUTE_CAPABILITY_MINOR: c_int = 76;
 
 extern "C" {
-    // Static C++ shim (~111 LOC)
+    // Static C++ LibTorch shim (runtime/core/shim/torch_shim.cpp)
     pub fn xinfer_shim_torch_info(out: *mut XinferTorchInfo);
     pub fn xinfer_shim_last_torch_error() -> *const c_char;
     pub fn xinfer_shim_configure_runtime(error: *mut XinferError) -> c_int;

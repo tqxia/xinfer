@@ -203,7 +203,7 @@ struct Case {
 
 fn read_manifest(path: &Path) -> Result<CaseManifest> {
     let content = fs::read_to_string(path)
-        .map_err(|_| Error::new(format!("Cannot open metadata: {}", path.display())))?;
+        .map_err(|_| Error::new(format!("Cannot open case manifest: {}", path.display())))?;
     let manifest: CaseManifest = serde_json::from_str(&content)?;
     Ok(manifest)
 }

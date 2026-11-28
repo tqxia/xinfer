@@ -1,10 +1,12 @@
 # xinfer
 
-Compile Hugging Face Qwen models with PyTorch AOTInductor and run them in C++
-without Python. xinfer provides BF16 and block-scaled FP8 inference, paired
-prefill/decode packages, shared weights and explicit model state. Generation uses batch one; both model
-families support dynamic batches of 1–8 through explicit steps with independent
-request lengths, using the same package.
+Compile Hugging Face Qwen models with PyTorch AOTInductor and run them natively
+in Rust (with a minimal static C++ LibTorch shim) without Python. xinfer
+provides BF16 and block-scaled FP8 inference, paired prefill/decode packages,
+shared weights, explicit model state, and native continuous-batching serving.
+`xinfer_aoti` runs batch-one greedy generation; `xinfer_serve` and explicit
+steps support dynamic batches of 1–8 with independent request lengths from the
+same bundle.
 
 The model frontends cover [Qwen3-0.6B / 1.7B](compiler/qwen3/README.md),
 [Qwen3.5-0.8B / 4B](compiler/qwen35/README.md) and
@@ -45,7 +47,7 @@ validation, prompt chunking and prefill/decode dispatch. `runtime/engine/`
 (`xinfer-engine`) layers continuous batching, sampling and native tokenization
 on top, and `runtime/server/` provides `xinfer_serve`.
 
-![Runtime architecture: a shared C++ runner executes prefill and decode models using shared weights and model state.](docs/diagrams/runtime-architecture.svg)
+![Runtime architecture: a shared native runner executes prefill and decode models using shared weights and model state.](docs/diagrams/runtime-architecture.svg)
 
 Both loaders borrow the same weight storage through `user_managed` loading.
 KV buffers update in place; Qwen3.5 convolution and recurrent outputs replace

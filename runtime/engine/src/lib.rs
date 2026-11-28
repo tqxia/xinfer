@@ -17,7 +17,8 @@ pub use sampler::{sample_batch, RequestRng, SampleRow};
 pub use scheduler::{BatchBackend, PendingRequest, Scheduler, SessionBackend};
 pub use tokenizer::{BundleTokenizer, StreamDecoder, StreamStep};
 pub use types::{
-    ChatMessage, FinishReason, GenerateEvent, GenerateRequest, ModelInfo, SamplingParams, Usage,
+    ChatMessage, FinishReason, GenerateEvent, GenerateOptions, GenerateRequest, ModelInfo,
+    SamplingParams, Usage,
 };
 
 #[cfg(test)]

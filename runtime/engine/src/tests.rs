@@ -53,6 +53,10 @@ impl BatchBackend for MockBackend {
         self.allocated_batch_size
     }
 
+    fn vocab_size(&self) -> usize {
+        1000
+    }
+
     fn reset_slot(&mut self, slot: usize) -> Result<()> {
         self.calls.push(CallRecord::ResetSlot(slot));
         self.positions[slot] = 0;
@@ -113,8 +117,8 @@ fn test_config(batch: usize, chunk: usize, decode_per_prefill: usize) -> Resolve
 fn make_req(
     prompt: Vec<i64>,
     max_tokens: usize,
-) -> (PendingRequest, mpsc::Receiver<GenerateEvent>) {
-    let (tx, rx) = mpsc::channel(32);
+) -> (PendingRequest, mpsc::UnboundedReceiver<GenerateEvent>) {
+    let (tx, rx) = mpsc::unbounded_channel();
     let pending = PendingRequest {
         request: GenerateRequest {
             prompt_tokens: prompt,
@@ -129,7 +133,7 @@ fn make_req(
     (pending, rx)
 }
 
-fn collect_events(mut rx: mpsc::Receiver<GenerateEvent>) -> (Vec<i64>, FinishReason) {
+fn collect_events(mut rx: mpsc::UnboundedReceiver<GenerateEvent>) -> (Vec<i64>, FinishReason) {
     let mut ids = Vec::new();
     let mut reason = None;
     while let Ok(ev) = rx.try_recv() {
@@ -249,8 +253,18 @@ fn scheduler_enforces_capacity_and_queue_limits() {
     }
     let (overflow, _rx) = make_req(vec![1, 2], 1);
     let err = sched.submit(overflow).unwrap_err();
-    assert_eq!(err.kind(), ErrorKind::CapacityExceeded);
-    assert!(err.to_string().contains("queue"));
+    assert_eq!(err.kind(), ErrorKind::QueueFull);
+
+    let (oob_neg, _rx) = make_req(vec![-1], 1);
+    assert_eq!(
+        sched.submit(oob_neg).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
+    let (oob_high, _rx) = make_req(vec![1000], 1);
+    assert_eq!(
+        sched.submit(oob_high).unwrap_err().kind(),
+        ErrorKind::InvalidInput
+    );
 }
 
 #[test]
@@ -281,7 +295,10 @@ fn stream_decoder_holds_partial_stop_prefixes_and_truncates_match() {
         dec2.push_text_for_test("hi EN").unwrap(),
         StreamStep::Continue("hi ".to_string())
     );
-    assert_eq!(dec2.finish().unwrap(), "EN");
+    assert_eq!(
+        dec2.finish().unwrap(),
+        StreamStep::Continue("EN".to_string())
+    );
 }
 
 #[test]
@@ -467,7 +484,9 @@ fn bundle_tokenizer_matches_python_transformers_and_streams_utf8_cleanly() {
                 StreamStep::Stopped(_) => unreachable!(),
             }
         }
-        streamed.push_str(&decoder.finish().unwrap());
+        match decoder.finish().unwrap() {
+            StreamStep::Continue(tail) | StreamStep::Stopped(tail) => streamed.push_str(&tail),
+        }
         assert_eq!(
             streamed, expected_decoded,
             "StreamDecoder mismatch for {text:?}"
@@ -498,4 +517,201 @@ fn bundle_tokenizer_matches_python_transformers_and_streams_utf8_cleanly() {
             "chat encoded IDs mismatch (enable_thinking={enable_thinking:?})"
         );
     }
+}
+
+#[test]
+fn sampler_shim_never_picks_masked_tail_and_rejects_non_finite() {
+    let vocab: i64 = 4096;
+    let logits = Tensor::empty_contiguous(&[2, vocab], DType::Float32, Device::Cpu).unwrap();
+    let ptr = logits.data_ptr().unwrap().cast::<f32>();
+    let mut values = vec![-100.0f32; (2 * vocab) as usize];
+    // Row 0: almost all probability mass on {0, 1}; tail 2..4096 is effectively zero / top_p-masked.
+    values[0] = 5.0;
+    values[1] = 4.5;
+    // Row 1: greedy row mixed with stochastic row 0.
+    values[vocab as usize + 7] = 12.0;
+    unsafe {
+        std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len());
+    }
+
+    for &u in &[0.0f32, 0.5, 0.99999976, 0.99999994, 1.0] {
+        let picked = sample_batch(
+            &logits,
+            &[
+                SampleRow {
+                    temperature: 1.0,
+                    top_p: 0.9,
+                    top_k: 0,
+                    uniform: u,
+                },
+                SampleRow {
+                    temperature: 0.0,
+                    top_p: 1.0,
+                    top_k: 0,
+                    uniform: 0.0,
+                },
+            ],
+            &[true, true],
+        )
+        .unwrap();
+        assert!(
+            picked[0] == 0 || picked[0] == 1,
+            "uniform={u} sampled masked-out tail token {}",
+            picked[0]
+        );
+        assert_eq!(picked[1], 7);
+    }
+
+    // Non-finite logits on a stochastic row must fail cleanly rather than sampling garbage.
+    values[2] = f32::NAN;
+    unsafe {
+        std::ptr::copy_nonoverlapping(values.as_ptr(), ptr, values.len());
+    }
+    let err = sample_batch(
+        &logits,
+        &[
+            SampleRow {
+                temperature: 1.0,
+                top_p: 1.0,
+                top_k: 0,
+                uniform: 0.5,
+            },
+            SampleRow {
+                temperature: 0.0,
+                top_p: 1.0,
+                top_k: 0,
+                uniform: 0.0,
+            },
+        ],
+        &[true, true],
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("Non-finite"));
+}
+
+#[test]
+fn scheduler_step_never_blocks_or_panics_inside_tokio_runtime() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        // Generate > 100 tokens without draining `rx` first (would have deadlocked/panicked with
+        // the old bounded 64-item channel + `blocking_send`).
+        let backend = MockBackend::new(1, 256, 16);
+        let mut sched = Scheduler::new(backend, None, vec![999], test_config(1, 16, 1));
+        let (req, rx) = make_req(vec![1, 2], 120);
+        sched.submit(req).unwrap();
+        while sched.has_work() {
+            sched.step().unwrap();
+        }
+        let (ids, reason) = collect_events(rx);
+        assert_eq!(ids.len(), 120);
+        assert_eq!(reason, FinishReason::Length);
+    });
+}
+
+#[test]
+fn actor_shutdown_completes_when_command_channel_is_full() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    use tokio::sync::oneshot;
+
+    use crate::actor::{run_actor_loop, Command};
+
+    let (cmd_tx, mut cmd_rx) = mpsc::channel(2);
+    let ready = Arc::new(AtomicBool::new(true));
+    let shutdown = Arc::new(AtomicBool::new(false));
+
+    // Saturate cmd_tx completely before starting shutdown so try_send(Shutdown) returns Full.
+    let (req1, _ev1) = make_req(vec![1, 2], 2);
+    let (ack1_tx, ack1_rx) = oneshot::channel();
+    cmd_tx
+        .try_send(Command::Submit {
+            pending: req1,
+            ack: ack1_tx,
+        })
+        .unwrap();
+    let (req2, _ev2) = make_req(vec![3, 4], 2);
+    let (ack2_tx, ack2_rx) = oneshot::channel();
+    cmd_tx
+        .try_send(Command::Submit {
+            pending: req2,
+            ack: ack2_tx,
+        })
+        .unwrap();
+
+    // Request shutdown while cmd_tx is full and keep `cmd_tx` alive across worker.join().
+    shutdown.store(true, Ordering::SeqCst);
+    ready.store(false, Ordering::SeqCst);
+    assert!(cmd_tx.try_send(Command::Shutdown).is_err());
+
+    let ready_worker = Arc::clone(&ready);
+    let shutdown_worker = Arc::clone(&shutdown);
+    let worker = thread::spawn(move || {
+        let backend = MockBackend::new(1, 64, 8);
+        let mut sched = Scheduler::new(backend, None, vec![999], test_config(1, 8, 1));
+        run_actor_loop(&mut sched, &mut cmd_rx, &ready_worker, &shutdown_worker);
+    });
+
+    worker
+        .join()
+        .expect("actor thread must exit cleanly without deadlocking");
+    assert_eq!(
+        ack1_rx.blocking_recv().unwrap().unwrap_err().kind(),
+        ErrorKind::Unavailable
+    );
+    assert_eq!(
+        ack2_rx.blocking_recv().unwrap().unwrap_err().kind(),
+        ErrorKind::Unavailable
+    );
+    drop(cmd_tx);
+}
+
+#[test]
+fn stream_decoder_handles_non_prefix_delta_and_stop_in_finish() {
+    use crate::tokenizer::extract_incremental_delta;
+
+    // Non-prefix cleanup rewrite must emit the diverging suffix rather than stalling/dropping.
+    assert_eq!(
+        extract_incremental_delta("hello ", "hello, world"),
+        ", world"
+    );
+    assert_eq!(extract_incremental_delta("café", "cafe!"), "e!");
+
+    // finish() must still enforce stop_strings on trailing flushed text.
+    let mut dec = StreamDecoder::new(None, vec!["STOP".to_string()]);
+    assert_eq!(
+        dec.push_text_for_test("hello ST").unwrap(),
+        StreamStep::Continue("hello ".to_string())
+    );
+    dec.append_pending_for_test("OP trailing");
+    assert_eq!(dec.finish().unwrap(), StreamStep::Stopped(String::new()));
+}
+
+#[test]
+fn chat_message_deserializes_string_parts_and_null() {
+    use crate::ChatMessage;
+
+    let plain: ChatMessage = serde_json::from_str(r#"{"role":"user","content":"hello"}"#).unwrap();
+    assert_eq!(plain.content, "hello");
+
+    let null_msg: ChatMessage =
+        serde_json::from_str(r#"{"role":"assistant","content":null}"#).unwrap();
+    assert_eq!(null_msg.content, "");
+
+    let omitted: ChatMessage = serde_json::from_str(r#"{"role":"assistant"}"#).unwrap();
+    assert_eq!(omitted.content, "");
+
+    let parts: ChatMessage = serde_json::from_str(
+        r#"{"role":"user","content":[{"type":"text","text":"hello "},{"type":"text","text":"world"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(parts.content, "hello world");
+
+    let unsupported = serde_json::from_str::<ChatMessage>(
+        r#"{"role":"user","content":[{"type":"image_url","url":"https://example.com/a.png"}]}"#,
+    );
+    assert!(unsupported.is_err());
 }

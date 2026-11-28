@@ -1007,6 +1007,25 @@ fn spec_error_kinds_distinguish_input_vs_capacity() {
 }
 
 #[test]
+fn copy_bytes_cpu_enforces_contiguity_and_bounds() {
+    let mut base = Tensor::empty_contiguous(&[2, 4], DType::Float32, Device::Cpu).unwrap();
+    // 2 * 4 * 4 = 32 bytes capacity: oversized write must fail cleanly.
+    let too_large = vec![0u8; 36];
+    let err = base.copy_bytes_cpu(&too_large).unwrap_err();
+    assert!(err.to_string().contains("exceeds tensor byte capacity"));
+
+    // Non-contiguous slice along dim 1 (strides [4, 1], sizes [2, 2]) must fail cleanly.
+    let mut non_contig = base.slice_dim(1, 0, 2).unwrap();
+    assert!(!non_contig.is_contiguous().unwrap());
+    let err = non_contig.copy_bytes_cpu(&[0u8; 16]).unwrap_err();
+    assert!(err.to_string().contains("contiguous"));
+
+    // Exact-sized write on contiguous tensor succeeds.
+    let exact = vec![0x2Au8; 32];
+    base.copy_bytes_cpu(&exact).unwrap();
+}
+
+#[test]
 #[ignore = "requires GPU and XINFER_PACKAGES"]
 fn gpu_step_slot_and_reset_slot_match_batch_bitwise() {
     let dir = PathBuf::from(

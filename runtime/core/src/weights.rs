@@ -514,7 +514,9 @@ impl SharedWeights {
 
             let mut dst = Tensor::empty_contiguous(&[entry.numel], entry.dtype, device)?;
             if entry.cuda {
-                dst.copy_bytes_h2d_async(slice)?;
+                // SAFETY: `mapped` and `st` stay live and immutable until `cuda_synchronize()`
+                // completes below before either is dropped.
+                unsafe { dst.copy_bytes_h2d_async(slice)? };
                 copied_cuda = true;
             } else {
                 dst.copy_bytes_cpu(slice)?;

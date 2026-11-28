@@ -19,6 +19,7 @@ pub trait BatchBackend {
     fn capacity(&self) -> usize;
     fn max_prefill(&self) -> usize;
     fn allocated_batch_size(&self) -> usize;
+    fn vocab_size(&self) -> usize;
     fn reset_slot(&mut self, slot: usize) -> Result<()>;
     fn step_slot(&mut self, slot: usize, tokens: &[i64]) -> Result<Self::Logits>;
     fn step_slots_range(&mut self, start_slot: usize, rows: &[&[i64]]) -> Result<Self::Logits>;
@@ -56,6 +57,10 @@ impl BatchBackend for SessionBackend {
         self.session.allocated_batch_size() as usize
     }
 
+    fn vocab_size(&self) -> usize {
+        self.session.spec().vocab as usize
+    }
+
     fn reset_slot(&mut self, slot: usize) -> Result<()> {
         self.session.reset_slot(slot)
     }
@@ -80,7 +85,7 @@ impl BatchBackend for SessionBackend {
 
 pub struct PendingRequest {
     pub request: GenerateRequest,
-    pub tx: mpsc::Sender<GenerateEvent>,
+    pub tx: mpsc::UnboundedSender<GenerateEvent>,
 }
 
 enum SlotPhase {
@@ -95,7 +100,7 @@ struct SlotEntry {
     decoder: StreamDecoder,
     phase: SlotPhase,
     generated: usize,
-    tx: mpsc::Sender<GenerateEvent>,
+    tx: mpsc::UnboundedSender<GenerateEvent>,
 }
 
 /// Single-thread continuous-batching scheduler managing `1..=allocated_batch_size` slots.
@@ -159,6 +164,14 @@ impl<B: BatchBackend> Scheduler<B> {
             ErrorKind::InvalidInput,
             "max_tokens must be >= 1",
         )?;
+        let vocab = self.backend.vocab_size() as i64;
+        for &id in &req.prompt_tokens {
+            require_kind(
+                id >= 0 && id < vocab,
+                ErrorKind::InvalidInput,
+                "Token ID out of range",
+            )?;
+        }
         let capacity = self.backend.capacity();
         let total = req.prompt_tokens.len().saturating_add(req.max_tokens);
         require_kind(
@@ -173,7 +186,7 @@ impl<B: BatchBackend> Scheduler<B> {
         )?;
         require_kind(
             self.queue.len() < self.config.max_queued_requests,
-            ErrorKind::CapacityExceeded,
+            ErrorKind::QueueFull,
             "Request queue is full",
         )?;
 
@@ -184,13 +197,11 @@ impl<B: BatchBackend> Scheduler<B> {
     /// Aborts all queued and active requests (used during shutdown or unrecoverable GPU errors).
     pub fn abort_all(&mut self, message: &str) {
         while let Some(pending) = self.queue.pop_front() {
-            let _ = pending
-                .tx
-                .try_send(GenerateEvent::Error(Error::new(message)));
+            let _ = pending.tx.send(GenerateEvent::Error(Error::new(message)));
         }
         for slot in &mut self.slots {
             if let Some(entry) = slot.take() {
-                let _ = entry.tx.try_send(GenerateEvent::Error(Error::new(message)));
+                let _ = entry.tx.send(GenerateEvent::Error(Error::new(message)));
             }
         }
     }
@@ -335,7 +346,7 @@ impl<B: BatchBackend> Scheduler<B> {
             SampleRow::from_params(&entry.request.sampling, &mut entry.rng)
         };
         let sampled = self.backend.sample_batch(&logits, &[sample_row], &[true])?;
-        self.consume_sampled_token(slot, sampled[0])?;
+        self.consume_sampled_token(slot, sampled[0]);
         Ok(())
     }
 
@@ -400,13 +411,13 @@ impl<B: BatchBackend> Scheduler<B> {
 
         for offset in 0..span {
             if active[offset] {
-                self.consume_sampled_token(first + offset, sampled[offset])?;
+                self.consume_sampled_token(first + offset, sampled[offset]);
             }
         }
         Ok(())
     }
 
-    fn consume_sampled_token(&mut self, slot: usize, token_id: i64) -> Result<()> {
+    fn consume_sampled_token(&mut self, slot: usize, token_id: i64) {
         let mut retire = false;
         let entry = self.slots[slot].as_mut().unwrap();
         entry.generated += 1;
@@ -419,47 +430,69 @@ impl<B: BatchBackend> Scheduler<B> {
         };
 
         if hit_eos {
-            let tail = entry.decoder.finish()?;
-            if !tail.is_empty() {
-                let _ = entry.tx.blocking_send(GenerateEvent::Delta {
-                    token_id,
-                    text: tail,
-                });
+            match entry.decoder.finish() {
+                Ok(StreamStep::Continue(tail) | StreamStep::Stopped(tail)) => {
+                    if !tail.is_empty() {
+                        let _ = entry.tx.send(GenerateEvent::Delta {
+                            token_id,
+                            text: tail,
+                        });
+                    }
+                    let _ = entry.tx.send(GenerateEvent::Finished {
+                        reason: FinishReason::Stop,
+                        usage,
+                    });
+                }
+                Err(err) => {
+                    let _ = entry.tx.send(GenerateEvent::Error(err));
+                }
             }
-            let _ = entry.tx.blocking_send(GenerateEvent::Finished {
-                reason: FinishReason::Stop,
-                usage,
-            });
             retire = true;
         } else {
-            match entry.decoder.push(token_id)? {
-                StreamStep::Stopped(text) => {
+            match entry.decoder.push(token_id) {
+                Err(err) => {
+                    let _ = entry.tx.send(GenerateEvent::Error(err));
+                    retire = true;
+                }
+                Ok(StreamStep::Stopped(text)) => {
                     if !text.is_empty() {
-                        let _ = entry
-                            .tx
-                            .blocking_send(GenerateEvent::Delta { token_id, text });
+                        let _ = entry.tx.send(GenerateEvent::Delta { token_id, text });
                     }
-                    let _ = entry.tx.blocking_send(GenerateEvent::Finished {
+                    let _ = entry.tx.send(GenerateEvent::Finished {
                         reason: FinishReason::Stop,
                         usage,
                     });
                     retire = true;
                 }
-                StreamStep::Continue(mut text) => {
+                Ok(StreamStep::Continue(mut text)) => {
                     if hit_limit {
-                        let tail = entry.decoder.finish()?;
-                        text.push_str(&tail);
-                        let _ = entry
-                            .tx
-                            .blocking_send(GenerateEvent::Delta { token_id, text });
-                        let _ = entry.tx.blocking_send(GenerateEvent::Finished {
-                            reason: FinishReason::Length,
-                            usage,
-                        });
+                        match entry.decoder.finish() {
+                            Ok(StreamStep::Stopped(tail)) => {
+                                text.push_str(&tail);
+                                if !text.is_empty() {
+                                    let _ = entry.tx.send(GenerateEvent::Delta { token_id, text });
+                                }
+                                let _ = entry.tx.send(GenerateEvent::Finished {
+                                    reason: FinishReason::Stop,
+                                    usage,
+                                });
+                            }
+                            Ok(StreamStep::Continue(tail)) => {
+                                text.push_str(&tail);
+                                let _ = entry.tx.send(GenerateEvent::Delta { token_id, text });
+                                let _ = entry.tx.send(GenerateEvent::Finished {
+                                    reason: FinishReason::Length,
+                                    usage,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = entry.tx.send(GenerateEvent::Error(err));
+                            }
+                        }
                         retire = true;
                     } else if entry
                         .tx
-                        .blocking_send(GenerateEvent::Delta { token_id, text })
+                        .send(GenerateEvent::Delta { token_id, text })
                         .is_err()
                     {
                         retire = true;
@@ -475,6 +508,5 @@ impl<B: BatchBackend> Scheduler<B> {
         if retire {
             self.slots[slot] = None;
         }
-        Ok(())
     }
 }

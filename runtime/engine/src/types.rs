@@ -44,10 +44,62 @@ impl SamplingParams {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawChatContent {
+    Text(String),
+    Parts(Vec<ChatContentPart>),
+}
+
+#[derive(Deserialize)]
+struct ChatContentPart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
+}
+
+fn deserialize_chat_content<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<RawChatContent>::deserialize(deserializer)?;
+    match raw {
+        None => Ok(String::new()),
+        Some(RawChatContent::Text(text)) => Ok(text),
+        Some(RawChatContent::Parts(parts)) => {
+            let mut combined = String::new();
+            for part in parts {
+                if part.part_type != "text" {
+                    return Err(serde::de::Error::custom(format!(
+                        "unsupported chat content part type '{}'",
+                        part.part_type
+                    )));
+                }
+                let text = part.text.ok_or_else(|| {
+                    serde::de::Error::custom("text content part is missing 'text' field")
+                })?;
+                combined.push_str(&text);
+            }
+            Ok(combined)
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChatMessage {
     pub role: String,
+    #[serde(default, deserialize_with = "deserialize_chat_content")]
     pub content: String,
+}
+
+/// High-level generation options forwarded from API layers to `EngineHandle`.
+#[derive(Clone, Debug, Default)]
+pub struct GenerateOptions {
+    pub max_tokens: Option<usize>,
+    pub sampling: SamplingParams,
+    pub stop_strings: Vec<String>,
+    pub stop_token_ids: Vec<i64>,
+    pub ignore_eos: bool,
 }
 
 #[derive(Clone, Debug)]

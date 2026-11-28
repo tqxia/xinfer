@@ -70,6 +70,10 @@ file(WRITE "${XINFER_RUST_LINK_CONFIG}"
   "RPATH=${_xinfer_rpath}\n"
   "RPATH_LINK=${_xinfer_rpath_link}\n")
 
+# Serialize Cargo invocations under Ninja so parallel target builds do not contend
+# on `${CMAKE_BINARY_DIR}/rust/.cargo-lock`.
+set_property(GLOBAL APPEND PROPERTY JOB_POOLS xinfer_cargo=1)
+
 function(xinfer_add_rust_executable target package)
   set(_deps xinfer_torch_shim ${ARGN})
   set(_cargo_args build
@@ -85,6 +89,7 @@ function(xinfer_add_rust_executable target package)
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${CMAKE_BINARY_DIR}/rust/release/${target}" "${CMAKE_BINARY_DIR}/${target}"
     DEPENDS ${_deps}
+    JOB_POOL xinfer_cargo
     VERBATIM)
   install(PROGRAMS "${CMAKE_BINARY_DIR}/${target}"
     DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONENT Runtime)

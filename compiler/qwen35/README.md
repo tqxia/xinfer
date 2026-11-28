@@ -1,9 +1,9 @@
-# Qwen3.5 text-only AOTI / C++
+# Qwen3.5 text-only AOTI / Native Runtime
 
 This module owns the dense Qwen3.5 text architecture and the Qwen3.5-0.8B / 4B
 export entry point. The [Qwen3.8 frontend](../qwen38/README.md) reuses its adapters,
 state handling and export pipeline with its own loader and defaults. Python
-prepares and compiles the text model; the shared C++ runtime loads the bundle
+prepares and compiles the text model; the shared native runtime loads the bundle
 and generates tokens.
 Vision and MTP are outside the supported scope. Defaults select 0.8B.
 
@@ -66,8 +66,8 @@ native DeltaNet adapters.
 `combo_kernels=True` and `benchmark_combo_kernel=True`; it is off by default.
 Resolved compiler options are recorded in export logs. Validate each new
 bundle because these options and autotuning can alter floating-point results.
-The [package contract](../../docs/package-metadata.md) defines the four deployment
-files and shared-weight ownership. There is no packing, attention-backend or
+The [package contract](../../docs/package-metadata.md) defines the deployment
+bundle files and shared-weight ownership. There is no packing, attention-backend or
 eager-numerics selector.
 
 ## Model interface and state

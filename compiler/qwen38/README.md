@@ -1,4 +1,4 @@
-# Qwen3.8-27B-FP8 AOTI / C++
+# Qwen3.8-27B-FP8 AOTI / Native Runtime
 
 This frontend owns Qwen3.8 defaults, checkpoint loading, FP8 export setup and
 the export entry point. It reuses the dense Qwen3.5 text architecture, adapters,
@@ -69,7 +69,7 @@ pinned to commit `03ae31933313f38fae2b050dbe2731024386c369` (v4). Export uses
 xinfer's own `xinfer::fp8_linear` Triton kernel in
 `compiler/common/kernels/gemm/finegrained_fp8.py` with a fixed 32-row launch tile so
 dynamic batch/token dimensions stay symbolic (verified bitwise identical to the
-pinned HF kernel). AOTI packages the kernels, so C++ inference needs neither
+pinned HF kernel). AOTI packages the kernels, so native inference needs neither
 Python nor a Hub connection. Before offline validation or export, populate the
 kernel cache for the pinned revision:
 
